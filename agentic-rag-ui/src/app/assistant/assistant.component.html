@@ -308,15 +308,15 @@
           <small class="mb-0">L'assistant est en train de répondre...</small>
         </div>
 
-        <!-- ✅ NOUVEAU : Indicateur d'écoute vocale -->
-        <div *ngIf="isListening" 
+        <!-- ✅ Indicateur d'enregistrement vocal -->
+        <div *ngIf="isRecording" 
             class="alert alert-danger py-2 mb-2 d-flex align-items-center" 
             role="alert">
           <div class="spinner-grow spinner-grow-sm me-2" role="status">
-            <span class="visually-hidden">Écoute...</span>
+            <span class="visually-hidden">Enregistrement...</span>
           </div>
           <small class="mb-0">
-            🎤 Écoute en cours... Parlez maintenant
+            🎤 Enregistrement en cours... Parlez maintenant
             <button 
               class="btn btn-sm btn-light ms-3" 
               (click)="stopListening()">
@@ -333,15 +333,16 @@
             (keydown)="onKeyDown($event)"
             placeholder="{{ getPlaceholder() }}"
             rows="2"
-            [disabled]="!(canSendMessage$ | async)"
+            [disabled]="!(canSendMessage$ | async) || isRecording"
             style="resize: none;"></textarea>
 
               <!-- ✅ Bouton Microphone (à côté du bouton Envoyer) -->
             <app-voice-button
               *ngIf="isVoiceEnabled"
+              [language]="'fr'"
               (transcriptFinal)="onVoiceTranscriptFinal($event)"
-              (transcriptInterim)="onVoiceTranscriptInterim($event)"
-              (listeningChange)="onListeningChange($event)">
+              (recordingChange)="onRecordingChange($event)"
+              (error)="onVoiceError($event)">
             </app-voice-button>
           
             <!-- Bouton Envoyer -->

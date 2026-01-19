@@ -1,286 +1,172 @@
 // ============================================================================
-// SERVICE - voice.service.ts (Web Speech API)
+// SERVICE - voice.service.ts (ADAPTÉ POUR WHISPER)
 // ============================================================================
 import { Injectable } from '@angular/core';
-import { Observable, Subject, fromEvent } from 'rxjs';
+import { HttpClient } from '@angular/common/http';
+import { Observable, Subject } from 'rxjs';
+import { environment } from '../../../../environements/environement';
 
-// ✅ Interface pour le support du navigateur
-declare global {
-  interface Window {
-    webkitSpeechRecognition: any;
-    SpeechRecognition: any;
-  }
-}
-
-export interface VoiceRecognitionResult {
-  transcript: string;
-  isFinal: boolean;
-  confidence: number;
-}
-
-export interface VoiceSynthesisOptions {
-  lang?: string;
-  rate?: number;  // Vitesse (0.1 à 10)
-  pitch?: number; // Tonalité (0 à 2)
-  volume?: number; // Volume (0 à 1)
-}
-
+/**
+ * ✅ Service vocal avec OpenAI Whisper
+ * Enregistrement audio → Backend → Whisper API → Transcription
+ */
 @Injectable({
   providedIn: 'root'
 })
 export class VoiceService {
+  private readonly API_URL = 'http://localhost:8090/api';
   
-  private recognition: any;
-  private speechSynthesis: SpeechSynthesis;
-  private isRecognitionAvailable = false;
-  private isSynthesisAvailable = false;
+  // ==================== ENREGISTREMENT AUDIO ====================
   
-  private recognitionSubject = new Subject<VoiceRecognitionResult>();
-  private recognitionErrorSubject = new Subject<string>();
+  private mediaRecorder: MediaRecorder | null = null;
+  private audioChunks: Blob[] = [];
+  private recordingSubject = new Subject<boolean>();
+  private errorSubject = new Subject<string>();
   
-  constructor() {
-    this.checkBrowserSupport();
-    this.initializeSpeechRecognition();
-    this.speechSynthesis = window.speechSynthesis;
+  constructor(private http: HttpClient) {}
+  
+  /**
+   * ✅ Vérifie si l'enregistrement audio est supporté
+   */
+  isRecordingSupported(): boolean {
+    return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
   }
   
-  // ==================== BROWSER SUPPORT ====================
-  
-  private checkBrowserSupport(): void {
-    // Vérifier Speech Recognition
-    this.isRecognitionAvailable = !!(
-      window.SpeechRecognition || 
-      window.webkitSpeechRecognition
-    );
-    
-    // Vérifier Speech Synthesis
-    this.isSynthesisAvailable = 'speechSynthesis' in window;
-    
-    console.log('🎤 [Voice] Speech Recognition disponible:', this.isRecognitionAvailable);
-    console.log('🔊 [Voice] Speech Synthesis disponible:', this.isSynthesisAvailable);
-  }
-  
-  public isSpeechRecognitionSupported(): boolean {
-    return this.isRecognitionAvailable;
-  }
-  
-  public isSpeechSynthesisSupported(): boolean {
-    return this.isSynthesisAvailable;
-  }
-  
-  // ==================== SPEECH RECOGNITION (STT) ====================
-  
-  private initializeSpeechRecognition(): void {
-    if (!this.isRecognitionAvailable) {
-      console.warn('⚠️ [Voice] Speech Recognition non supporté');
-      return;
-    }
-    
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    this.recognition = new SpeechRecognition();
-    
-    // Configuration
-    this.recognition.lang = 'fr-FR';
-    this.recognition.continuous = true;
-    this.recognition.interimResults = true;
-    this.recognition.maxAlternatives = 1;
-    
-    // ✅ Event: Résultat de reconnaissance
-    this.recognition.onresult = (event: any) => {
-      const result = event.results[event.results.length - 1];
-      const transcript = result[0].transcript;
-      const isFinal = result.isFinal;
-      const confidence = result[0].confidence;
+  /**
+   * ✅ Démarre l'enregistrement audio
+   */
+  async startRecording(): Promise<void> {
+    try {
+      console.log('🎤 [VoiceService] Demande accès microphone');
       
-      console.log('🎤 [Voice] Transcription:', transcript, '(final:', isFinal, ')');
-      
-      this.recognitionSubject.next({
-        transcript,
-        isFinal,
-        confidence
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          sampleRate: 16000
+        } 
       });
-    };
-    
-    // ✅ Event: Erreur
-    this.recognition.onerror = (event: any) => {
-      console.error('❌ [Voice] Erreur reconnaissance:', event.error);
-      this.recognitionErrorSubject.next(event.error);
-    };
-    
-    // ✅ Event: Fin automatique
-    this.recognition.onend = () => {
-      console.log('🛑 [Voice] Reconnaissance terminée');
-    };
-    
-    console.log('✅ [Voice] Speech Recognition initialisé');
-  }
-  
-  /**
-   * ✅ Démarre la reconnaissance vocale
-   */
-  public startRecognition(): void {
-    if (!this.isRecognitionAvailable) {
-      this.recognitionErrorSubject.next('Speech Recognition non supporté');
-      return;
-    }
-    
-    try {
-      this.recognition.start();
-      console.log('🎤 [Voice] Reconnaissance démarrée');
-    } catch (error) {
-      console.error('❌ [Voice] Erreur démarrage:', error);
-      // Si déjà démarré, on redémarre
-      this.stopRecognition();
-      setTimeout(() => this.recognition.start(), 100);
+      
+      console.log('✅ [VoiceService] Accès microphone accordé');
+      
+      // Créer le MediaRecorder
+      const options = { mimeType: 'audio/webm' };
+      this.mediaRecorder = new MediaRecorder(stream, options);
+      this.audioChunks = [];
+      
+      // Collecter les données audio
+      this.mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          this.audioChunks.push(event.data);
+          console.log('📊 [VoiceService] Chunk audio reçu:', event.data.size, 'bytes');
+        }
+      };
+      
+      // Démarrer l'enregistrement
+      this.mediaRecorder.start(1000); // Collecte toutes les secondes
+      this.recordingSubject.next(true);
+      
+      console.log('🎤 [VoiceService] Enregistrement démarré');
+      
+    } catch (error: any) {
+      console.error('❌ [VoiceService] Erreur accès microphone:', error);
+      this.errorSubject.next(error.message || 'Erreur accès microphone');
+      throw error;
     }
   }
   
   /**
-   * ✅ Arrête la reconnaissance vocale
+   * ✅ Arrête l'enregistrement et retourne le blob audio
    */
-  public stopRecognition(): void {
-    if (!this.isRecognitionAvailable) {
-      return;
-    }
-    
-    try {
-      this.recognition.stop();
-      console.log('🛑 [Voice] Reconnaissance arrêtée');
-    } catch (error) {
-      console.error('❌ [Voice] Erreur arrêt:', error);
-    }
-  }
-  
-  /**
-   * ✅ Observable des résultats de reconnaissance
-   */
-  public getRecognitionResults(): Observable<VoiceRecognitionResult> {
-    return this.recognitionSubject.asObservable();
-  }
-  
-  /**
-   * ✅ Observable des erreurs de reconnaissance
-   */
-  public getRecognitionErrors(): Observable<string> {
-    return this.recognitionErrorSubject.asObservable();
-  }
-  
-  // ==================== SPEECH SYNTHESIS (TTS) ====================
-  
-  /**
-   * ✅ Lit un texte à voix haute
-   */
-  public speak(
-    text: string, 
-    options: VoiceSynthesisOptions = {}
-  ): Promise<void> {
+  async stopRecording(): Promise<Blob> {
     return new Promise((resolve, reject) => {
-      if (!this.isSynthesisAvailable) {
-        reject(new Error('Speech Synthesis non supporté'));
+      if (!this.mediaRecorder) {
+        reject(new Error('Aucun enregistrement en cours'));
         return;
       }
       
-      // Arrêter toute lecture en cours
-      this.stopSpeaking();
+      console.log('🛑 [VoiceService] Arrêt enregistrement');
       
-      const utterance = new SpeechSynthesisUtterance(text);
-      
-      // Configuration
-      utterance.lang = options.lang || 'fr-FR';
-      utterance.rate = options.rate || 1.0;
-      utterance.pitch = options.pitch || 1.0;
-      utterance.volume = options.volume || 1.0;
-      
-      // Sélectionner une voix française
-      const voices = this.speechSynthesis.getVoices();
-      const frenchVoice = voices.find(voice => voice.lang.startsWith('fr'));
-      if (frenchVoice) {
-        utterance.voice = frenchVoice;
-      }
-      
-      // Events
-      utterance.onend = () => {
-        console.log('✅ [Voice] Lecture terminée');
-        resolve();
+      this.mediaRecorder.onstop = () => {
+        // Créer le blob audio
+        const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' });
+        console.log('✅ [VoiceService] Enregistrement arrêté:', audioBlob.size, 'bytes');
+        
+        // Arrêter tous les tracks du microphone
+        if (this.mediaRecorder?.stream) {
+          this.mediaRecorder.stream.getTracks().forEach(track => {
+            track.stop();
+            console.log('🔇 [VoiceService] Track audio arrêté');
+          });
+        }
+        
+        this.recordingSubject.next(false);
+        resolve(audioBlob);
       };
       
-      utterance.onerror = (event) => {
-        console.error('❌ [Voice] Erreur lecture:', event);
-        reject(event);
+      this.mediaRecorder.onerror = (error: any) => {
+        console.error('❌ [VoiceService] Erreur MediaRecorder:', error);
+        this.errorSubject.next('Erreur lors de l\'enregistrement');
+        reject(error);
       };
       
-      // Lancer la lecture
-      console.log('🔊 [Voice] Lecture:', text.substring(0, 50) + '...');
-      this.speechSynthesis.speak(utterance);
+      this.mediaRecorder.stop();
     });
   }
   
   /**
-   * ✅ Arrête la lecture en cours
+   * ✅ Transcrit l'audio avec Whisper via le backend
+   * 
+   * @param audioBlob Blob audio à transcrire
+   * @param language Code langue (fr, en, es, etc.)
+   * @returns Observable de la réponse API
    */
-  public stopSpeaking(): void {
-    if (!this.isSynthesisAvailable) {
-      return;
-    }
+  transcribeWithWhisper(audioBlob: Blob, language: string = 'fr'): Observable<WhisperResponse> {
+    const formData = new FormData();
+    formData.append('audio', audioBlob, 'recording.webm');
+    formData.append('language', language);
     
-    if (this.speechSynthesis.speaking) {
-      this.speechSynthesis.cancel();
-      console.log('🛑 [Voice] Lecture arrêtée');
-    }
-  }
-  
-  /**
-   * ✅ Met en pause la lecture
-   */
-  public pauseSpeaking(): void {
-    if (!this.isSynthesisAvailable) {
-      return;
-    }
+    console.log('📤 [VoiceService] Envoi audio à Whisper');
+    console.log('📊 [VoiceService] Taille:', audioBlob.size, 'bytes');
+    console.log('🌍 [VoiceService] Langue:', language);
     
-    if (this.speechSynthesis.speaking && !this.speechSynthesis.paused) {
-      this.speechSynthesis.pause();
-      console.log('⏸️ [Voice] Lecture en pause');
-    }
-  }
-  
-  /**
-   * ✅ Reprend la lecture
-   */
-  public resumeSpeaking(): void {
-    if (!this.isSynthesisAvailable) {
-      return;
-    }
-    
-    if (this.speechSynthesis.paused) {
-      this.speechSynthesis.resume();
-      console.log('▶️ [Voice] Lecture reprise');
-    }
-  }
-  
-  /**
-   * ✅ Vérifie si une lecture est en cours
-   */
-  public isSpeaking(): boolean {
-    return this.isSynthesisAvailable && this.speechSynthesis.speaking;
-  }
-  
-  /**
-   * ✅ Liste les voix disponibles
-   */
-  public getAvailableVoices(): SpeechSynthesisVoice[] {
-    if (!this.isSynthesisAvailable) {
-      return [];
-    }
-    
-    return this.speechSynthesis.getVoices();
-  }
-  
-  /**
-   * ✅ Obtient les voix françaises disponibles
-   */
-  public getFrenchVoices(): SpeechSynthesisVoice[] {
-    return this.getAvailableVoices().filter(voice => 
-      voice.lang.startsWith('fr')
+    return this.http.post<WhisperResponse>(
+      this.API_URL + `/voice/transcribe`,
+      formData
     );
   }
+  
+  /**
+   * ✅ Observable de l'état d'enregistrement
+   */
+  getRecordingState(): Observable<boolean> {
+    return this.recordingSubject.asObservable();
+  }
+  
+  /**
+   * ✅ Observable des erreurs
+   */
+  getErrors(): Observable<string> {
+    return this.errorSubject.asObservable();
+  }
+  
+  /**
+   * ✅ Vérifie si en cours d'enregistrement
+   */
+  isRecording(): boolean {
+    return this.mediaRecorder?.state === 'recording';
+  }
+}
+
+/**
+ * ✅ Interface de réponse Whisper
+ */
+export interface WhisperResponse {
+  success: boolean;
+  transcript: string;
+  language: string;
+  audioSize: number;
+  filename: string;
+  transcriptLength?: number;
+  error?: string;
 }

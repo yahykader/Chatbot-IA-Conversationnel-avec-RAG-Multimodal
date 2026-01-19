@@ -62,7 +62,7 @@ export class AssistantComponent implements OnInit, AfterViewChecked, OnDestroy {
   @ViewChild(VoiceButtonComponent) voiceButton?: VoiceButtonComponent;
 
   isVoiceEnabled = false;
-  isListening = false; // État d'écoute
+  isRecording = false; // État d'enregistrement
   
   // ==================== VIEW CHILDREN ====================
   @ViewChild('fileInput') fileInput!: ElementRef<HTMLInputElement>;
@@ -107,14 +107,9 @@ export class AssistantComponent implements OnInit, AfterViewChecked, OnDestroy {
     
     console.log('✅ [Component] AssistantComponent initialisé');
 
-    // Vérifier support vocal
-    this.isVoiceEnabled = this.voiceService.isSpeechRecognitionSupported();
-    
-    if (this.isVoiceEnabled) {
-      console.log('✅ [Component] Reconnaissance vocale activée');
-    } else {
-      console.warn('⚠️ [Component] Reconnaissance vocale non supportée (utilisez Chrome/Edge)');
-    }
+    // ✅ AJOUTER - Vérifier support vocal
+    this.isVoiceEnabled = this.voiceService.isRecordingSupported();
+    console.log('✅ [Component] Support vocal:', this.isVoiceEnabled);
   }
   
   // ==================== LIFECYCLE HOOKS ====================
@@ -282,22 +277,21 @@ export class AssistantComponent implements OnInit, AfterViewChecked, OnDestroy {
     this.store.dispatch(AssistantActions.setCurrentMessage({ message }));
   }
   
-  // ✅ ÉTAPE 6 : Modifier la méthode onKeyDown (optionnel)
-  // Pour désactiver Enter pendant l'écoute
+  /**
+   * ✅ Modifier onKeyDown pour désactiver Enter pendant enregistrement
+   */
   onKeyDown(event: KeyboardEvent): void {
-    // Si en écoute, ignorer Enter
-    if (this.isListening) {
+    // Empêcher l'envoi pendant l'enregistrement
+    if (this.isRecording) {
       event.preventDefault();
       return;
     }
     
-    // Enter sans Shift = Envoyer
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       this.sendMessage();
     }
     
-    // Escape = Effacer
     if (event.key === 'Escape') {
       this.currentMessage = '';
       this.updateCurrentMessage('');
@@ -478,60 +472,52 @@ export class AssistantComponent implements OnInit, AfterViewChecked, OnDestroy {
   }
 
   // ==================== VOICE CONTROL HANDLERS ====================
-    // ✅ ÉTAPE 5 : Ajouter les méthodes vocales
-  
   /**
-   * ✅ Callback quand la transcription finale est reçue
+   * ✅ Gère la transcription finale (auto-envoi)
    */
   onVoiceTranscriptFinal(transcript: string): void {
-    console.log('🎤 [Component] Transcription finale:', transcript);
+    console.log('🎤 [Component] Transcription Whisper reçue:', transcript);
     
-    // Mettre à jour le message et l'envoyer automatiquement
-    this.currentMessage = transcript;
-    this.updateCurrentMessage(transcript);
+    if (!transcript || !transcript.trim()) {
+      console.warn('⚠️ [Component] Transcription vide');
+      return;
+    }
     
-    // Envoyer automatiquement
+    // Mettre à jour le message et envoyer
+    this.currentMessage = transcript.trim();
     this.sendMessage();
   }
   
   /**
-   * ✅ Callback pour les transcriptions intermédiaires
-   * Affiche le texte en temps réel dans le textarea
+   * ✅ Gère l'état d'enregistrement
    */
-  onVoiceTranscriptInterim(transcript: string): void {
-    console.log('🎤 [Component] Transcription intermédiaire:', transcript);
-    
-    // Afficher la transcription en cours sans envoyer
-    this.currentMessage = transcript;
+  onRecordingChange(isRecording: boolean): void {
+    this.isRecording = isRecording;
+    console.log('🎤 [Component] État enregistrement:', isRecording);
   }
   
   /**
-   * ✅ Callback quand l'état d'écoute change
+   * ✅ Gère les erreurs vocales
    */
-  onListeningChange(isListening: boolean): void {
-    this.isListening = isListening;
-    
-    if (isListening) {
-      console.log('🎤 [Component] Écoute démarrée');
-    } else {
-      console.log('🛑 [Component] Écoute arrêtée');
-    }
+  onVoiceError(error: string): void {
+    console.error('❌ [Component] Erreur vocale:', error);
+    // Afficher l'erreur à l'utilisateur (toast, alert, etc.)
+    alert(`Erreur: ${error}`);
   }
   
   /**
-   * ✅ Arrêter l'écoute manuellement
+   * ✅ Arrête l'enregistrement
    */
   stopListening(): void {
-    console.log('🛑 [Component] Arrêt manuel de l\'écoute');
     this.voiceButton?.stopRecognition();
-    this.isListening = false;
+    this.isRecording = false;
   }
 
   getPlaceholder(): string {
-  if (this.isListening) {
-    return '🎤 Parlez maintenant...';
-  }
-  return 'Posez votre question ou utilisez le micro...';
+    if (this.isRecording) {
+      return '🎤 Parlez maintenant...';
+    }
+    return 'Posez votre question ou utilisez le micro...';
 }
 }
 
