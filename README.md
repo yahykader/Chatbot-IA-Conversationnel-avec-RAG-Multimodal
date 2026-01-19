@@ -124,7 +124,7 @@ Pour toute question ou suggestion, n'hésitez pas à ouvrir une issue sur GitHub
 
 ## 🙏 Remerciements
 
-Merci à tous les contributeurs qui ont participé à ce projet !
+Merci à tous les contributeurs qui vont participer à ce projet !
 
 ---
 
