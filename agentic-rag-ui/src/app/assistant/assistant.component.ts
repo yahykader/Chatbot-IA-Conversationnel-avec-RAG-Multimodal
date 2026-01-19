@@ -20,11 +20,13 @@ import * as AssistantActions from './store/assistant.actions';
 import * as AssistantSelectors from './store/assistant.selectors';
 import { Message, UploadedFile } from './store/assistant.models';
 import { MarkdownModule } from 'ngx-markdown';
+import { VoiceButtonComponent } from './voice-control/voice-button.component';
+import { VoiceService } from './service/VoiceService';
 
 @Component({
   selector: 'app-assistant',
   standalone: true,
-  imports: [CommonModule, FormsModule, MarkdownModule],
+  imports: [CommonModule, FormsModule, MarkdownModule, VoiceButtonComponent],
   templateUrl: './assistant.component.html',
   styleUrls: ['./assistant.component.scss'],
   animations: [
@@ -55,6 +57,12 @@ import { MarkdownModule } from 'ngx-markdown';
   ]
 })
 export class AssistantComponent implements OnInit, AfterViewChecked, OnDestroy {
+
+    // ✅ ÉTAPE 3 : Ajouter les propriétés
+  @ViewChild(VoiceButtonComponent) voiceButton?: VoiceButtonComponent;
+
+  isVoiceEnabled = false;
+  isListening = false; // État d'écoute
   
   // ==================== VIEW CHILDREN ====================
   @ViewChild('fileInput') fileInput!: ElementRef<HTMLInputElement>;
@@ -82,7 +90,7 @@ export class AssistantComponent implements OnInit, AfterViewChecked, OnDestroy {
   private lastMessageCount = 0;
   private destroy$ = new Subject<void>();
   
-  constructor(private store: Store) {
+  constructor(private store: Store, private voiceService: VoiceService) {
     // ✅ CRITIQUE: Utiliser selectMessagesSorted pour garantir l'ordre
     this.messages$ = this.store.select(AssistantSelectors.selectMessagesSorted);
     this.files$ = this.store.select(AssistantSelectors.selectAllFiles);
@@ -98,6 +106,15 @@ export class AssistantComponent implements OnInit, AfterViewChecked, OnDestroy {
     this.uiState$ = this.store.select(AssistantSelectors.selectUIState);
     
     console.log('✅ [Component] AssistantComponent initialisé');
+
+    // Vérifier support vocal
+    this.isVoiceEnabled = this.voiceService.isSpeechRecognitionSupported();
+    
+    if (this.isVoiceEnabled) {
+      console.log('✅ [Component] Reconnaissance vocale activée');
+    } else {
+      console.warn('⚠️ [Component] Reconnaissance vocale non supportée (utilisez Chrome/Edge)');
+    }
   }
   
   // ==================== LIFECYCLE HOOKS ====================
@@ -265,14 +282,22 @@ export class AssistantComponent implements OnInit, AfterViewChecked, OnDestroy {
     this.store.dispatch(AssistantActions.setCurrentMessage({ message }));
   }
   
+  // ✅ ÉTAPE 6 : Modifier la méthode onKeyDown (optionnel)
+  // Pour désactiver Enter pendant l'écoute
   onKeyDown(event: KeyboardEvent): void {
+    // Si en écoute, ignorer Enter
+    if (this.isListening) {
+      event.preventDefault();
+      return;
+    }
+    
     // Enter sans Shift = Envoyer
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       this.sendMessage();
     }
     
-    // Escape = Effacer le message en cours
+    // Escape = Effacer
     if (event.key === 'Escape') {
       this.currentMessage = '';
       this.updateCurrentMessage('');
@@ -451,4 +476,89 @@ export class AssistantComponent implements OnInit, AfterViewChecked, OnDestroy {
   trackByFileId(index: number, file: UploadedFile): string {
     return file.id;
   }
+
+  // ==================== VOICE CONTROL HANDLERS ====================
+    // ✅ ÉTAPE 5 : Ajouter les méthodes vocales
+  
+  /**
+   * ✅ Callback quand la transcription finale est reçue
+   */
+  onVoiceTranscriptFinal(transcript: string): void {
+    console.log('🎤 [Component] Transcription finale:', transcript);
+    
+    // Mettre à jour le message et l'envoyer automatiquement
+    this.currentMessage = transcript;
+    this.updateCurrentMessage(transcript);
+    
+    // Envoyer automatiquement
+    this.sendMessage();
+  }
+  
+  /**
+   * ✅ Callback pour les transcriptions intermédiaires
+   * Affiche le texte en temps réel dans le textarea
+   */
+  onVoiceTranscriptInterim(transcript: string): void {
+    console.log('🎤 [Component] Transcription intermédiaire:', transcript);
+    
+    // Afficher la transcription en cours sans envoyer
+    this.currentMessage = transcript;
+  }
+  
+  /**
+   * ✅ Callback quand l'état d'écoute change
+   */
+  onListeningChange(isListening: boolean): void {
+    this.isListening = isListening;
+    
+    if (isListening) {
+      console.log('🎤 [Component] Écoute démarrée');
+    } else {
+      console.log('🛑 [Component] Écoute arrêtée');
+    }
+  }
+  
+  /**
+   * ✅ Arrêter l'écoute manuellement
+   */
+  stopListening(): void {
+    console.log('🛑 [Component] Arrêt manuel de l\'écoute');
+    this.voiceButton?.stopRecognition();
+    this.isListening = false;
+  }
+
+  getPlaceholder(): string {
+  if (this.isListening) {
+    return '🎤 Parlez maintenant...';
+  }
+  return 'Posez votre question ou utilisez le micro...';
 }
+}
+
+// ============================================================================
+// NOTES IMPORTANTES
+// ============================================================================
+
+/*
+ * ✅ AVANTAGES de cette implémentation:
+ * 
+ * 1. INTERFACE COMPACTE
+ *    - Bouton micro directement dans l'input-group
+ *    - Pas de barre supplémentaire
+ *    - Design épuré
+ * 
+ * 2. UX OPTIMALE
+ *    - Indicateur visuel pendant l'écoute (alerte rouge)
+ *    - Transcription en temps réel dans le textarea
+ *    - Envoi automatique après transcription finale
+ * 
+ * 3. FEEDBACK CLAIR
+ *    - Animation du bouton pendant l'écoute
+ *    - Placeholder change pendant l'écoute
+ *    - Bouton d'arrêt visible dans l'alerte
+ * 
+ * 4. ACCESSIBLE
+ *    - Fonctionne avec le clavier
+ *    - Support Chrome/Edge uniquement
+ *    - Message clair si non supporté
+ */

@@ -13,6 +13,19 @@ $shadow-md: 0 4px 12px rgba(0, 0, 0, 0.15);
 
 // ==================== SCROLLBAR PERSONNALISÉE VISIBLE ====================
 
+.input-group {
+  app-voice-button ::ng-deep .btn-voice {
+    min-width: 52px !important;
+    width: 52px !important;
+    height: 100% !important;
+    border-radius: 0 !important;
+    
+    i {
+      font-size: 1.4rem !important;
+    }
+  }
+}
+
 // ✅ Scrollbar WebKit (Chrome, Safari, Edge)
 .custom-scrollbar::-webkit-scrollbar {
   width: 12px;

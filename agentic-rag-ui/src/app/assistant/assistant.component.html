@@ -297,7 +297,8 @@
       
       <!-- Footer -->
       <footer class="border-top bg-white p-3 shadow-sm">
-        
+
+        <!-- Indicateur de streaming -->
         <div *ngIf="isStreaming$ | async" 
              class="alert alert-info py-2 mb-2 d-flex align-items-center" 
              role="alert">
@@ -306,6 +307,23 @@
           </div>
           <small class="mb-0">L'assistant est en train de répondre...</small>
         </div>
+
+        <!-- ✅ NOUVEAU : Indicateur d'écoute vocale -->
+        <div *ngIf="isListening" 
+            class="alert alert-danger py-2 mb-2 d-flex align-items-center" 
+            role="alert">
+          <div class="spinner-grow spinner-grow-sm me-2" role="status">
+            <span class="visually-hidden">Écoute...</span>
+          </div>
+          <small class="mb-0">
+            🎤 Écoute en cours... Parlez maintenant
+            <button 
+              class="btn btn-sm btn-light ms-3" 
+              (click)="stopListening()">
+              <i class="bi bi-stop-fill"></i> Arrêter
+            </button>
+          </small>
+        </div>
         
         <div class="input-group mb-2">
           <textarea
@@ -313,11 +331,20 @@
             class="form-control"
             [(ngModel)]="currentMessage"
             (keydown)="onKeyDown($event)"
-            placeholder="Posez votre question..."
+            placeholder="{{ getPlaceholder() }}"
             rows="2"
             [disabled]="!(canSendMessage$ | async)"
             style="resize: none;"></textarea>
+
+              <!-- ✅ Bouton Microphone (à côté du bouton Envoyer) -->
+            <app-voice-button
+              *ngIf="isVoiceEnabled"
+              (transcriptFinal)="onVoiceTranscriptFinal($event)"
+              (transcriptInterim)="onVoiceTranscriptInterim($event)"
+              (listeningChange)="onListeningChange($event)">
+            </app-voice-button>
           
+            <!-- Bouton Envoyer -->
           <button 
             class="btn btn-primary"
             type="button"
@@ -338,9 +365,15 @@
           </button>
         </div>
         
+
+        <!-- Stats avec indication vocale -->
         <div class="d-flex justify-content-between align-items-center small text-muted">
           <span>
             <kbd>Enter</kbd> pour envoyer • <kbd>Shift + Enter</kbd> pour nouvelle ligne
+              <span *ngIf="isVoiceEnabled" class="ms-2">
+              • <i class="bi bi-mic-fill text-primary"></i> 
+              <strong class="text-primary">Vocal activé</strong>
+              </span>
           </span>
           
           <span>
@@ -350,8 +383,7 @@
             <i class="bi bi-folder me-1"></i>
             {{ (files$ | async)?.length || 0 }} fichiers
           </span>
-        </div>
-        
+        </div>       
       </footer>
       
     </main>
