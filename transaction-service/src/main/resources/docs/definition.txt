@@ -1,0 +1,19 @@
+Qu'est-ce que
+L'IA générative fait référence à un type d'intelligence artificielle capable de concevoir, à partir de
+données fournies par des êtres humains, des créations originales telles que des illustrations, des
+textes, des vidéos ou des contenus audio. Il suffit de formuler une requête, et l'IA l'exécute. Pour
+apprendre, celle-ci tire parti de modèles de langage naturel et analyse le contenu à sa disposition.
+Ce faisant, elle identifie des schémas linguistiques grâce auxquels elle peut articuler une réflexion
+ou reformuler des idées. Dans la mesure où cette technologie rend l'expression des idées plus
+simple et plus rapide, elle pourrait ouvrir une nouvelle ère de productivité et de créativité.
+Le système fonctionne de la manière suivante : une ligne de texte est soumise à des modèles
+de langage exhaustifs, qui prédisent le mot suivant le plus probable. Ces modèles ont accès
+à une source d'informations gigantesque : entre 10 et 20 % des données disponibles sur le web.
+Ils disposent ainsi de références solides sur des sujets divers et dans différentes langues.
+En analysant cet immense échantillon, l'intelligence artificielle apprend à imiter la manière dont
+les êtres humains parlent, écrivent et créent. Il ne lui reste alors qu'à intégrer les consignes ou le
+contexte qui lui sont donnés. Plus la requête est précise, plus les résultats seront pertinents.
+Dans le domaine de l'IA générative, le traitement du langage naturel et les réseaux de neurones
+artificiels constituent les deux modèles de référence. Le premier s'appuie sur des règles pour
+apprendre à partir de textes existants, tandis que le second utilise les données pour créer des
+liens entre différents éléments.
