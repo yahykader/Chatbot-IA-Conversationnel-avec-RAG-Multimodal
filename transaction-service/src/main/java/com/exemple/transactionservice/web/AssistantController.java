@@ -138,7 +138,6 @@ public Flux<ServerSentEvent<String>> chatStream(
     });
 }
 
-
     private String truncateMessage(String message) {
         if (message == null) return "null";
         if (message.length() <= 100) return message;

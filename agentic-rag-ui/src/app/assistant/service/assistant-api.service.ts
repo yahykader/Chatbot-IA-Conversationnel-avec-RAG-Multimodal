@@ -4,8 +4,8 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { environment } from '../../../environements/environement';
-import { UploadResponse } from './store/assistant.models';
+import { environment } from '../../../../environements/environement';
+import { UploadResponse } from '../store/assistant.models';
 
 @Injectable({
   providedIn: 'root'

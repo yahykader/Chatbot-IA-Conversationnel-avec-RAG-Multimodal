@@ -8,7 +8,7 @@ import { of, concat } from 'rxjs';
 import { catchError, endWith, exhaustMap, map, tap, withLatestFrom } from 'rxjs/operators';
 
 import * as AssistantActions from './assistant.actions';
-import { AssistantApiService } from '../assistant-api.service';
+import { AssistantApiService } from '../service/assistant-api.service';
 import { selectUserId, selectAllMessages, selectAllFiles } from './assistant.selectors';
 
 @Injectable()

@@ -1,0 +1,23 @@
+ <!-- Bouton Microphone Simple -->
+    <button
+      *ngIf="isRecognitionSupported"
+      class="btn btn-voice"
+      [ngClass]="{
+        'btn-danger recording': isListening,
+        'btn-outline-secondary': !isListening
+      }"
+      (click)="toggleRecognition()"
+      [disabled]="!isRecognitionSupported"
+      [title]="isListening ? 'Arrêter' : 'Parler'">
+      <i class="bi" [ngClass]="{
+        'bi-mic-fill': isListening,
+        'bi-mic': !isListening
+      }"></i>
+    </button>
+    
+    <!-- Message si non supporté (optionnel, peut être masqué) -->
+    <span *ngIf="!isRecognitionSupported && showUnsupportedWarning" 
+          class="text-muted small ms-2">
+      <i class="bi bi-exclamation-triangle"></i>
+      Micro non supporté
+    </span>
