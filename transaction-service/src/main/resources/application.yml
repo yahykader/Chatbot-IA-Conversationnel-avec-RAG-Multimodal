@@ -80,23 +80,22 @@ spring:
   cache:
     type: redis
     redis:
-      time-to-live: 86400000  # 24 heures (millisecondes)
-      cache-null-values: false
-      key-prefix: "rag-cache:"
-      use-key-prefix: true
+      time-to-live: 1h           # TTL par défaut: 1 heure
+      cache-null-values: false   # Ne pas cacher les valeurs nulles
+      key-prefix: "rag-cache:"   # Préfixe pour toutes les clés Redis
+      use-key-prefix: true       # Activer l'utilisation du préfixe
     cache-names:
-      - multimodalSearch     # Cache recherches RAG
-      - llm-responses        # Cache réponses LLM
-      - embeddings           # Cache embeddings
-      - vision-analysis      # Cache Vision AI (30 jours)
+      - multimodal-rag-search    # Cache recherches RAG (1h)
+      - llm-responses            # Cache réponses LLM (1h par défaut)
+      - embeddings               # Cache embeddings (1h par défaut)
+      - vision-analysis          # Cache Vision AI (1h par défaut)
 
 # ===========================================================================
 # OpenAI Configuration
 # ===========================================================================
 openai:
   api:
-    # ⚠️ ATTENTION SÉCURITÉ: Utiliser variable d'environnement en production
-    key: ${OPENAI_API_KEY:sk-your-api-key-here}
+    key: ${OPEN_AI_API_KEY}
   
   embedding:
     model: text-embedding-3-small
@@ -115,9 +114,7 @@ openai:
 # ===========================================================================
 document:
   images:
-    storage-path: D:/Formation-DATA-2024/extracted-images
-    #${IMAGES_STORAGE_PATH:D:/Formation-DATA-2024/extracted-images}
-  
+    storage-path: ${IMAGES_STORAGE_PATH:D:/Formation-DATA-2024/extracted-images} 
   # Limites fichiers
   max-file-size-mb: 25
   max-pages: 100
@@ -185,7 +182,11 @@ assistant:
   context:
     max-exchanges: 5                  # Max échanges conservés
     max-tokens: 4000                  # Max tokens contexte
-    ttl-hours: 24                     # Durée vie Redis
+    ttl-hours: 24 
+  rag:
+    low-quality-threshold: 0.5  # Seuil scores faibles
+  metrics:
+    enabled: true  # Activer métriques enrichies                    # Durée vie Redis
   
   # Rate limiting
   rate-limit:

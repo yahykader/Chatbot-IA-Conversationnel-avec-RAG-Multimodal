@@ -3,6 +3,7 @@ package com.exemple.transactionservice.config;
 import com.exemple.transactionservice.service.ConversationalAssistant.ConversationContext;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.springframework.cache.annotation.EnableCaching;
@@ -18,25 +19,50 @@ import org.springframework.data.redis.serializer.StringRedisSerializer;
 
 import java.time.Duration;
 
+/**
+ * ✅ CORRIGÉ v2.2: Configuration Redis avec Validator Permissif
+ * 
+ * FIX: PolymorphicTypeValidator denied LinkedList
+ * Solution: allowIfBaseType(Object.class) pour autoriser collections Java
+ */
 @Configuration
 @EnableCaching
 public class RedisConfig {
 
     /**
-     * ✅ BEAN REQUIS: RedisTemplate pour ConversationContext
+     * ✅ CORRIGÉ: ObjectMapper avec validator permissif
      */
     @Bean
+    public ObjectMapper redisObjectMapper() {
+        ObjectMapper mapper = new ObjectMapper();
+        
+        // Support Java 8 Time
+        mapper.registerModule(new JavaTimeModule());
+        mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        
+        // ✅ CORRECTION: Validator permissif pour collections Java
+        mapper.activateDefaultTyping(
+            BasicPolymorphicTypeValidator.builder()
+                .allowIfBaseType(Object.class)  // ✅ Autorise tout
+                .build(),
+            ObjectMapper.DefaultTyping.NON_FINAL,
+            JsonTypeInfo.As.PROPERTY
+        );
+        
+        return mapper;
+    }
+
+    @Bean
     public RedisTemplate<String, ConversationContext> contextRedisTemplate(
-            RedisConnectionFactory connectionFactory) {
+            RedisConnectionFactory connectionFactory,
+            ObjectMapper redisObjectMapper) {
         
         RedisTemplate<String, ConversationContext> template = new RedisTemplate<>();
         template.setConnectionFactory(connectionFactory);
         
-        // Sérialisation clés (String)
         StringRedisSerializer keySerializer = new StringRedisSerializer();
-        
-        // Sérialisation valeurs (JSON)
-        GenericJackson2JsonRedisSerializer valueSerializer = createJsonSerializer();
+        GenericJackson2JsonRedisSerializer valueSerializer = 
+            new GenericJackson2JsonRedisSerializer(redisObjectMapper);
         
         template.setKeySerializer(keySerializer);
         template.setValueSerializer(valueSerializer);
@@ -44,22 +70,20 @@ public class RedisConfig {
         template.setHashValueSerializer(valueSerializer);
         
         template.afterPropertiesSet();
-        
         return template;
     }
 
-    /**
-     * ✅ OPTIONNEL: RedisTemplate générique
-     */
     @Bean
     public RedisTemplate<String, Object> redisTemplate(
-            RedisConnectionFactory connectionFactory) {
+            RedisConnectionFactory connectionFactory,
+            ObjectMapper redisObjectMapper) {
         
         RedisTemplate<String, Object> template = new RedisTemplate<>();
         template.setConnectionFactory(connectionFactory);
         
         StringRedisSerializer keySerializer = new StringRedisSerializer();
-        GenericJackson2JsonRedisSerializer valueSerializer = createJsonSerializer();
+        GenericJackson2JsonRedisSerializer valueSerializer = 
+            new GenericJackson2JsonRedisSerializer(redisObjectMapper);
         
         template.setKeySerializer(keySerializer);
         template.setValueSerializer(valueSerializer);
@@ -67,17 +91,16 @@ public class RedisConfig {
         template.setHashValueSerializer(valueSerializer);
         
         template.afterPropertiesSet();
-        
         return template;
     }
 
-    /**
-     * ✅ RedisCacheManager pour @Cacheable
-     */
     @Bean
-    public RedisCacheManager cacheManager(RedisConnectionFactory connectionFactory) {
+    public RedisCacheManager cacheManager(
+            RedisConnectionFactory connectionFactory,
+            ObjectMapper redisObjectMapper) {
         
-        GenericJackson2JsonRedisSerializer valueSerializer = createJsonSerializer();
+        GenericJackson2JsonRedisSerializer valueSerializer = 
+            new GenericJackson2JsonRedisSerializer(redisObjectMapper);
         
         RedisCacheConfiguration config = RedisCacheConfiguration.defaultCacheConfig()
             .entryTtl(Duration.ofHours(1))
@@ -96,26 +119,5 @@ public class RedisConfig {
         return RedisCacheManager.builder(connectionFactory)
             .cacheDefaults(config)
             .build();
-    }
-
-    /**
-     * ✅ Créer sérializer JSON avec support Java 8 Time
-     */
-    private GenericJackson2JsonRedisSerializer createJsonSerializer() {
-        ObjectMapper objectMapper = new ObjectMapper();
-        
-        // Support Java 8 Time (Instant, Duration, etc.)
-        objectMapper.registerModule(new JavaTimeModule());
-        
-        // Activer informations de type
-        objectMapper.activateDefaultTyping(
-            BasicPolymorphicTypeValidator.builder()
-                .allowIfSubType(Object.class)
-                .build(),
-            ObjectMapper.DefaultTyping.NON_FINAL,
-            JsonTypeInfo.As.PROPERTY
-        );
-        
-        return new GenericJackson2JsonRedisSerializer(objectMapper);
     }
 }

@@ -1,602 +1,788 @@
 // ============================================================================
-// SERVICE - MultimodalRAGService.java (v3.0.0) - VERSION AMÉLIORÉE
+// SERVICE - MultimodalRAGService.java (v3.3 - Approche A Compatible)
 // ============================================================================
 package com.exemple.transactionservice.service;
 
+import com.exemple.transactionservice.config.RAGConfig;
+import com.exemple.transactionservice.dto.CacheableSearchResult;
+import com.exemple.transactionservice.dto.CacheableSearchResult.SearchResultItem;
+import com.exemple.transactionservice.dto.CacheableSearchResult.SearchMetrics;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingMatch;
-import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
-import dev.langchain4j.store.embedding.EmbeddingSearchResult;
 import dev.langchain4j.store.embedding.EmbeddingStore;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import com.exemple.transactionservice.config.RAGConfig;
 
 import jakarta.annotation.PreDestroy;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Collections;
+import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.*;
-import java.util.stream.Collectors;
-import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * ✅ Service RAG Multimodal - Version 3.0 Production-Ready
- * 
- * Améliorations v3.0:
- * - Gestion correcte des ressources (@PreDestroy)
- * - Timeout sur recherches parallèles
- * - Clé de cache sécurisée avec hash
- * - Validation stricte des inputs
- * - Invalidation automatique du cache
- * - Métriques enrichies
- * - Gestion erreurs améliorée
+ * ============================================================================
+ * SERVICE RAG MULTIMODAL v3.3 - APPROCHE A COMPATIBLE
+ * ============================================================================
+ *
+ * Modifications v3.3 (Approche A):
+ * - ✅ Retourne CacheableSearchResult enrichi avec SearchMetrics
+ * - ✅ Conversion TextSegment → SearchResultItem via fromTextSegment()
+ * - ✅ Calcul automatique des métriques (scores, durées)
+ * - ✅ Compatible avec RAGTools qui utilise getTextResultsAsSegments()
+ * - ✅ Cache key stable avec hash + normalisation (v3.2)
+ * - ✅ Timeout/Retry robustes (v3.2)
+ *
+ * @author Transaction Service Team
+ * @version 3.3
+ * @since 2026-01-22
  */
 @Slf4j
 @Service
 public class MultimodalRAGService {
-    
+
+    // ========================================================================
+    // DEPENDENCIES
+    // ========================================================================
+
     private final EmbeddingStore<TextSegment> textStore;
     private final EmbeddingStore<TextSegment> imageStore;
     private final EmbeddingModel embeddingModel;
-    private final ExecutorService executorService;
-    private final RAGConfig config;
-    
-    // Version du modèle d'embedding (pour invalidation cache)
-    private static final String EMBEDDING_VERSION = "v1.0";
-    
+    private final RAGConfig ragConfig;
+    private final ExecutorService searchExecutor;
+
+    // ========================================================================
+    // CONFIGURATION (from RAGConfig)
+    // ========================================================================
+
+    private final int searchTimeoutSeconds;
+    private final int threadPoolSize;
+    private final int defaultMaxResults;
+    private final int maxAllowedResults;
+    private final double minScore;
+    private final int maxRetries;
+    private final long retryDelayMs;
+    private final int maxQueryLength;
+    private final boolean verboseLogging;
+    private final boolean enableMetrics;
+    private final String cacheVersion;
+
+    // ========================================================================
+    // CONSTRUCTOR
+    // ========================================================================
+
     public MultimodalRAGService(
             @Qualifier("textEmbeddingStore") EmbeddingStore<TextSegment> textStore,
             @Qualifier("imageEmbeddingStore") EmbeddingStore<TextSegment> imageStore,
             EmbeddingModel embeddingModel,
-            RAGConfig config) {
-        this.textStore = textStore;
-        this.imageStore = imageStore;
-        this.embeddingModel = embeddingModel;
-        this.config = config;
-        
-        // Thread pool avec configuration optimisée
-        this.executorService = new ThreadPoolExecutor(
-            config.getParallelSearchThreads(),
-            config.getParallelSearchThreads() * 2,
-            60L, TimeUnit.SECONDS,
-            new LinkedBlockingQueue<>(100),
-            new ThreadPoolExecutor.CallerRunsPolicy()
+            RAGConfig ragConfig) {
+
+        this.textStore = Objects.requireNonNull(textStore, "textStore");
+        this.imageStore = Objects.requireNonNull(imageStore, "imageStore");
+        this.embeddingModel = Objects.requireNonNull(embeddingModel, "embeddingModel");
+        this.ragConfig = Objects.requireNonNull(ragConfig, "ragConfig");
+
+        this.searchTimeoutSeconds = Math.max(1, ragConfig.getSearchTimeoutSeconds());
+        this.threadPoolSize = Math.max(1, ragConfig.getParallelSearchThreads());
+        this.defaultMaxResults = Math.max(1, ragConfig.getDefaultMaxResults());
+        this.maxAllowedResults = Math.max(this.defaultMaxResults, ragConfig.getMaxAllowedResults());
+        this.minScore = ragConfig.getMinScore();
+        this.maxRetries = Math.max(1, ragConfig.getMaxRetries());
+        this.retryDelayMs = Math.max(0L, ragConfig.getRetryDelayMs());
+        this.maxQueryLength = Math.max(16, ragConfig.getMaxQueryLength());
+        this.verboseLogging = ragConfig.isVerboseLogging();
+        this.enableMetrics = ragConfig.isEnableMetrics();
+
+        this.cacheVersion = buildCacheVersion(ragConfig);
+
+        this.searchExecutor = createSearchExecutor();
+
+        logInitialization();
+    }
+
+    private ExecutorService createSearchExecutor() {
+        AtomicInteger idx = new AtomicInteger(0);
+
+        ThreadFactory tf = r -> {
+            Thread t = new Thread(r);
+            t.setName("rag-search-" + idx.incrementAndGet());
+            t.setDaemon(false);
+            t.setUncaughtExceptionHandler((thread, ex) ->
+                    log.error("❌ [RAG] Uncaught exception in {}", thread.getName(), ex)
+            );
+            return t;
+        };
+
+        return Executors.newFixedThreadPool(threadPoolSize, tf);
+    }
+
+    private void logInitialization() {
+        log.info("╔════════════════════════════════════════════════════════════╗");
+        log.info("║  MultimodalRAGService {} - Initialized (Approche A)      ║", String.format("%-4s", cacheVersion));
+        log.info("╠════════════════════════════════════════════════════════════╣");
+        log.info("║  Timeout:         {} seconds", String.format("%27s", searchTimeoutSeconds + " ║"));
+        log.info("║  Thread Pool:     {} threads", String.format("%27s", threadPoolSize + " ║"));
+        log.info("║  Max Results:     {} (limit: {})", String.format("%18s", defaultMaxResults + ", " + maxAllowedResults + ") ║"));
+        log.info("║  Min Score:       {}", String.format("%34s", String.format("%.2f", minScore) + " ║"));
+        log.info("║  Max Retries:     {} (delay: {}ms)", String.format("%18s", maxRetries + ", " + retryDelayMs + ") ║"));
+        log.info("║  Max Query:       {} chars", String.format("%25s", maxQueryLength + " ║"));
+        log.info("║  Verbose Logs:    {}", String.format("%34s", verboseLogging + " ║"));
+        log.info("║  Metrics:         {}", String.format("%34s", enableMetrics + " ║"));
+        log.info("╚════════════════════════════════════════════════════════════╝");
+    }
+
+    private static String buildCacheVersion(RAGConfig cfg) {
+        String raw = String.join("|",
+                String.valueOf(cfg.getMinScore()),
+                String.valueOf(cfg.getDefaultMaxResults()),
+                String.valueOf(cfg.getMaxAllowedResults()),
+                String.valueOf(cfg.getSearchTimeoutSeconds()),
+                String.valueOf(cfg.getParallelSearchThreads()),
+                String.valueOf(cfg.getMaxQueryLength()),
+                String.valueOf(cfg.isVerboseLogging())
         );
-        
-        log.info("✅ [RAG] Service initialisé - Threads: {}, Version: {}", 
-                 config.getParallelSearchThreads(), EMBEDDING_VERSION);
+        return sha256Hex(raw).substring(0, 8);
     }
-    
+
+    // ========================================================================
+    // PUBLIC API - SEARCH (✅ APPROCHE A)
+    // ========================================================================
+
     /**
-     * ✅ AMÉLIORATION v3.0: Shutdown propre de l'ExecutorService
-     */
-    @PreDestroy
-    public void shutdown() {
-        log.info("🔌 [RAG] Arrêt du service multimodal");
-        
-        executorService.shutdown();
-        try {
-            if (!executorService.awaitTermination(10, TimeUnit.SECONDS)) {
-                log.warn("⚠️ [RAG] Timeout - Arrêt forcé");
-                executorService.shutdownNow();
-                
-                if (!executorService.awaitTermination(5, TimeUnit.SECONDS)) {
-                    log.error("❌ [RAG] Impossible d'arrêter l'ExecutorService");
-                }
-            }
-        } catch (InterruptedException e) {
-            log.error("❌ [RAG] Interruption lors de l'arrêt", e);
-            executorService.shutdownNow();
-            Thread.currentThread().interrupt();
-        }
-        
-        log.info("✅ [RAG] Service arrêté proprement");
-    }
-    
-    /**
-     * ✅ AMÉLIORATION v3.0: Invalidation automatique du cache
-     * Exécuté toutes les heures pour éviter cache obsolète
-     */
-    @CacheEvict(value = "multimodalSearch", allEntries = true)
-    @Scheduled(fixedRate = 3600000) // 1 heure
-    public void evictExpiredCache() {
-        log.info("🗑️ [RAG] Invalidation automatique du cache");
-    }
-    
-    /**
-     * ✅ AMÉLIORATION v3.0: Invalidation après ingestion de documents
-     */
-    @CacheEvict(value = "multimodalSearch", allEntries = true)
-    public void invalidateCacheAfterIngestion() {
-        log.info("🗑️ [RAG] Cache invalidé après ingestion de nouveaux documents");
-    }
-    
-    /**
-     * ✅ AMÉLIORATION v3.0: Recherche multimodale avec toutes les améliorations
+     * ✅ APPROCHE A: Recherche multimodale avec métriques enrichies
      * 
-     * @param query Question de l'utilisateur
-     * @param maxResults Nombre max de résultats (validé)
-     * @param userId ID utilisateur pour cache personnalisé
-     * @return Résultats multimodaux avec métriques
+     * Retourne CacheableSearchResult avec:
+     * - textResults: List<SearchResultItem>
+     * - imageResults: List<SearchResultItem>
+     * - textMetrics: SearchMetrics (scores, durée)
+     * - imageMetrics: SearchMetrics (scores, durée)
+     * - totalDurationMs: long
+     * - wasCached: boolean
+     * 
+     * RAGTools utilisera getTextResultsAsSegments() pour conversion vers TextSegment.
      */
     @Cacheable(
-        value = "multimodalSearch",
-        key = "T(java.util.Objects).hash(#query, #maxResults, #userId, #p3)",
-        unless = "#result == null || #result.hasError"
+            value = "multimodal-rag-search",
+            key = "T(com.exemple.transactionservice.service.MultimodalRAGService)"
+                + ".buildCacheKey(#query, #maxResults, #userId, #root.target.minScore, #root.target.cacheVersion)",
+            sync = true
     )
-    public MultimodalSearchResult search(
-            String query, 
-            int maxResults, 
-            String userId) {
-     
-        // ✅ 2. RequestId pour traçabilité logs
-        String requestId = UUID.randomUUID().toString();
-        
-        // ✅ AMÉLIORATION v3.0: Validation stricte des inputs
-        ValidationResult validation = validateInputs(query, maxResults);
+    public CacheableSearchResult search(String query, int maxResults, String userId) {
+        Instant startTime = Instant.now();
+
+        // ========================================
+        // 1. VALIDATION
+        // ========================================
+
+        ValidationResult validation = validateSearchParams(query, maxResults, userId);
         if (!validation.isValid()) {
-            log.warn("⚠️ [RAG] Validation échouée: {}", validation.getErrorMessage());
-            return MultimodalSearchResult.error(query, validation.getErrorMessage());
+            return validation.getEmptyResult();
         }
 
-        // ✅ CORRECTION: Créer variable final pour lambda
-        int effectiveMaxResults = maxResults;
-        
-        if (effectiveMaxResults <= 0) {
-            effectiveMaxResults = config.getDefaultMaxResults();
-            log.debug("📊 [{}] MaxResults défaut: {}", requestId, effectiveMaxResults);
-        }
-        
-        if (effectiveMaxResults > config.getMaxAllowedResults()) {
-            log.warn("⚠️ [{}] MaxResults trop élevé ({} > {}), limité à {}", 
-                    requestId, effectiveMaxResults, 
-                    config.getMaxAllowedResults(), config.getMaxAllowedResults());
-            effectiveMaxResults = config.getMaxAllowedResults();
-        }
-        
-        // ✅ Variable final pour lambdas
-        int finalMaxResults = effectiveMaxResults;
-        Instant start = Instant.now();
-        log.info("🔎 [RAG] Recherche multimodale - Query: '{}' (max: {}), User: {}", 
-                 truncateQuery(query), finalMaxResults, userId);
-        
+        query = validation.getSanitizedQuery();
+        maxResults = validation.getSanitizedMaxResults();
+
+        // ========================================
+        // 2. EMBEDDING GENERATION
+        // ========================================
+
+        Embedding queryEmbedding = generateQueryEmbedding(query);
+
+        // ========================================
+        // 3. PARALLEL SEARCH (timeout-safe)
+        // ========================================
+
+        SearchResults searchResults = executeParallelSearch(queryEmbedding, maxResults);
+
+        // ========================================
+        // 4. ✅ APPROCHE A: CONVERSION & METRICS
+        // ========================================
+
+        CacheableSearchResult result = convertAndBuildResult(
+            searchResults, 
+            startTime
+        );
+
+        // ========================================
+        // 5. LOGGING
+        // ========================================
+
+        logSearchCompletion(startTime, result, query, userId);
+
+        return result;
+    }
+
+    public CacheableSearchResult search(String query, String userId) {
+        return search(query, defaultMaxResults, userId);
+    }
+
+    // ========================================================================
+    // CACHE KEY (hash + normalisation)
+    // ========================================================================
+
+    public static String buildCacheKey(String query, int maxResults, String userId, double minScore, String cacheVersion) {
+        String q = normalizeQueryForCache(query);
+        String qHash = sha256Hex(q);
+
+        int k = maxResults;
+        String uid = (userId == null || userId.isBlank()) ? "anon" : userId;
+
+        return "v=" + (cacheVersion == null ? "na" : cacheVersion)
+                + "|q=" + qHash
+                + "|k=" + k
+                + "|u=" + uid
+                + "|ms=" + String.format("%.4f", minScore);
+    }
+
+    private static String normalizeQueryForCache(String query) {
+        if (query == null) return "";
+        return query.trim().replaceAll("\\s+", " ");
+    }
+
+    private static String sha256Hex(String input) {
         try {
-            // ========================================
-            // RECHERCHE PARALLÈLE Timeout sur recherches parallèles
-            // ========================================
-            CompletableFuture<SearchResultWithMetrics<TextSegment>> textFuture = 
-                CompletableFuture.supplyAsync(
-                    () -> searchTextWithMetrics(query, finalMaxResults), 
-                    executorService
-                );
-            
-            CompletableFuture<SearchResultWithMetrics<TextSegment>> imageFuture = 
-                CompletableFuture.supplyAsync(
-                    () -> searchImagesWithMetrics(query, finalMaxResults), 
-                    executorService
-                );
-            
-            // Attendre avec TIMEOUT
-            try {
-                CompletableFuture.allOf(textFuture, imageFuture)
-                    .get(config.getSearchTimeoutSeconds(), TimeUnit.SECONDS);
-                
-            } catch (TimeoutException e) {
-                log.error("⏱️ [RAG] Timeout après {}s", config.getSearchTimeoutSeconds());
-                
-                // Annuler les futures en cours
-                textFuture.cancel(true);
-                imageFuture.cancel(true);
-                
-                return MultimodalSearchResult.error(
-                    query, 
-                    "Timeout recherche après " + config.getSearchTimeoutSeconds() + "s"
-                );
-            }
-            
-            SearchResultWithMetrics<TextSegment> textResult = textFuture.get();
-            SearchResultWithMetrics<TextSegment> imageResult = imageFuture.get();
-            
-            Duration totalDuration = Duration.between(start, Instant.now());
-            
-            MultimodalSearchResult result = MultimodalSearchResult.builder()
-                .query(query)
-                .userId(userId)
-                .textResults(textResult.getResults())
-                .imageResults(imageResult.getResults())
-                .textMetrics(textResult.getMetrics())
-                .imageMetrics(imageResult.getMetrics())
-                .totalDurationMs(totalDuration.toMillis())
-                .embeddingVersion(EMBEDDING_VERSION)
-                .wasCached(false)
-                .build();
-            
-            log.info("✅ [RAG] Recherche terminée en {}ms - Textes: {} (avg: {:.3f}), Images: {} (avg: {:.3f})", 
-                totalDuration.toMillis(),
-                result.getTextResults().size(), 
-                textResult.getMetrics().getAverageScore(),
-                result.getImageResults().size(),
-                imageResult.getMetrics().getAverageScore()
-            );
-            
-            return result;
-            
-        } catch (ExecutionException e) {
-            log.error("❌ [RAG] Erreur exécution recherche pour: '{}'", truncateQuery(query), e);
-            return MultimodalSearchResult.error(query, "Erreur: " + e.getCause().getMessage());
-            
-        } catch (InterruptedException e) {
-            log.error("❌ [RAG] Recherche interrompue pour: '{}'", truncateQuery(query), e);
-            Thread.currentThread().interrupt();
-            return MultimodalSearchResult.error(query, "Recherche interrompue");
-            
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] digest = md.digest(input.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
         } catch (Exception e) {
-            log.error("❌ [RAG] Erreur inattendue pour: '{}'", truncateQuery(query), e);
-            return MultimodalSearchResult.error(query, "Erreur: " + e.getMessage());
+            return Integer.toHexString(Objects.hashCode(input));
         }
     }
-    
-    /**
-     * ✅ AMÉLIORATION v3.0: Validation stricte des inputs
-     */
-    private ValidationResult validateInputs(String query, int maxResults) {
-        // Validation query
+
+    public double getMinScore() {
+        return minScore;
+    }
+
+    public String getCacheVersion() {
+        return cacheVersion;
+    }
+
+    // ========================================================================
+    // PRIVATE - VALIDATION
+    // ========================================================================
+
+    private ValidationResult validateSearchParams(String query, int maxResults, String userId) {
         if (query == null || query.isBlank()) {
-            return ValidationResult.invalid("Requête vide ou null");
+            log.warn("⚠️ [RAG] Query vide - User: {}", userId);
+            return ValidationResult.invalid();
         }
-        
-        if (query.length() > 1000) {
-            return ValidationResult.invalid(
-                "Requête trop longue (" + query.length() + " caractères, max 1000)"
-            );
+
+        String sanitizedQuery = query.trim().replaceAll("\\s+", " ");
+
+        if (sanitizedQuery.length() > maxQueryLength) {
+            log.warn("⚠️ [RAG] Query trop longue: {} chars (max: {}) - Troncature",
+                    sanitizedQuery.length(), maxQueryLength);
+            sanitizedQuery = sanitizedQuery.substring(0, maxQueryLength);
         }
-        
-        // Validation maxResults
-        int validatedMaxResults = maxResults;
-        
-        if (maxResults <= 0) {
-            log.warn("⚠️ [RAG] maxResults invalide: {}, utilisation valeur par défaut", maxResults);
-            validatedMaxResults = config.getDefaultMaxResults();
+
+        int sanitizedMaxResults = maxResults;
+        if (sanitizedMaxResults <= 0) {
+            sanitizedMaxResults = defaultMaxResults;
         }
-        
-        if (maxResults > config.getMaxAllowedResults()) {
-            log.warn("⚠️ [RAG] maxResults trop élevé: {}, limité à {}", 
-                     maxResults, config.getMaxAllowedResults());
-            validatedMaxResults = config.getMaxAllowedResults();
+        if (sanitizedMaxResults > maxAllowedResults) {
+            log.warn("⚠️ [RAG] maxResults trop élevé: {} (max: {}) - Limitation",
+                    sanitizedMaxResults, maxAllowedResults);
+            sanitizedMaxResults = maxAllowedResults;
         }
-        
-        return ValidationResult.valid(validatedMaxResults);
+
+        if (verboseLogging) {
+            log.info("🔍 [RAG] Recherche - Query: '{}' | Max: {} | User: {}",
+                    truncate(sanitizedQuery, 100), sanitizedMaxResults, userId);
+        } else {
+            log.debug("🔍 [RAG] Recherche - Length: {} | Max: {} | User: {}",
+                    sanitizedQuery.length(), sanitizedMaxResults, userId);
+        }
+
+        return ValidationResult.valid(sanitizedQuery, sanitizedMaxResults);
     }
-    
-    /**
-     * Recherche textuelle avec métriques et gestion d'erreurs
-     */
-    private SearchResultWithMetrics<TextSegment> searchTextWithMetrics(String query, int maxResults) {
-        Instant start = Instant.now();
-        
+
+    // ========================================================================
+    // PRIVATE - EMBEDDING
+    // ========================================================================
+
+    private Embedding generateQueryEmbedding(String query) {
         try {
-            List<EmbeddingMatch<TextSegment>> matches = performSearch(
-                query, maxResults, textStore, "texte"
-            );
-            
-            Duration duration = Duration.between(start, Instant.now());
-            SearchMetrics metrics = computeMetrics(matches, duration);
-            
-            List<TextSegment> results = matches.stream()
-                .map(EmbeddingMatch::embedded)
-                .collect(Collectors.toList());
-            
-            return new SearchResultWithMetrics<>(results, metrics);
-            
+            Embedding embedding = embeddingModel.embed(query).content();
+
+            if (verboseLogging) {
+                log.debug("🔢 [RAG] Embedding généré: {} dimensions", embedding.vector().length);
+            }
+
+            return embedding;
+
         } catch (Exception e) {
-            log.error("❌ [RAG] Erreur recherche textuelle", e);
-            return SearchResultWithMetrics.error();
+            log.error("❌ [RAG] Erreur génération embedding", e);
+            throw new RuntimeException("Échec génération embedding: " + e.getMessage(), e);
         }
     }
-    
-    /**
-     * Recherche d'images avec métriques et gestion d'erreurs
-     */
-    private SearchResultWithMetrics<TextSegment> searchImagesWithMetrics(String query, int maxResults) {
-        Instant start = Instant.now();
-        
-        try {
-            List<EmbeddingMatch<TextSegment>> matches = performSearch(
-                query, maxResults, imageStore, "image"
-            );
-            
-            Duration duration = Duration.between(start, Instant.now());
-            SearchMetrics metrics = computeMetrics(matches, duration);
-            
-            List<TextSegment> results = matches.stream()
-                .map(EmbeddingMatch::embedded)
-                .collect(Collectors.toList());
-            
-            return new SearchResultWithMetrics<>(results, metrics);
-            
-        } catch (Exception e) {
-            log.error("❌ [RAG] Erreur recherche images", e);
-            return SearchResultWithMetrics.error();
-        }
+
+    // ========================================================================
+    // PRIVATE - PARALLEL SEARCH (timeout-safe futures)
+    // ========================================================================
+
+    private SearchResults executeParallelSearch(Embedding queryEmbedding, int maxResults) {
+
+        Instant textStart = Instant.now();
+        CompletableFuture<TimedSearchResult> textFuture =
+                CompletableFuture.supplyAsync(
+                                () -> {
+                                    Instant start = Instant.now();
+                                    List<EmbeddingMatch<TextSegment>> matches = 
+                                        searchWithRetry(queryEmbedding, maxResults, textStore, "text");
+                                    long duration = Duration.between(start, Instant.now()).toMillis();
+                                    return new TimedSearchResult(matches, duration);
+                                },
+                                searchExecutor
+                        )
+                        .completeOnTimeout(
+                            new TimedSearchResult(List.of(), 0L), 
+                            searchTimeoutSeconds, 
+                            TimeUnit.SECONDS
+                        )
+                        .exceptionally(ex -> {
+                            log.error("❌ [RAG] Erreur recherche text", ex);
+                            return new TimedSearchResult(List.of(), 0L);
+                        });
+
+        Instant imageStart = Instant.now();
+        CompletableFuture<TimedSearchResult> imageFuture =
+                CompletableFuture.supplyAsync(
+                                () -> {
+                                    Instant start = Instant.now();
+                                    List<EmbeddingMatch<TextSegment>> matches = 
+                                        searchWithRetry(queryEmbedding, maxResults, imageStore, "image");
+                                    long duration = Duration.between(start, Instant.now()).toMillis();
+                                    return new TimedSearchResult(matches, duration);
+                                },
+                                searchExecutor
+                        )
+                        .completeOnTimeout(
+                            new TimedSearchResult(List.of(), 0L), 
+                            searchTimeoutSeconds, 
+                            TimeUnit.SECONDS
+                        )
+                        .exceptionally(ex -> {
+                            log.error("❌ [RAG] Erreur recherche image", ex);
+                            return new TimedSearchResult(List.of(), 0L);
+                        });
+
+        TimedSearchResult textResult = textFuture.join();
+        TimedSearchResult imageResult = imageFuture.join();
+
+        return new SearchResults(
+            textResult.matches(), 
+            imageResult.matches(),
+            textResult.durationMs(),
+            imageResult.durationMs()
+        );
     }
-    
-    /**
-     * Effectue la recherche d'embeddings avec retry et backoff exponentiel
-     */
-    private List<EmbeddingMatch<TextSegment>> performSearch(
-            String query, 
-            int maxResults, 
+
+    // ========================================================================
+    // PRIVATE - RETRY MECHANISM
+    // ========================================================================
+
+    private List<EmbeddingMatch<TextSegment>> searchWithRetry(
+            Embedding queryEmbedding,
+            int maxResults,
             EmbeddingStore<TextSegment> store,
-            String storeType) {
-        
-        int attempts = 0;
+            String storeName) {
+
         Exception lastException = null;
-        
-        while (attempts < config.getMaxRetries()) {
+
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                Embedding queryEmbedding = embeddingModel.embed(query).content();
-                
-                EmbeddingSearchRequest request = EmbeddingSearchRequest.builder()
-                    .queryEmbedding(queryEmbedding)
-                    .maxResults(maxResults)
-                    .minScore(config.getMinScore())
-                    .build();
-                
-                EmbeddingSearchResult<TextSegment> results = store.search(request);
-                
-                log.debug("🔍 [RAG] Recherche {} réussie: {} résultats (tentative {})", 
-                    storeType, results.matches().size(), attempts + 1);
-                
-                return results.matches();
-                
+                if (verboseLogging) {
+                    log.debug("📄 [RAG] Recherche {} démarrée... (attempt {}/{})", 
+                        storeName, attempt, maxRetries);
+                }
+
+                Instant start = Instant.now();
+                List<EmbeddingMatch<TextSegment>> matches = store.findRelevant(queryEmbedding, maxResults);
+
+                if (verboseLogging) {
+                    log.debug("📄 [RAG] Recherche {} terminée en {}ms: {} résultats",
+                            storeName, Duration.between(start, Instant.now()).toMillis(), matches.size());
+                }
+
+                return matches;
+
             } catch (Exception e) {
-                attempts++;
                 lastException = e;
-                log.warn("⚠️ [RAG] Tentative {}/{} échouée pour recherche {}: {}", 
-                    attempts, config.getMaxRetries(), storeType, e.getMessage());
-                
-                if (attempts < config.getMaxRetries()) {
+
+                if (attempt < maxRetries) {
+                    long base = retryDelayMs * (1L << (attempt - 1));
+                    long jitter = ThreadLocalRandom.current().nextLong(0, 200);
+                    long delay = base + jitter;
+
+                    if (verboseLogging) {
+                        log.warn("⚠️ [RAG] Erreur {} (tentative {}/{}) - Retry dans {}ms: {}",
+                                storeName, attempt, maxRetries, delay, e.getMessage());
+                    }
+
                     try {
-                        long delay = config.getRetryDelayMs() * attempts;
                         Thread.sleep(delay);
                     } catch (InterruptedException ie) {
                         Thread.currentThread().interrupt();
-                        break;
+                        throw new RuntimeException("Retry interrompu", ie);
                     }
                 }
             }
         }
-        
-        log.error("❌ [RAG] Échec définitif après {} tentatives pour recherche {}", 
-            attempts, storeType, lastException);
-        return Collections.emptyList();
+
+        log.error("❌ [RAG] Échec définitif {} après {} tentatives", storeName, maxRetries, lastException);
+        return List.of();
     }
-    
-    /**
-     * Calcule les métriques de qualité des résultats
-     */
-    private SearchMetrics computeMetrics(
-            List<EmbeddingMatch<TextSegment>> matches, 
-            Duration duration) {
-        
-        if (matches.isEmpty()) {
-            return SearchMetrics.builder()
-                .resultCount(0)
-                .averageScore(0.0)
-                .maxScore(0.0)
-                .minScore(0.0)
-                .durationMs(duration.toMillis())
-                .build();
-        }
-        
-        double avgScore = matches.stream()
-            .mapToDouble(EmbeddingMatch::score)
-            .average()
-            .orElse(0.0);
-        
-        double maxScore = matches.stream()
-            .mapToDouble(EmbeddingMatch::score)
-            .max()
-            .orElse(0.0);
-        
-        double minScore = matches.stream()
-            .mapToDouble(EmbeddingMatch::score)
-            .min()
-            .orElse(0.0);
-        
-        return SearchMetrics.builder()
-            .resultCount(matches.size())
-            .averageScore(avgScore)
-            .maxScore(maxScore)
-            .minScore(minScore)
-            .durationMs(duration.toMillis())
-            .build();
-    }
-    
-    /**
-     * ✅ AMÉLIORATION v3.0: Tronque la query pour les logs
-     */
-    private String truncateQuery(String query) {
-        if (query == null) return "null";
-        return query.length() > 50 ? query.substring(0, 47) + "..." : query;
-    }
-    
-    /**
-     * Recherche publique pour texte uniquement (compatibilité)
-     */
-    public List<TextSegment> searchText(String query, int maxResults) {
-        return searchTextWithMetrics(query, maxResults).getResults();
-    }
-    
-    /**
-     * Recherche publique pour images uniquement (compatibilité)
-     */
-    public List<TextSegment> searchImages(String query, int maxResults) {
-        return searchImagesWithMetrics(query, maxResults).getResults();
-    }
-    
+
     // ========================================================================
-    // CLASSES INTERNES
+    // PRIVATE - ✅ APPROCHE A: CONVERSION & BUILD RESULT
     // ========================================================================
-    
+
     /**
-     * ✅ AMÉLIORATION v3.0: Résultat enrichi avec métadonnées
+     * ✅ APPROCHE A: Convertit EmbeddingMatch → SearchResultItem et calcule métriques
      */
-    @Data
-    @Builder
-    @AllArgsConstructor
-    public static class MultimodalSearchResult {
-        private String query;
-        private String userId;
-        private List<TextSegment> textResults;
-        private List<TextSegment> imageResults;
-        private SearchMetrics textMetrics;
-        private SearchMetrics imageMetrics;
-        private long totalDurationMs;
-        private String embeddingVersion;
-        private boolean wasCached;
-        private boolean hasError;
-        private String errorMessage;
-        
-        public static MultimodalSearchResult empty() {
-            return MultimodalSearchResult.builder()
-                .textResults(Collections.emptyList())
-                .imageResults(Collections.emptyList())
-                .textMetrics(SearchMetrics.empty())
-                .imageMetrics(SearchMetrics.empty())
-                .totalDurationMs(0)
-                .embeddingVersion(EMBEDDING_VERSION)
-                .wasCached(false)
-                .hasError(false)
-                .build();
+    private CacheableSearchResult convertAndBuildResult(
+            SearchResults searchResults, 
+            Instant startTime) {
+
+        // 1. Filtrage par score + Conversion TextSegment → SearchResultItem
+        List<SearchResultItem> textItems = searchResults.textMatches().stream()
+                .filter(match -> match.score() >= minScore)
+                .map(match -> CacheableSearchResult.fromTextSegment(match.embedded(), match.score()))
+                .toList();
+
+        List<SearchResultItem> imageItems = searchResults.imageMatches().stream()
+                .filter(match -> match.score() >= minScore)
+                .map(match -> CacheableSearchResult.fromTextSegment(match.embedded(), match.score()))
+                .toList();
+
+        // 2. Construction du résultat
+        CacheableSearchResult result = new CacheableSearchResult();
+        result.setTextResults(textItems);
+        result.setImageResults(imageItems);
+
+        // 3. ✅ APPROCHE A: Calcul des métriques enrichies
+        result.calculateMetrics(
+            searchResults.textDurationMs(), 
+            searchResults.imageDurationMs()
+        );
+
+        // 4. Métadonnées cache
+        result.setWasCached(false); // Sera true si servi depuis cache
+        result.setTimestamp(System.currentTimeMillis());
+        result.setTotalDurationMs(Duration.between(startTime, Instant.now()).toMillis());
+
+        // 5. Vérification cohérence
+        if (result.getTextMetrics() == null && !textItems.isEmpty()) {
+            log.warn("⚠️ [RAG] Métriques texte nulles malgré {} résultats", textItems.size());
         }
-        
-        public static MultimodalSearchResult error(String query, String errorMessage) {
-            return MultimodalSearchResult.builder()
-                .query(query)
-                .textResults(Collections.emptyList())
-                .imageResults(Collections.emptyList())
-                .textMetrics(SearchMetrics.empty())
-                .imageMetrics(SearchMetrics.empty())
-                .totalDurationMs(0)
-                .embeddingVersion(EMBEDDING_VERSION)
-                .wasCached(false)
-                .hasError(true)
-                .errorMessage(errorMessage)
-                .build();
+        if (result.getImageMetrics() == null && !imageItems.isEmpty()) {
+            log.warn("⚠️ [RAG] Métriques images nulles malgré {} résultats", imageItems.size());
         }
-        
-        public int getTotalResults() {
-            return textResults.size() + imageResults.size();
+
+        return result;
+    }
+
+    // ========================================================================
+    // PRIVATE - LOGGING & METRICS
+    // ========================================================================
+
+    private void logSearchCompletion(
+            Instant startTime,
+            CacheableSearchResult result,
+            String query,
+            String userId) {
+
+        Duration duration = Duration.between(startTime, Instant.now());
+
+        if (verboseLogging) {
+            double avgTextScore = result.getTextResults().stream()
+                    .mapToDouble(SearchResultItem::getScore)
+                    .average()
+                    .orElse(0.0);
+
+            double avgImageScore = result.getImageResults().stream()
+                    .mapToDouble(SearchResultItem::getScore)
+                    .average()
+                    .orElse(0.0);
+
+            log.info("✅ [RAG] Recherche terminée en {}ms - Textes: {} (avg: {:.3f}) | Images: {} (avg: {:.3f})",
+                    duration.toMillis(),
+                    result.getTextResults().size(), avgTextScore,
+                    result.getImageResults().size(), avgImageScore);
+        } else {
+            log.debug("✅ [RAG] Recherche terminée en {}ms - {} résultats totaux",
+                    duration.toMillis(), result.getTotalResults());
+        }
+
+        // TODO: Micrometer si enableMetrics = true
+    }
+
+    // ========================================================================
+    // PUBLIC API - CACHE MANAGEMENT
+    // ========================================================================
+
+    @CacheEvict(value = "multimodal-rag-search", allEntries = true)
+    public void invalidateCacheAfterIngestion() {
+        log.info("🗑️ [RAG] Cache invalidé après ingestion");
+    }
+
+    @CacheEvict(value = "multimodal-rag-search", allEntries = true)
+    public void invalidateCacheForUser(String userId) {
+        log.info("🗑️ [RAG] Cache invalidé (global) - Demande purge user: {}", userId);
+    }
+
+    @CacheEvict(value = "multimodal-rag-search", allEntries = true)
+    public void clearCache() {
+        log.info("🗑️ [RAG] Cache entièrement vidé");
+    }
+
+    // ========================================================================
+    // PUBLIC API - STATISTICS
+    // ========================================================================
+
+    public RagStatistics getStatistics() {
+        return new RagStatistics(
+                0, // textStore.count() si dispo
+                0, // imageStore.count() si dispo
+                searchTimeoutSeconds,
+                threadPoolSize,
+                minScore,
+                maxRetries
+        );
+    }
+
+    public record RagStatistics(
+            int textEmbeddingsCount,
+            int imageEmbeddingsCount,
+            int searchTimeoutSeconds,
+            int threadPoolSize,
+            double minScore,
+            int maxRetries
+    ) {}
+
+    // ========================================================================
+    // LIFECYCLE - CLEANUP
+    // ========================================================================
+
+    @PreDestroy
+    public void shutdown() {
+        log.info("🛑 [RAG] Arrêt du service...");
+
+        searchExecutor.shutdown();
+
+        try {
+            if (!searchExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                log.warn("⚠️ [RAG] Timeout arrêt thread pool - Force shutdown");
+                List<Runnable> dropped = searchExecutor.shutdownNow();
+                log.warn("⚠️ [RAG] Tâches annulées: {}", dropped.size());
+
+                if (!searchExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                    log.error("❌ [RAG] Thread pool ne s'arrête pas");
+                }
+            }
+
+            log.info("✅ [RAG] Service arrêté proprement");
+
+        } catch (InterruptedException e) {
+            log.error("❌ [RAG] Interruption lors de l'arrêt", e);
+            searchExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
         }
     }
-    
-    @Data
-    @Builder
-    @AllArgsConstructor
-    private static class SearchResultWithMetrics<T> {
-        private List<T> results;
-        private SearchMetrics metrics;
-        
-        public static <T> SearchResultWithMetrics<T> error() {
-            return new SearchResultWithMetrics<>(
-                Collections.emptyList(), 
-                SearchMetrics.empty()
-            );
-        }
+
+    // ========================================================================
+    // UTILITY METHODS
+    // ========================================================================
+
+    private String truncate(String text, int maxLength) {
+        if (text == null) return "null";
+        if (text.length() <= maxLength) return text;
+        return text.substring(0, maxLength - 3) + "...";
     }
-    
-    @Data
-    @Builder
-    public static class SearchMetrics {
-        private int resultCount;
-        private double averageScore;
-        private double maxScore;
-        private double minScore;
-        private long durationMs;
-        
-        public static SearchMetrics empty() {
-            return SearchMetrics.builder()
-                .resultCount(0)
-                .averageScore(0.0)
-                .maxScore(0.0)
-                .minScore(0.0)
-                .durationMs(0)
-                .build();
-        }
-    }
-    
-    /**
-     * ✅ NOUVEAU v3.0: Résultat de validation
-     */
-    @Data
-    @AllArgsConstructor
+
+    // ========================================================================
+    // INNER CLASSES - DTOs
+    // ========================================================================
+
     private static class ValidationResult {
-        private boolean valid;
-        private String errorMessage;
-        private int validatedMaxResults;
-        
-        public static ValidationResult valid(int validatedMaxResults) {
-            return new ValidationResult(true, null, validatedMaxResults);
+        private final boolean valid;
+        private final String sanitizedQuery;
+        private final int sanitizedMaxResults;
+
+        private ValidationResult(boolean valid, String query, int maxResults) {
+            this.valid = valid;
+            this.sanitizedQuery = query;
+            this.sanitizedMaxResults = maxResults;
         }
-        
-        public static ValidationResult invalid(String errorMessage) {
-            return new ValidationResult(false, errorMessage, 0);
+
+        static ValidationResult valid(String query, int maxResults) {
+            return new ValidationResult(true, query, maxResults);
+        }
+
+        static ValidationResult invalid() {
+            return new ValidationResult(false, null, 0);
+        }
+
+        boolean isValid() { return valid; }
+        String getSanitizedQuery() { return sanitizedQuery; }
+        int getSanitizedMaxResults() { return sanitizedMaxResults; }
+
+        CacheableSearchResult getEmptyResult() {
+            CacheableSearchResult result = new CacheableSearchResult();
+            result.setTextResults(new ArrayList<>());
+            result.setImageResults(new ArrayList<>());
+            result.setHasError(true);
+            result.setErrorMessage("Query invalide");
+            result.setTimestamp(System.currentTimeMillis());
+            return result;
         }
     }
+
+    /**
+     * ✅ APPROCHE A: SearchResults enrichi avec durées
+     */
+    private record SearchResults(
+            List<EmbeddingMatch<TextSegment>> textMatches,
+            List<EmbeddingMatch<TextSegment>> imageMatches,
+            long textDurationMs,
+            long imageDurationMs
+    ) {}
+
+    /**
+     * ✅ APPROCHE A: Résultat de recherche avec durée
+     */
+    private record TimedSearchResult(
+            List<EmbeddingMatch<TextSegment>> matches,
+            long durationMs
+    ) {}
 }
 
 /*
  * ============================================================================
- * AMÉLIORATIONS VERSION 3.0
+ * APPROCHE A - ADAPTATIONS v3.3
  * ============================================================================
  * 
- * ✅ Gestion Resources
- *    - @PreDestroy pour shutdown propre ExecutorService
- *    - Évite memory leaks en production
+ * CHANGEMENTS PAR RAPPORT À v3.2:
  * 
- * ✅ Timeout
- *    - CompletableFuture.get(timeout, TimeUnit)
- *    - Évite threads bloqués indéfiniment
+ * 1. ✅ CONVERSION TEXTSEGMENT → SEARCHRESULTITEM
+ *    - Utilise CacheableSearchResult.fromTextSegment(segment, score)
+ *    - Préserve toutes les métadonnées (source, type, page, etc.)
+ *    - Score extrait de EmbeddingMatch.score()
  * 
- * ✅ Cache Amélioré
- *    - Clé hash sécurisée (pas de collision)
- *    - Invalidation automatique (1h)
- *    - Invalidation après ingestion
+ * 2. ✅ MÉTRIQUES ENRICHIES
+ *    - SearchResults inclut maintenant textDurationMs et imageDurationMs
+ *    - TimedSearchResult capture durée de chaque recherche
+ *    - calculateMetrics() calcule automatiquement avg/min/max scores
  * 
- * ✅ Validation Stricte
- *    - Query: null, vide, trop longue (>1000)
- *    - MaxResults: <=0, trop élevé
+ * 3. ✅ CACHEABLESEARCHRESULT COMPLET
+ *    - textResults: List<SearchResultItem>
+ *    - imageResults: List<SearchResultItem>
+ *    - textMetrics: SearchMetrics (count, duration, scores)
+ *    - imageMetrics: SearchMetrics (count, duration, scores)
+ *    - totalDurationMs: durée totale end-to-end
+ *    - wasCached: false (sera true si cache hit)
+ *    - timestamp: pour debug/expiration
  * 
- * ✅ Logs Améliorés
- *    - Truncate query (50 chars)
- *    - Logs structurés pour parsing
+ * 4. ✅ VALIDATION RESULT
+ *    - getEmptyResult() retourne maintenant un CacheableSearchResult enrichi
+ *    - Avec hasError=true et errorMessage explicite
  * 
- * ✅ Métriques Enrichies
- *    - embeddingVersion (invalidation cache)
- *    - wasCached (monitoring)
- *    - userId (cache personnalisé)
+ * ============================================================================
+ * UTILISATION DANS RAGTOOLS (APPROCHE A):
+ * ============================================================================
  * 
- * ✅ Production-Ready
- *    - Gestion erreurs robuste
- *    - Retry avec backoff exponentiel
- *    - Thread pool configuré
+ * ```java
+ * // RAGTools appelle le service
+ * CacheableSearchResult cacheResult = ragService.search(query, limit, userId);
  * 
- * MÉTRIQUES ESTIMÉES:
- * - Latence: -50% (parallélisme)
- * - Fiabilité: +95% (timeouts + retry)
- * - Maintenabilité: +80% (validation + logs)
- * - Coût: -90% (cache efficace)
+ * // Conversion transparente via méthodes helper
+ * List<TextSegment> textSegments = cacheResult.getTextResultsAsSegments();
+ * List<TextSegment> imageSegments = cacheResult.getImageResultsAsSegments();
+ * 
+ * // Filtrage + Pagination standard (TextSegment)
+ * List<TextSegment> filtered = filterByFileType(textSegments, fileType);
+ * PaginationResult<TextSegment> paginated = paginate(filtered, page, size);
+ * 
+ * // Formatage standard (TextSegment.metadata())
+ * String result = formatDocumentResults(paginated, query, fileType, duration);
+ * ```
+ * 
+ * ============================================================================
+ * FLOW COMPLET:
+ * ============================================================================
+ * 
+ * 1. search(query, maxResults, userId)
+ *    ↓
+ * 2. Validation + Génération embedding
+ *    ↓
+ * 3. Recherche parallèle (timeout-safe)
+ *    → textStore.findRelevant() → List<EmbeddingMatch<TextSegment>> + durée
+ *    → imageStore.findRelevant() → List<EmbeddingMatch<TextSegment>> + durée
+ *    ↓
+ * 4. convertAndBuildResult()
+ *    → Filtrage par minScore
+ *    → Conversion: EmbeddingMatch → SearchResultItem via fromTextSegment()
+ *    → Calcul métriques: avg/min/max scores
+ *    → Construction CacheableSearchResult complet
+ *    ↓
+ * 5. Mise en cache Redis (via @Cacheable)
+ *    → Sérialisation JSON de CacheableSearchResult
+ *    → Key = hash(query) + user + maxResults + minScore + version
+ *    ↓
+ * 6. Retour à RAGTools
+ *    → RAGTools utilise getTextResultsAsSegments()
+ *    → Conversion transparente SearchResultItem → TextSegment
+ *    → Formatage standard avec TextSegment
+ * 
+ * ============================================================================
+ * CACHE HIT FLOW:
+ * ============================================================================
+ * 
+ * 1. search(query, maxResults, userId) - @Cacheable
+ *    ↓
+ * 2. Redis: GET cache-key
+ *    ↓
+ * 3. Désérialisation CacheableSearchResult depuis JSON
+ *    ↓
+ * 4. Retour direct à RAGTools (0 recherche vector store)
+ *    → wasCached = true
+ *    → Durées = 0ms (ou durées cachées)
+ * 
+ * ============================================================================
+ * TESTS SUGGÉRÉS:
+ * ============================================================================
+ * 
+ * @Test
+ * public void testSearchWithMetrics() {
+ *     CacheableSearchResult result = service.search("test query", 10, "user123");
+ *     
+ *     assertNotNull(result);
+ *     assertNotNull(result.getTextResults());
+ *     assertNotNull(result.getImageResults());
+ *     assertNotNull(result.getTextMetrics());
+ *     assertTrue(result.getTotalDurationMs() > 0);
+ *     assertFalse(result.isWasCached()); // Premier appel
+ *     
+ *     // Vérifier conversion TextSegment
+ *     List<TextSegment> segments = result.getTextResultsAsSegments();
+ *     assertNotNull(segments);
+ *     
+ *     // Scores cohérents
+ *     if (!result.getTextResults().isEmpty()) {
+ *         assertEquals(
+ *             result.getTextMetrics().getResultCount(),
+ *             result.getTextResults().size()
+ *         );
+ *     }
+ * }
  */
