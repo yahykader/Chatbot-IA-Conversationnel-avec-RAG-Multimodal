@@ -1,0 +1,264 @@
+# ============================================================================
+# APPLICATION.YML - Configuration Complète Corrigée
+# ============================================================================
+app:
+  cors:
+    allowed-origins: http://localhost:4200
+    max-age: 3600
+
+server:
+  port: 8090
+
+spring:
+  application:
+    name: transaction-service
+
+  # ===========================================================================
+  # File Upload (Multipart)
+  # ===========================================================================
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+  # ===========================================================================
+  # POSTGRESQL + PGVECTOR (DataSource + JPA)
+  # ===========================================================================
+  datasource:
+    url: jdbc:postgresql://${PGVECTOR_HOST:localhost}:${PGVECTOR_PORT:5432}/${PGVECTOR_DATABASE:vectordb}
+    username: ${PGVECTOR_USER:admin}
+    password: ${PGVECTOR_PASSWORD:1234}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  jpa:
+    hibernate:
+      ddl-auto: update  # ✅ CORRECTION: 'update' au lieu de 'create' (préserve données)
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        jdbc:
+          batch_size: 20
+        order_inserts: true
+        order_updates: true
+        cache:
+          use_second_level_cache: false
+          use_query_cache: false
+      javax:
+        persistence:
+          sharedCache:
+            mode: NONE
+
+  # ===========================================================================
+  # Redis (Spring Data Redis + Cache)
+  # ===========================================================================
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:dev_password_123}
+      database: 0
+      timeout: 5000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 2
+          max-wait: 3000ms
+        shutdown-timeout: 100ms
+
+  # ===========================================================================
+  # Cache Configuration (Spring Cache)
+  # ===========================================================================
+  cache:
+    type: redis
+    redis:
+      time-to-live: 86400000  # 24 heures (millisecondes)
+      cache-null-values: false
+      key-prefix: "rag-cache:"
+      use-key-prefix: true
+    cache-names:
+      - multimodalSearch     # Cache recherches RAG
+      - llm-responses        # Cache réponses LLM
+      - embeddings           # Cache embeddings
+      - vision-analysis      # Cache Vision AI (30 jours)
+
+# ===========================================================================
+# OpenAI Configuration
+# ===========================================================================
+openai:
+  api:
+    # ⚠️ ATTENTION SÉCURITÉ: Utiliser variable d'environnement en production
+    key: ${OPENAI_API_KEY:sk-your-api-key-here}
+  
+  embedding:
+    model: text-embedding-3-small
+  
+  chat:
+    model: gpt-4o
+    temperature: 0.7
+    max-tokens: 2000
+    timeout-seconds: 60
+    max-retries: 3
+    log-requests: false
+    log-responses: false
+
+# ===========================================================================
+# Configuration Documents & Images
+# ===========================================================================
+document:
+  images:
+    storage-path: D:/Formation-DATA-2024/extracted-images
+    #${IMAGES_STORAGE_PATH:D:/Formation-DATA-2024/extracted-images}
+  
+  # Limites fichiers
+  max-file-size-mb: 25
+  max-pages: 100
+  max-images-per-file: 100
+  
+  # Cache Vision AI
+  enable-vision-cache: true
+
+# ===========================================================================
+# Configuration RAG Multimodal
+# ===========================================================================
+rag:
+  # Recherche
+  min-score: 0.7
+  default-max-results: 5
+  max-allowed-results: 50
+  search-timeout-seconds: 30
+  
+  # Parallélisme
+  parallel-search-threads: 4
+  
+  # Retry
+  max-retries: 3
+  retry-delay-ms: 1000
+  
+  # Cache
+  cache-ttl-hours: 24
+  cache-eviction-interval-hours: 1
+  
+  # Embeddings
+  max-query-length: 1000
+  embedding-batch-size: 100
+  
+  # Monitoring
+  verbose-logging: false
+  enable-metrics: true
+  
+  # Tools
+  tools:
+    max-document-results: 5
+    max-image-results: 3
+    max-multimodal-results: 4
+    max-allowed-results: 50 
+    min-query-length: 3
+    max-query-length: 500
+    max-result-text-length: 1000
+    show-metrics: true
+    filter-by-document-type: true
+    include-metadata: true
+
+# ===========================================================================
+# Assistant Configuration
+# ===========================================================================
+assistant:
+  stream:
+    timeout-seconds: 120
+    heartbeat-interval-seconds: 30
+  
+  chat:
+    max-message-length: 5000
+    min-message-length: 1
+    timeout-seconds: 120
+
+  # Configuration contexte
+  context:
+    max-exchanges: 5                  # Max échanges conservés
+    max-tokens: 4000                  # Max tokens contexte
+    ttl-hours: 24                     # Durée vie Redis
+  
+  # Rate limiting
+  rate-limit:
+    requests-per-minute: 10           # Limite par utilisateur
+  
+  upload:
+    max-file-size: 20971520  # 20 MB
+    max-concurrent: 3 # Uploads simultanés par user
+    allowed-extensions: pdf,png,jpg,jpeg,gif,bmp,webp,tiff,txt,md,csv,json,xml,html,docx,doc,pptx,ppt,xlsx,xls,log,java,py,js,ts,cpp,c,h
+
+# ===========================================================================
+# PGVector Configuration (Variables d'environnement)
+# ===========================================================================
+pgvector:
+  host: ${PGVECTOR_HOST:localhost}
+  port: ${PGVECTOR_PORT:5432}
+  database: ${PGVECTOR_DATABASE:vectordb}
+  user: ${PGVECTOR_USER:admin}
+  password: ${PGVECTOR_PASSWORD:1234}
+  dimension: 1536
+  connection:
+    pool:
+      size: 10
+    timeout: 30
+  validation:
+    enabled: true
+
+# ===========================================================================
+# Logging
+# ===========================================================================
+logging:
+  level:
+    root: INFO
+    com.exemple: DEBUG
+    com.exemple.transactionservice: INFO
+    com.exemple.transactionservice.service.MultimodalRAGService: ${RAG_LOG_LEVEL:INFO}
+    com.exemple.transactionservice.service.MultimodalIngestionService: INFO
+    dev.langchain4j: INFO
+    dev.ai4j.openai4j: INFO
+    ai.djl: OFF
+    org.springframework.web: INFO
+    org.springframework.cache: INFO
+    org.springframework.data.redis: WARN
+    reactor.netty: WARN
+    org.postgresql: WARN
+  
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+# ===========================================================================
+# Actuator / Management
+# ===========================================================================
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,caches,prometheus
+  
+  endpoint:
+    health:
+      show-details: always
+    caches:
+      enabled: true
+  
+  metrics:
+    enable:
+      cache: true
+      jvm: true
+      system: true
+    export:
+      prometheus:
+        enabled: true
+  
+  health:
+    defaults:
+      enabled: true
