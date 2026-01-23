@@ -6,7 +6,7 @@ package com.exemple.transactionservice.controller;
 import com.exemple.transactionservice.service.ConversationalAssistant;
 import com.exemple.transactionservice.service.MultimodalIngestionService;
 import com.exemple.transactionservice.service.UploadRateLimiter;
-import com.exemple.transactionservice.util.PersistentMultipartFile;
+import com.exemple.transactionservice.util.InMemoryMultipartFile;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
@@ -27,6 +27,9 @@ import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.stream.Collectors;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * ✅ AssistantController v2.2 - Fix Upload Async avec Fichier Persistant
@@ -69,6 +72,8 @@ public class AssistantController {
 
     // Tracking jobs upload
     private final ConcurrentHashMap<String, UploadJob> uploadJobs = new ConcurrentHashMap<>();
+    // déduplication par hash
+    private final ConcurrentHashMap<String, String> ongoingUploads = new ConcurrentHashMap<>();
 
     public AssistantController(
             MultimodalIngestionService ingestionService,
@@ -87,13 +92,10 @@ public class AssistantController {
                  maxFileSize / (1024 * 1024), maxConcurrentUploads);
     }
 
-    // ========================================================================
-    // UPLOAD - VERSION CORRIGÉE v2.2 (Fix Async File Persistence)
-    // ========================================================================
+    // ============================================================================
+    // MÉTHODE UPLOAD COMPLÈTE - Version corrigée avec InMemoryMultipartFile
+    // ============================================================================
 
-    /**
-     * ✅ CORRIGÉ v2.2: Upload avec sauvegarde fichier AVANT async
-     */
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<?> uploadFile(
             @RequestParam("file") MultipartFile file,
@@ -101,12 +103,11 @@ public class AssistantController {
         
         Instant start = Instant.now();
         String jobId = UUID.randomUUID().toString();
-        Path savedFilePath = null;
         
         try {
-            // ========================================
+            // ========================================================================
             // VALIDATION
-            // ========================================
+            // ========================================================================
             
             // Validation vide
             if (file.isEmpty()) {
@@ -122,12 +123,12 @@ public class AssistantController {
                 double maxMB = maxFileSize / (1024.0 * 1024.0);
                 
                 log.warn("⚠️ [{}] Fichier trop volumineux: {:.2f} MB (max: {:.2f} MB)", 
-                         jobId, sizeMB, maxMB);
+                        jobId, sizeMB, maxMB);
                 
                 return ResponseEntity.badRequest().body(Map.of(
                     "success", false,
                     "error", String.format("Fichier trop volumineux: %.2f MB (max: %.2f MB)", 
-                                           sizeMB, maxMB)
+                                        sizeMB, maxMB)
                 ));
             }
             
@@ -144,7 +145,7 @@ public class AssistantController {
             String extension = getFileExtension(filename).toLowerCase();
             if (!isExtensionAllowed(extension)) {
                 log.warn("⚠️ [{}] Extension non autorisée: {} (fichier: {})", 
-                         jobId, extension, filename);
+                        jobId, extension, filename);
                 
                 return ResponseEntity.badRequest().body(Map.of(
                     "success", false,
@@ -156,9 +157,9 @@ public class AssistantController {
             // Sanitize nom fichier
             String sanitizedFilename = sanitizeFilename(filename);
             
-            // ========================================
+            // ========================================================================
             // RATE LIMITING
-            // ========================================
+            // ========================================================================
             
             if (!uploadRateLimiter.tryAcquire(userId)) {
                 log.warn("⚠️ [{}] Rate limit upload dépassé pour user: {}", jobId, userId);
@@ -170,50 +171,62 @@ public class AssistantController {
                 ));
             }
             
-            // ========================================
-            // ✅ NOUVEAU v2.2: SAUVEGARDE FICHIER AVANT ASYNC
-            // ========================================
+            // ========================================================================
+            // ✅ COPIE EN MÉMOIRE + DÉDUPLICATION (fingerprint)
+            // ========================================================================
             
             try {
-                // Créer répertoire temporaire si nécessaire
-                Path tempDir = Paths.get(uploadTempDir);
-                if (!Files.exists(tempDir)) {
-                    Files.createDirectories(tempDir);
-                    log.info("📁 [Controller] Répertoire temporaire créé: {}", tempDir);
+                log.info("📤 [{}] Upload démarré: {} ({} KB) - User: {}", 
+                        jobId, sanitizedFilename, file.getSize() / 1024, userId);
+                
+                // 1) Copier le fichier en mémoire AVANT l'async
+                byte[] fileContent = file.getBytes();
+                
+                log.info("💾 [{}] Fichier copié en mémoire: {} bytes ({} KB)", 
+                        jobId, fileContent.length, fileContent.length / 1024);
+                
+                // 2) Fingerprint pour idempotence (anti-double upload/retry client)
+                String fingerprint = userId + ":" + sha256(fileContent);
+
+                // Si upload identique déjà en cours => renvoyer job existant
+                String existingJobId = ongoingUploads.putIfAbsent(fingerprint, jobId);
+                if (existingJobId != null) {
+                    log.warn("⚠️ [{}] Upload dupliqué détecté (fingerprint match). Retour job existant: {} file={}",
+                            jobId, existingJobId, sanitizedFilename);
+
+                    // Important: on ne traite pas => on libère immédiatement le slot rate limiter
+                    uploadRateLimiter.release(userId);
+
+                    return ResponseEntity.ok(Map.of(
+                            "success", true,
+                            "message", "Upload déjà en cours (dédupliqué)",
+                            "jobId", existingJobId,
+                            "filename", sanitizedFilename,
+                            "size", file.getSize(),
+                            "sizeKB", file.getSize() / 1024,
+                            "deduplicated", true
+                    ));
                 }
                 
-                // Générer nom unique pour fichier temporaire
-                String safeFilename = jobId + "_" + sanitizedFilename;
-                savedFilePath = tempDir.resolve(safeFilename);
-                
-                // Sauvegarder le fichier sur disque
-                file.transferTo(savedFilePath.toFile());
-                
-                log.info("💾 [{}] Fichier sauvegardé temporairement: {} ({} KB)", 
-                         jobId, savedFilePath.getFileName(), file.getSize() / 1024);
-                
-                // ✅ Créer MultipartFile persistant pour traitement async
-                final MultipartFile persistentFile = new PersistentMultipartFile(
-                    savedFilePath, 
-                    filename,
-                    file.getContentType()
+                // 3) Créer un MultipartFile en mémoire (thread-safe)
+                final MultipartFile inMemoryFile = new InMemoryMultipartFile(
+                    file.getName(),
+                    filename,  // Garder le nom original
+                    file.getContentType(),
+                    fileContent
                 );
                 
-                // ========================================
-                // UPLOAD ASYNC AVEC FICHIER PERSISTANT
-                // ========================================
+                log.info("✅ [{}] InMemoryMultipartFile créé: {} bytes disponibles", 
+                        jobId, inMemoryFile.getSize());
                 
-                log.info("📤 [{}] Upload démarré: {} ({} KB) - User: {}", 
-                         jobId, sanitizedFilename, file.getSize() / 1024, userId);
-                
-                // Créer job
+                // 4) Créer le job de tracking
                 UploadJob job = new UploadJob(jobId, sanitizedFilename, file.getSize());
                 uploadJobs.put(jobId, job);
                 
-                // ✅ Référence finale pour lambda
-                final Path filePathToDelete = savedFilePath;
+                // ========================================================================
+                // TRAITEMENT ASYNCHRONE
+                // ========================================================================
                 
-                // Processing async
                 CompletableFuture.runAsync(() -> {
                     try {
                         job.setStatus(UploadStatus.PROCESSING);
@@ -221,73 +234,63 @@ public class AssistantController {
                         
                         log.info("🔄 [{}] Ingestion en cours: {}", jobId, sanitizedFilename);
                         
-                        // ✅ CORRECTION: Utiliser le fichier persistant
-                        ingestionService.ingestFile(persistentFile);
+                        // ✅ INGESTION avec fichier en mémoire (thread-safe, pas de problème de fichier supprimé)
+                        ingestionService.ingestFile(inMemoryFile);
                         
                         job.setStatus(UploadStatus.COMPLETED);
                         job.setProgress(100);
                         
                         Duration duration = Duration.between(start, Instant.now());
-                        log.info("✅ [{}] Upload terminé: {} en {}ms", 
-                                 jobId, sanitizedFilename, duration.toMillis());
+                        log.info("✅ [{}] Upload terminé avec succès: {} en {}ms", 
+                                jobId, sanitizedFilename, duration.toMillis());
                         
                         // Métriques
                         recordUploadMetrics(sanitizedFilename, file.getSize(), true, duration);
                         
                     } catch (Exception e) {
-                        log.error("❌ [{}] Erreur ingestion: {}", jobId, sanitizedFilename, e);
+                        log.error("❌ [{}] Erreur lors de l'ingestion: {}", jobId, sanitizedFilename, e);
                         
                         job.setStatus(UploadStatus.FAILED);
                         job.setProgress(0);
                         job.setErrorMessage(e.getMessage());
                         
                         recordUploadMetrics(sanitizedFilename, file.getSize(), false, 
-                                          Duration.between(start, Instant.now()));
+                                        Duration.between(start, Instant.now()));
                         
                     } finally {
-                        // ✅ NOUVEAU v2.2: Nettoyer fichier temporaire
-                        try {
-                            if (filePathToDelete != null && Files.exists(filePathToDelete)) {
-                                Files.delete(filePathToDelete);
-                                log.debug("🗑️ [{}] Fichier temporaire supprimé: {}", 
-                                         jobId, filePathToDelete.getFileName());
-                            }
-                        } catch (IOException e) {
-                            log.warn("⚠️ [{}] Impossible de supprimer fichier temporaire: {}", 
-                                    jobId, e.getMessage());
-                        }
-                        
-                        // Libérer slot rate limiter
+                        // ✅ Libérer le slot du rate limiter
                         uploadRateLimiter.release(userId);
                         
-                        // Nettoyer job après 5 minutes
-                        scheduler.schedule(() -> uploadJobs.remove(jobId), 5, TimeUnit.MINUTES);
+                        // ✅ Nettoyer le job après 5 minutes
+                        scheduler.schedule(() -> {
+                            uploadJobs.remove(jobId);
+                            log.debug("🗑️ [{}] Job nettoyé du cache", jobId);
+                        }, 5, TimeUnit.MINUTES);
                     }
                 });
                 
-                // Retour immédiat
+                // ========================================================================
+                // RETOUR IMMÉDIAT AU CLIENT
+                // ========================================================================
+                
                 return ResponseEntity.ok(Map.of(
                     "success", true,
-                    "message", "Upload démarré",
+                    "message", "Upload démarré avec succès",
                     "jobId", jobId,
                     "filename", sanitizedFilename,
-                    "size", file.getSize()
+                    "size", file.getSize(),
+                    "sizeKB", file.getSize() / 1024
                 ));
                 
-            } catch (Exception e) {
-                // ✅ Libérer et nettoyer en cas d'erreur de sauvegarde
+            } catch (IOException e) {
+                // Erreur lors de la lecture du fichier
+                log.error("❌ [{}] Erreur lecture fichier: {}", jobId, e.getMessage());
                 uploadRateLimiter.release(userId);
                 
-                // Nettoyer fichier temporaire en cas d'erreur
-                if (savedFilePath != null) {
-                    try {
-                        Files.deleteIfExists(savedFilePath);
-                    } catch (IOException ex) {
-                        log.warn("⚠️ Impossible de supprimer fichier temporaire après erreur");
-                    }
-                }
-                
-                throw e;
+                return ResponseEntity.status(500).body(Map.of(
+                    "success", false,
+                    "error", "Impossible de lire le fichier: " + e.getMessage()
+                ));
             }
             
         } catch (IllegalArgumentException e) {
@@ -298,11 +301,29 @@ public class AssistantController {
             ));
             
         } catch (Exception e) {
-            log.error("❌ [{}] Erreur upload", jobId, e);
+            log.error("❌ [{}] Erreur inattendue lors de l'upload", jobId, e);
             return ResponseEntity.status(500).body(Map.of(
                 "success", false,
                 "error", "Erreur serveur lors de l'upload"
             ));
+        }
+    }
+
+    /**
+     * SHA-256 hex (idempotence fingerprint).
+     * Placez cette méthode dans votre controller (ou un util).
+     */
+    private static String sha256(byte[] data) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] digest = md.digest(data);
+            StringBuilder sb = new StringBuilder(digest.length * 2);
+            for (byte b : digest) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 not available", e);
         }
     }
 
@@ -444,19 +465,38 @@ public class AssistantController {
     // MÉTHODES PRIVÉES - VALIDATION
     // ========================================================================
 
+    /**
+     * Extrait l'extension d'un fichier
+     */
     private String getFileExtension(String filename) {
+        if (filename == null || filename.isBlank()) {
+            return "";
+        }
+        
         int lastDot = filename.lastIndexOf('.');
-        if (lastDot == -1) return "";
-        return filename.substring(lastDot + 1);
+        if (lastDot == -1 || lastDot == filename.length() - 1) {
+            return "";
+        }
+        
+        return filename.substring(lastDot + 1).toLowerCase();
     }
 
+    /**
+     * Vérifie si l'extension est autorisée
+     */
     private boolean isExtensionAllowed(String extension) {
-        Set<String> allowed = Arrays.stream(allowedExtensions.split(","))
-            .map(String::trim)
-            .map(String::toLowerCase)
-            .collect(Collectors.toSet());
+        if (allowedExtensions == null || allowedExtensions.isBlank()) {
+            return true; // Tout est autorisé si non configuré
+        }
         
-        return allowed.contains(extension.toLowerCase());
+        String[] allowed = allowedExtensions.toLowerCase().split(",");
+        for (String ext : allowed) {
+            if (ext.trim().equals(extension)) {
+                return true;
+            }
+        }
+        
+        return false;
     }
 
     private String sanitizeFilename(String filename) {

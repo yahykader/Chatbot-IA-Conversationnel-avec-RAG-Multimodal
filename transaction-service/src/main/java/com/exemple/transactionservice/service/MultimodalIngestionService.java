@@ -51,6 +51,8 @@ import java.time.ZoneId;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
+import java.util.concurrent.*;
+
 
 /**
  * ✅ Service d'ingestion multimodale - Version 2.1 Production-Ready avec Rollback Complet
@@ -83,6 +85,12 @@ public class MultimodalIngestionService {
 
     // ✅ NOUVEAU v2.1: Tracking des embeddings pour rollback
     private final Map<String, BatchEmbeddings> batchTracker = new ConcurrentHashMap<>();
+    private static final int CHUNK_SIZE = 1000;
+    private static final int CHUNK_OVERLAP = 100;
+    private static final int MIN_SEGMENT_CHARS = 10;
+    
+    // idéalement en @Value("${docx.open.timeoutMs:10000}")
+    private final long docxOpenTimeoutMs = 10_000;
 
     // ✅ Configuration externalisée
     @Value("${document.images.storage-path:D:/Formation-DATA-2024/extracted-images}")
@@ -151,6 +159,17 @@ public class MultimodalIngestionService {
             EmbeddingModel embeddingModel,
             ChatLanguageModel visionModel,
             MultimodalRAGService ragService) {
+
+
+        // ✅ LOG CRITIQUE AU TOUT DÉBUT
+        System.out.println("╔════════════════════════════════════════════════════════╗");
+        System.out.println("║                                                        ║");
+        System.out.println("║   MultimodalIngestionService CONSTRUCTOR              ║");
+        System.out.println("║   Version: 2.1.0 avec FIX DOCX                       ║");
+        System.out.println("║   Thread: " + Thread.currentThread().getName() + "     ║");
+        System.out.println("║                                                        ║");
+        System.out.println("╚════════════════════════════════════════════════════════╝");
+    
         this.textStore = textStore;
         this.imageStore = imageStore;
         this.embeddingModel = embeddingModel;
@@ -160,6 +179,8 @@ public class MultimodalIngestionService {
         this.pdfParser = new ApachePdfBoxDocumentParser();
         this.poiParser = new ApachePoiDocumentParser();
         this.tikaParser = new ApacheTikaDocumentParser();
+
+        System.out.println("✅ Parsers initialisés");
 
         log.info("✅ [Ingestion] Service initialisé");
         log.info("   - Chemin images: {}", imagesStoragePath);
@@ -211,25 +232,47 @@ public class MultimodalIngestionService {
      * ✅ AMÉLIORÉ v2.1: Ingestion avec validation, transaction et rollback complet
      */
     public void ingestFile(MultipartFile file) {
+
+        // ✅ LOGS IMMÉDIATS - AVANT TOUTE OPÉRATION
+        System.out.println("\n╔════════════════════════════════════════════════════════╗");
+        System.out.println("║          ingestFile() APPELÉ                           ║");
+        System.out.println("╚════════════════════════════════════════════════════════╝");
+
         String filename = file.getOriginalFilename();
         String batchId = UUID.randomUUID().toString();
+
+        System.out.println("📥 Filename: " + filename);
+        System.out.println("📥 BatchId: " + batchId);
+        System.out.println("📥 Size: " + file.getSize() + " bytes");
+        System.out.println("📥 Empty: " + file.isEmpty());
+        System.out.println("📥 Content-Type: " + file.getContentType());
         
         log.info("📥 [Ingestion] Batch: {} - Fichier: {} ({} KB)",
                 batchId, filename, String.format("%.2f", file.getSize() / 1024.0));
 
         try {
+            System.out.println("🔍 Starting validation...");
             // Validation stricte
             validateFile(file);
+            System.out.println("✅ Validation passed");
             
             String extension = getFileExtension(filename).toLowerCase();
+            System.out.println("🔍 Extension: " + extension);
+        
+            System.out.println("🔍 Detecting file type...");
             FileType fileType = detectFileType(file, extension);
+
+            System.out.println("🔍 File type detected: " + fileType);
+        
             log.info("🔍 [Ingestion] Type détecté: {}", fileType);
+
+            System.out.println("🔀 Entering switch statement...");
 
             // Traiter selon le type avec batchId pour rollback
             switch (fileType) {
                 case PDF_WITH_IMAGES -> ingestPdfWithImages(file, batchId);
                 case PDF_TEXT_ONLY -> ingestPdfTextOnly(file, batchId);
-                case OFFICE_WITH_IMAGES -> ingestWordWithImages(file, batchId);
+                case OFFICE_DOCX -> ingestDocxDocument(file, batchId);  // NOUVEAU
                 case OFFICE_TEXT_ONLY -> ingestOfficeTextOnly(file, batchId);
                 case IMAGE -> ingestImageFile(file, batchId);
                 case TEXT -> ingestTextFile(file, batchId);
@@ -391,20 +434,29 @@ public class MultimodalIngestionService {
 
     private enum FileType {
         PDF_WITH_IMAGES, PDF_TEXT_ONLY, 
-        OFFICE_WITH_IMAGES, OFFICE_TEXT_ONLY, 
+        OFFICE_DOCX,  // NOUVEAU : type spécifique pour DOCX
+        OFFICE_TEXT_ONLY,  // Pour autres formats Office (xls, ppt, etc.)
         IMAGE, TEXT, UNKNOWN
     }
 
+    // 2. CORRIGER detectFileType - NE PLUS OUVRIR LE FICHIER
     private FileType detectFileType(MultipartFile file, String extension) throws IOException {
         if (KNOWN_IMAGE_TYPES.contains(extension)) return FileType.IMAGE;
         if (KNOWN_TEXT_TYPES.contains(extension)) return FileType.TEXT;
+        
         if (KNOWN_PDF_TYPES.contains(extension)) {
             return pdfHasImages(file) ? FileType.PDF_WITH_IMAGES : FileType.PDF_TEXT_ONLY;
         }
-        if (KNOWN_OFFICE_TYPES.contains(extension)) {
-            return officeHasImages(file, extension) ? 
-                FileType.OFFICE_WITH_IMAGES : FileType.OFFICE_TEXT_ONLY;
+        
+        // CORRECTION CRITIQUE : Pour DOCX, retourner type spécifique sans ouvrir
+        if ("docx".equals(extension)) {
+            return FileType.OFFICE_DOCX;
         }
+        
+        if (KNOWN_OFFICE_TYPES.contains(extension)) {
+            return FileType.OFFICE_TEXT_ONLY;
+        }
+        
         return FileType.UNKNOWN;
     }
 
@@ -628,180 +680,472 @@ public class MultimodalIngestionService {
     }
 
     // ========================================================================
-    // TRAITEMENT WORD AVEC IMAGES
+    // Traitement DOCX unifié - Ouvre le document UNE SEULE FOIS
     // ========================================================================
 
-    private void ingestWordWithImages(MultipartFile file, String batchId) throws IOException {
-        log.info("📘🖼️ [Ingestion] Traitement Word avec images: {}", file.getOriginalFilename());
-        
-        try (InputStream is = file.getInputStream();
-             XWPFDocument document = new XWPFDocument(is)) {
+    private XWPFDocument openDocxWithTimeout(byte[] bytes, String filename, String batchId, long timeoutMs) throws IOException {
+        ExecutorService exec = Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "docx-open-" + (batchId != null ? batchId.substring(0, Math.min(8, batchId.length())) : "unknown"));
+            t.setDaemon(true);
+            return t;
+        });
 
-            StringBuilder fullText = new StringBuilder();
-            int totalImagesExtracted = 0;
-            
-            String baseFilename = sanitizeFilename(
-                file.getOriginalFilename().replaceAll("\\.docx?$", "")
-            );
+        Future<XWPFDocument> future = exec.submit(() -> {
+            try (InputStream is = new ByteArrayInputStream(bytes)) {
+                return new XWPFDocument(is);
+            }
+        });
 
-            int paragraphIndex = 0;
+        try {
+            return future.get(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException te) {
+            future.cancel(true);
+            log.error("❌ [Ingestion] Timeout ouverture DOCX: filename={} batchId={} timeoutMs={}",
+                    filename, batchId, timeoutMs);
+            throw new IOException("Timeout ouverture DOCX (" + timeoutMs + "ms): " + filename, te);
+        } catch (ExecutionException ee) {
+            Throwable cause = ee.getCause() != null ? ee.getCause() : ee;
+            throw new IOException("Erreur ouverture DOCX: " + filename + " (batchId=" + batchId + "): " + cause.getMessage(), cause);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrompu ouverture DOCX: " + filename, ie);
+        } finally {
+            exec.shutdownNow();
+        }
+    }
+    /**
+     * ✅ Ingestion DOCX avec gestion optimisée (ouverture unique + détection images + timeout)
+     */
+    private void ingestDocxDocument(MultipartFile file, String batchId) throws IOException {
+
+        if (file == null) {
+            throw new IOException("MultipartFile null");
+        }
+
+        final String filename = (file.getOriginalFilename() != null && !file.getOriginalFilename().isBlank())
+                ? file.getOriginalFilename()
+                : "unknown.docx";
+
+        if (file.isEmpty() || file.getSize() == 0) {
+            log.warn("[Ingestion] DOCX vide: filename={} batchId={}", filename, batchId);
+            throw new IOException("Fichier DOCX vide: " + filename);
+        }
+
+        log.info("📘 [Ingestion] DOCX reçu: filename={} sizeBytes={} batchId={}",
+                filename, file.getSize(), batchId);
+
+        final long t0 = System.nanoTime();
+
+        final byte[] bytes;
+        try {
+            bytes = file.getBytes();
+        } catch (Exception e) {
+            log.error("❌ [Ingestion] Impossible de lire les bytes DOCX: filename={} batchId={}", filename, batchId, e);
+            throw new IOException("Impossible de lire le fichier: " + filename, e);
+        }
+
+        if (log.isDebugEnabled()) {
+            log.debug("[Ingestion] DOCX bytes lus: filename={} batchId={} bytes={} elapsedMs={}",
+                    filename, batchId, bytes.length, (System.nanoTime() - t0) / 1_000_000);
+        }
+
+        // Vérification rapide: un DOCX doit être un ZIP (signature "PK")
+        if (bytes.length < 2 || bytes[0] != 'P' || bytes[1] != 'K') {
+            String firstBytes = bytes.length >= 4
+                    ? String.format("%02X %02X %02X %02X", bytes[0], bytes[1], bytes[2], bytes[3])
+                    : "N/A";
+            log.warn("⚠️ [Ingestion] Fichier non-DOCX (signature ZIP absente): filename={} batchId={} firstBytes={}",
+                    filename, batchId, firstBytes);
+            throw new IOException("Le fichier n'est pas un DOCX valide (pas un ZIP OOXML): " + filename);
+        }
+
+        // Ouverture XWPF avec timeout (anti-hang)
+        final long tOpen = System.nanoTime();
+        try (XWPFDocument document = openDocxWithTimeout(bytes, filename, batchId, docxOpenTimeoutMs)) {
+
+            if (log.isDebugEnabled()) {
+                log.debug("[Ingestion] DOCX ouvert: filename={} batchId={} paragraphs={} openElapsedMs={}",
+                        filename, batchId, document.getParagraphs().size(), (System.nanoTime() - tOpen) / 1_000_000);
+            }
+
+            boolean hasImages = hasImagesInDocument(document);
+
+            log.info("🔍 [Ingestion] DOCX analysé: filename={} batchId={} hasImages={}",
+                    filename, batchId, hasImages);
+
+            if (hasImages) {
+                processWordWithImages(document, filename, batchId);
+            } else {
+                processWordTextOnly(document, filename, batchId);
+            }
+
+            log.info("✅ [Ingestion] DOCX traité avec succès: filename={} batchId={} totalElapsedMs={}",
+                    filename, batchId, (System.nanoTime() - t0) / 1_000_000);
+
+        } catch (IOException e) {
+            // on laisse passer les IOException (timeout, invalid docx, etc.)
+            throw e;
+        } catch (Exception e) {
+            log.error("❌ [Ingestion] Échec traitement DOCX: filename={} batchId={}", filename, batchId, e);
+            throw new IOException("Erreur traitement DOCX: " + filename, e);
+        }
+    }
+
+    // 5. MÉTHODE DE DÉTECTION D'IMAGES (sur document ouvert)
+    /**
+     * ✅ Détecte si le document contient des images (document déjà ouvert)
+     */
+    private boolean hasImagesInDocument(XWPFDocument document) {
+        try {
+            // 1) Paragraphes
             for (XWPFParagraph paragraph : document.getParagraphs()) {
-                // Vérifier limite images
-                if (totalImagesExtracted >= maxImagesPerFile) {
-                    log.warn("⚠️ [Ingestion] Limite images atteinte: {}", maxImagesPerFile);
-                    break;
-                }
-                
-                paragraphIndex++;
-                
-                String paragraphText = paragraph.getText();
-                if (paragraphText != null && !paragraphText.trim().isEmpty()) {
-                    fullText.append(paragraphText).append("\n");
-                }
+                List<XWPFRun> runs = paragraph.getRuns();
+                if (runs == null || runs.isEmpty()) continue;
 
-                int imageIndexInParagraph = 0;
-                for (XWPFRun run : paragraph.getRuns()) {
-                    if (totalImagesExtracted >= maxImagesPerFile) break;
-                    
-                    List<XWPFPicture> pictures = run.getEmbeddedPictures();
-                    
-                    for (XWPFPicture picture : pictures) {
-                        if (totalImagesExtracted >= maxImagesPerFile) break;
-                        
-                        totalImagesExtracted++;
-                        imageIndexInParagraph++;
-                        
-                        try {
-                            byte[] imageBytes = picture.getPictureData().getData();
-                            BufferedImage image = ImageIO.read(new ByteArrayInputStream(imageBytes));
+                for (XWPFRun run : runs) {
+                    List<XWPFPicture> pics = run.getEmbeddedPictures();
+                    if (pics != null && !pics.isEmpty()) {
+                        log.debug("✓ [Ingestion] Images trouvées dans paragraphes");
+                        return true;
+                    }
+                }
+            }
 
-                            if (image != null) {
-                                String imageName = String.format("%s_batch%s_para%d_img%d",
-                                    baseFilename, batchId.substring(0, 8), paragraphIndex, imageIndexInParagraph);
-                                
-                                String savedImagePath = saveImageToDisk(image, imageName);
-                                
-                                Map<String, Object> metadata = new HashMap<>();
-                                metadata.put("paragraphIndex", paragraphIndex);
-                                metadata.put("imageNumber", totalImagesExtracted);
-                                metadata.put("source", "docx");
-                                metadata.put("filename", file.getOriginalFilename());
-                                metadata.put("savedPath", savedImagePath);
-                                metadata.put("batchId", batchId);
-                                
-                                analyzeAndIndexImage(image, imageName, metadata, batchId);
-                                
-                                // Logs agrégés
-                                if (totalImagesExtracted % 10 == 0) {
-                                    log.info("📊 [Ingestion] {} images extraites", totalImagesExtracted);
-                                }
-                            }
-                        } catch (Exception e) {
-                            log.warn("⚠️ [Ingestion] Erreur image: {}", e.getMessage());
+            // 2) Headers
+            for (XWPFHeader header : document.getHeaderList()) {
+                for (XWPFParagraph para : header.getParagraphs()) {
+                    List<XWPFRun> runs = para.getRuns();
+                    if (runs == null || runs.isEmpty()) continue;
+
+                    for (XWPFRun run : runs) {
+                        List<XWPFPicture> pics = run.getEmbeddedPictures();
+                        if (pics != null && !pics.isEmpty()) {
+                            log.debug("✓ [Ingestion] Images trouvées dans header");
+                            return true;
                         }
                     }
                 }
             }
 
-            // Headers/Footers (avec limite)
-            if (totalImagesExtracted < maxImagesPerFile) {
-                try {
-                    for (XWPFHeader header : document.getHeaderList()) {
+            // 3) Footers
+            for (XWPFFooter footer : document.getFooterList()) {
+                for (XWPFParagraph para : footer.getParagraphs()) {
+                    List<XWPFRun> runs = para.getRuns();
+                    if (runs == null || runs.isEmpty()) continue;
+
+                    for (XWPFRun run : runs) {
+                        List<XWPFPicture> pics = run.getEmbeddedPictures();
+                        if (pics != null && !pics.isEmpty()) {
+                            log.debug("✓ [Ingestion] Images trouvées dans footer");
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            log.debug("✓ [Ingestion] Aucune image détectée");
+            return false;
+
+        } catch (Exception e) {
+            // gardez le stacktrace en debug si besoin
+            log.warn("⚠️ [Ingestion] Erreur détection images: {}", e.getMessage());
+            return false;
+        }
+    }
+
+
+    // 6. TRAITEMENT WORD AVEC IMAGES (document ouvert)
+    /**
+     * ✅ Traite un document Word avec images (document déjà ouvert)
+     */
+    private void processWordWithImages(XWPFDocument document, String filename, String batchId) {
+        log.info("📘🖼️ [Ingestion] Extraction texte + images: {}", filename);
+
+        StringBuilder fullText = new StringBuilder();
+        int totalImagesExtracted = 0;
+
+        String baseFilename = sanitizeFilename(filename.replaceAll("\\.docx?$", ""));
+        String batchShort = (batchId != null && batchId.length() >= 8) ? batchId.substring(0, 8) : String.valueOf(batchId);
+
+        int paragraphIndex = 0;
+
+        for (XWPFParagraph paragraph : document.getParagraphs()) {
+            if (totalImagesExtracted >= maxImagesPerFile) {
+                log.warn("⚠️ [Ingestion] Limite images atteinte: {}", maxImagesPerFile);
+                break;
+            }
+
+            paragraphIndex++;
+
+            // Texte
+            String paragraphText = paragraph.getText();
+            if (paragraphText != null && !paragraphText.trim().isEmpty()) {
+                fullText.append(paragraphText).append("\n");
+            }
+
+            // Images
+            List<XWPFRun> runs = paragraph.getRuns();
+            if (runs == null || runs.isEmpty()) {
+                continue;
+            }
+
+            int imageIndexInParagraph = 0;
+
+            for (XWPFRun run : runs) {
+                if (totalImagesExtracted >= maxImagesPerFile) break;
+
+                List<XWPFPicture> pictures = run.getEmbeddedPictures();
+                if (pictures == null || pictures.isEmpty()) continue;
+
+                for (XWPFPicture picture : pictures) {
+                    if (totalImagesExtracted >= maxImagesPerFile) break;
+
+                    totalImagesExtracted++;
+                    imageIndexInParagraph++;
+
+                    try {
+                        if (picture.getPictureData() == null) {
+                            log.warn("⚠️ [Ingestion] PictureData null (para {})", paragraphIndex);
+                            continue;
+                        }
+
+                        byte[] imageBytes = picture.getPictureData().getData();
+                        if (imageBytes == null || imageBytes.length == 0) {
+                            log.warn("⚠️ [Ingestion] Image bytes vides (para {})", paragraphIndex);
+                            continue;
+                        }
+
+                        BufferedImage image = ImageIO.read(new ByteArrayInputStream(imageBytes));
+                        if (image == null) {
+                            log.warn("⚠️ [Ingestion] Image non décodable (para {}, img {})", paragraphIndex, imageIndexInParagraph);
+                            continue;
+                        }
+
+                        String imageName = String.format("%s_batch%s_para%d_img%d",
+                                baseFilename, batchShort, paragraphIndex, imageIndexInParagraph);
+
+                        String savedImagePath = saveImageToDisk(image, imageName);
+
+                        Map<String, Object> metadata = new HashMap<>();
+                        metadata.put("paragraphIndex", paragraphIndex);
+                        metadata.put("imageNumber", totalImagesExtracted);
+                        metadata.put("source", "docx");
+                        metadata.put("filename", filename);
+                        metadata.put("savedPath", savedImagePath);
+                        metadata.put("batchId", batchId);
+
+                        analyzeAndIndexImage(image, imageName, metadata, batchId);
+
+                        if (totalImagesExtracted % 10 == 0) {
+                            log.info("📊 [Ingestion] {} images extraites", totalImagesExtracted);
+                        }
+
+                    } catch (Exception e) {
+                        log.warn("⚠️ [Ingestion] Erreur extraction image para {}: {}", paragraphIndex, e.getMessage());
+                    }
+                }
+            }
+        }
+
+        // Headers/Footers
+        if (totalImagesExtracted < maxImagesPerFile) {
+            try {
+                for (XWPFHeader header : document.getHeaderList()) {
+                    totalImagesExtracted = extractImagesFromHeaderFooter(
+                            header.getParagraphs(), "header", baseFilename,
+                            filename, totalImagesExtracted, batchId
+                    );
+                    if (totalImagesExtracted >= maxImagesPerFile) break;
+                }
+
+                if (totalImagesExtracted < maxImagesPerFile) {
+                    for (XWPFFooter footer : document.getFooterList()) {
                         totalImagesExtracted = extractImagesFromHeaderFooter(
-                            header.getParagraphs(), "header", baseFilename, 
-                            file.getOriginalFilename(), totalImagesExtracted, batchId
+                                footer.getParagraphs(), "footer", baseFilename,
+                                filename, totalImagesExtracted, batchId
                         );
                         if (totalImagesExtracted >= maxImagesPerFile) break;
                     }
-                    
-                    if (totalImagesExtracted < maxImagesPerFile) {
-                        for (XWPFFooter footer : document.getFooterList()) {
-                            totalImagesExtracted = extractImagesFromHeaderFooter(
-                                footer.getParagraphs(), "footer", baseFilename, 
-                                file.getOriginalFilename(), totalImagesExtracted, batchId
-                            );
-                            if (totalImagesExtracted >= maxImagesPerFile) break;
-                        }
-                    }
-                } catch (Exception e) {
-                    log.warn("⚠️ [Ingestion] Erreur headers/footers: {}", e.getMessage());
                 }
+            } catch (Exception e) {
+                log.warn("⚠️ [Ingestion] Erreur headers/footers: {}", e.getMessage());
             }
-
-            // Indexer le texte
-            if (fullText.length() > 0) {
-                Map<String, Object> meta = new HashMap<>();
-                meta.put("source", file.getOriginalFilename());
-                meta.put("type", "docx");
-                meta.put("imagesCount", totalImagesExtracted);
-                meta.put("batchId", batchId);
-
-                Metadata metadata = Metadata.from(sanitizeMetadata(meta));
-                indexTextWithMetadata(fullText.toString(), metadata, batchId);
-            }
-
-            log.info("✅ [Ingestion] Word traité: {} paragraphes, {} caractères, {} images",
-                paragraphIndex, fullText.length(), totalImagesExtracted);
         }
+
+        // Indexer texte
+        if (fullText.length() > 0) {
+            Map<String, Object> meta = new HashMap<>();
+            meta.put("source", filename);
+            meta.put("type", "docx");
+            meta.put("imagesCount", totalImagesExtracted);
+            meta.put("batchId", batchId);
+
+            Metadata metadata = Metadata.from(sanitizeMetadata(meta));
+            indexTextWithMetadata(fullText.toString(), metadata, batchId);
+
+            log.info("✅ [Ingestion] Texte indexé: {} caractères", fullText.length());
+        } else {
+            log.warn("⚠️ [Ingestion] Aucun texte extrait du document");
+        }
+
+        log.info("✅ [Ingestion] DOCX traité: {} paragraphes, {} caractères, {} images",
+                paragraphIndex, fullText.length(), totalImagesExtracted);
     }
 
+
+    // 7. TRAITEMENT WORD TEXTE SEULEMENT (document ouvert)
+    /**
+     * ✅ Traite un document Word sans images (document déjà ouvert)
+     */
+    private void processWordTextOnly(XWPFDocument document, String filename, String batchId) {
+        log.info("📘 [Ingestion] Extraction texte uniquement: filename={} batchId={}", filename, batchId);
+
+        if (document == null) {
+            throw new IllegalArgumentException("XWPFDocument null: filename=" + filename);
+        }
+
+        List<XWPFParagraph> paragraphs = document.getParagraphs();
+        if (paragraphs == null || paragraphs.isEmpty()) {
+            throw new IllegalArgumentException("DOCX sans paragraphes: filename=" + filename);
+        }
+
+        StringBuilder fullText = new StringBuilder(Math.max(1024, paragraphs.size() * 80));
+        int paragraphCount = 0;
+
+        for (XWPFParagraph paragraph : paragraphs) {
+            if (paragraph == null) continue;
+
+            String text = paragraph.getText();
+            if (text == null) continue;
+
+            text = text.trim();
+            if (text.isEmpty()) continue;
+
+            // Optionnel: normaliser espaces multiples (utile sur certains DOCX)
+            text = text.replaceAll("\\s+", " ");
+
+            fullText.append(text).append('\n');
+            paragraphCount++;
+        }
+
+        if (fullText.length() == 0) {
+            throw new IllegalArgumentException(
+                    "Document DOCX vide ou sans contenu textuel: filename=" + filename + " batchId=" + batchId
+            );
+        }
+
+        // DEBUG uniquement (prod-friendly)
+        if (log.isDebugEnabled()) {
+            log.debug("📝 [Ingestion] Texte extrait: filename={} batchId={} paragraphs={} chars={}",
+                    filename, batchId, paragraphCount, fullText.length());
+        }
+
+        Map<String, Object> meta = new HashMap<>();
+        meta.put("source", filename);
+        meta.put("type", "docx");
+        meta.put("paragraphCount", paragraphCount);
+        meta.put("charCount", fullText.length());
+        meta.put("batchId", batchId);
+
+        Metadata metadata = Metadata.from(sanitizeMetadata(meta));
+        indexTextWithMetadata(fullText.toString(), metadata, batchId);
+
+        log.info("✅ [Ingestion] DOCX texte traité: filename={} batchId={} paragraphs={} chars={}",
+                filename, batchId, paragraphCount, fullText.length());
+    }
+
+    /*
+     * ✅ Extrait les images des headers/footers d'un document Word
+    */
     private int extractImagesFromHeaderFooter(
-            List<XWPFParagraph> paragraphs, 
+            List<XWPFParagraph> paragraphs,
             String location,
-            String baseFilename, 
-            String originalFilename, 
+            String baseFilename,
+            String originalFilename,
             int currentImageCount,
             String batchId) {
-        
+
+        if (paragraphs == null || paragraphs.isEmpty()) {
+            return currentImageCount;
+        }
+
         int imageCount = currentImageCount;
         int paragraphIndex = 0;
-        
+
+        final String batchShort = (batchId != null && batchId.length() >= 8)
+                ? batchId.substring(0, 8)
+                : String.valueOf(batchId);
+
         for (XWPFParagraph paragraph : paragraphs) {
             if (imageCount >= maxImagesPerFile) break;
-            
+
             paragraphIndex++;
+
+            List<XWPFRun> runs = paragraph.getRuns();
+            if (runs == null || runs.isEmpty()) {
+                continue;
+            }
+
             int imageIndexInParagraph = 0;
-            
-            for (XWPFRun run : paragraph.getRuns()) {
+
+            for (XWPFRun run : runs) {
                 if (imageCount >= maxImagesPerFile) break;
-                
+
                 List<XWPFPicture> pictures = run.getEmbeddedPictures();
-                
+                if (pictures == null || pictures.isEmpty()) {
+                    continue;
+                }
+
                 for (XWPFPicture picture : pictures) {
                     if (imageCount >= maxImagesPerFile) break;
-                    
-                    imageCount++;
-                    imageIndexInParagraph++;
-                    
-                    try {
-                        byte[] imageBytes = picture.getPictureData().getData();
-                        BufferedImage image = ImageIO.read(new ByteArrayInputStream(imageBytes));
 
-                        if (image != null) {
-                            String imageName = String.format("%s_batch%s_%s%d_img%d",
-                                baseFilename, batchId.substring(0, 8), location, paragraphIndex, imageIndexInParagraph);
-                            
-                            String savedImagePath = saveImageToDisk(image, imageName);
-                            
-                            Map<String, Object> metadata = new HashMap<>();
-                            metadata.put("location", location);
-                            metadata.put("imageNumber", imageCount);
-                            metadata.put("source", "docx_" + location);
-                            metadata.put("filename", originalFilename);
-                            metadata.put("savedPath", savedImagePath);
-                            metadata.put("batchId", batchId);
-                            
-                            analyzeAndIndexImage(image, imageName, metadata, batchId);
+                    try {
+                        if (picture == null || picture.getPictureData() == null) {
+                            log.debug("[Ingestion] PictureData null ({} para {})", location, paragraphIndex);
+                            continue;
                         }
+
+                        byte[] imageBytes = picture.getPictureData().getData();
+                        if (imageBytes == null || imageBytes.length == 0) {
+                            log.debug("[Ingestion] Image bytes vides ({} para {})", location, paragraphIndex);
+                            continue;
+                        }
+
+                        BufferedImage image = ImageIO.read(new ByteArrayInputStream(imageBytes));
+                        if (image == null) {
+                            log.debug("[Ingestion] Image non décodable ({} para {})", location, paragraphIndex);
+                            continue;
+                        }
+
+                        imageCount++;
+                        imageIndexInParagraph++;
+
+                        String imageName = String.format("%s_batch%s_%s%d_img%d",
+                                baseFilename, batchShort, location, paragraphIndex, imageIndexInParagraph);
+
+                        String savedImagePath = saveImageToDisk(image, imageName);
+
+                        Map<String, Object> metadata = new HashMap<>();
+                        metadata.put("location", location);
+                        metadata.put("imageNumber", imageCount);
+                        metadata.put("source", "docx_" + location);
+                        metadata.put("filename", originalFilename);
+                        metadata.put("savedPath", savedImagePath);
+                        metadata.put("batchId", batchId);
+
+                        analyzeAndIndexImage(image, imageName, metadata, batchId);
+
                     } catch (Exception e) {
-                        log.warn("⚠️ [Ingestion] Erreur image {}: {}", location, e.getMessage());
+                        log.warn("⚠️ [Ingestion] Erreur extraction image {} (para {}): {}",
+                                location, paragraphIndex, e.getMessage());
                     }
                 }
             }
         }
-        
+
         return imageCount;
     }
+
 
     // ========================================================================
     // TRAITEMENT OFFICE TEXTE UNIQUEMENT
@@ -1008,49 +1352,91 @@ public class MultimodalIngestionService {
 
     /**
      * ✅ AMÉLIORÉ v2.1: Indexation texte avec tracking des IDs
+     * Idéalement en champ (singleton) pour éviter de recréer l'objet splitter
+     * private final DocumentSplitter splitter = DocumentSplitters.recursive(CHUNK_SIZE, CHUNK_OVERLAP);
      */
     private void indexTextWithMetadata(String text, Metadata baseMetadata, String batchId) {
+
+        if (text == null || text.isBlank()) {
+            log.warn("[Ingestion] Texte vide - skip indexation (batchId={})", batchId);
+            return;
+        }
+        if (baseMetadata == null) {
+            baseMetadata = new Metadata();
+        }
+        if (batchId == null || batchId.isBlank()) {
+            batchId = "unknown";
+        }
+
         Document document = Document.from(text, baseMetadata);
 
         List<TextSegment> segments = DocumentSplitters
-                .recursive(1000, 100)
+                .recursive(CHUNK_SIZE, CHUNK_OVERLAP)
                 .split(document);
 
-        log.debug("📊 [Ingestion] Texte divisé en {} segments", segments.size());
-
-        // Obtenir le tracker pour ce batch
         BatchEmbeddings tracker = batchTracker.computeIfAbsent(batchId, k -> new BatchEmbeddings());
 
+        int total = segments.size();
+        int skipped = 0;
         int indexed = 0;
+        int failed = 0;
+
+        // Timestamp unique par ingestion (au lieu de le recalculer par segment)
+        long uploadDate = System.currentTimeMillis();
+
+        if (log.isDebugEnabled()) {
+            log.debug("[Ingestion] Split texte: batchId={} segments={}", batchId, total);
+        }
+
         for (TextSegment segment : segments) {
-            if (segment.text() == null || segment.text().isBlank() || segment.text().length() < 10) {
+            String segmentText = segment.text();
+            if (segmentText == null) {
+                skipped++;
+                continue;
+            }
+
+            segmentText = segmentText.trim();
+            if (segmentText.isEmpty() || segmentText.length() < MIN_SEGMENT_CHARS) {
+                skipped++;
                 continue;
             }
 
             try {
-                Map<String, Object> metadata = new HashMap<>(segment.metadata().toMap());
-                metadata.put("uploadDate", System.currentTimeMillis());
+                // Copie meta segment + ajout de champs
+                Map<String, Object> metadata = new HashMap<>();
+                if (segment.metadata() != null) {
+                    metadata.putAll(segment.metadata().toMap());
+                }
+
+                metadata.put("uploadDate", uploadDate);
+                metadata.put("batchId", batchId); // utile si le store ne conserve pas la clé batch ailleurs
 
                 TextSegment enrichedSegment = TextSegment.from(
-                        segment.text(),
+                        segmentText,
                         Metadata.from(sanitizeMetadata(metadata))
                 );
 
                 Embedding embedding = embeddingModel.embed(enrichedSegment.text()).content();
-                
-                // ✅ NOUVEAU v2.1: Capturer et tracker l'ID
+
                 String embeddingId = textStore.add(embedding, enrichedSegment);
                 tracker.addTextId(embeddingId);
-                
+
                 indexed++;
 
             } catch (Exception e) {
-                log.warn("⚠️ [Ingestion] Échec indexation segment: {}", e.getMessage());
+                failed++;
+                // En prod: garder un message concis + stacktrace en debug si besoin
+                log.warn("[Ingestion] Échec indexation segment (batchId={}): {}", batchId, e.getMessage());
+                if (log.isDebugEnabled()) {
+                    log.debug("[Ingestion] Stacktrace indexation segment (batchId={})", batchId, e);
+                }
             }
         }
 
-        log.debug("✅ [Ingestion] {} segments indexés", indexed);
+        log.info("[Ingestion] Indexation texte terminée: batchId={} total={} indexed={} skipped={} failed={}",
+                batchId, total, indexed, skipped, failed);
     }
+
 
     /**
      * ✅ Sanitize complet avec Date, Collections

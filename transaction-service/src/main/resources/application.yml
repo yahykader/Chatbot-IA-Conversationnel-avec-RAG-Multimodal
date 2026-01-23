@@ -8,6 +8,10 @@ app:
 
 server:
   port: 8090
+  error:
+    include-message: always
+    include-stacktrace: always
+
 
 spring:
   application:
@@ -21,6 +25,7 @@ spring:
       enabled: true
       max-file-size: 50MB
       max-request-size: 50MB
+      resolve-lazily: false
 
   # ===========================================================================
   # POSTGRESQL + PGVECTOR (DataSource + JPA)
@@ -218,11 +223,14 @@ pgvector:
 # Logging
 # ===========================================================================
 logging:
+  file:
+    name: logs/transaction-service.log
   level:
     root: INFO
     com.exemple: DEBUG
-    com.exemple.transactionservice: INFO
-    com.exemple.transactionservice.service.MultimodalRAGService: ${RAG_LOG_LEVEL:INFO}
+    com.exemple.transactionservice: DEBUG
+    com.exemple.transactionservice.controller: DEBUG
+    com.exemple.transactionservice.service.MultimodalRAGService: INFO
     com.exemple.transactionservice.service.MultimodalIngestionService: INFO
     dev.langchain4j: INFO
     dev.ai4j.openai4j: INFO
@@ -232,9 +240,11 @@ logging:
     org.springframework.data.redis: WARN
     reactor.netty: WARN
     org.postgresql: WARN
+    org.apache.poi: DEBUG
   
   pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{50} - %msg%n"
+
 
 # ===========================================================================
 # Actuator / Management
