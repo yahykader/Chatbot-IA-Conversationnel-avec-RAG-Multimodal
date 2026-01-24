@@ -3,6 +3,7 @@
 // ============================================================================
 package com.exemple.transactionservice.service;
 
+import com.exemple.transactionservice.util.InMemoryMultipartFile;
 import dev.langchain4j.data.document.Document;
 import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.document.parser.apache.pdfbox.ApachePdfBoxDocumentParser;
@@ -33,6 +34,12 @@ import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.pdmodel.graphics.PDXObject;
 import org.apache.pdfbox.io.RandomAccessReadBuffer;
 import org.apache.poi.xwpf.usermodel.*;
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.xssf.usermodel.*;
+import org.apache.poi.ss.usermodel.WorkbookFactory;
+import org.apache.poi.ooxml.POIXMLDocumentPart;
+import org.apache.poi.openxml4j.util.ZipSecureFile;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.Cacheable;
@@ -52,6 +59,8 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 import java.util.concurrent.*;
+import java.nio.file.*;
+import java.util.concurrent.TimeUnit;
 
 
 /**
@@ -108,6 +117,16 @@ public class MultimodalIngestionService {
     @Value("${document.enable-vision-cache:true}")
     private boolean enableVisionCache;
 
+    // transformer xls to pdf
+    @Value("${app.libreoffice.enabled:true}") 
+    private boolean libreOfficeEnabled;
+
+    @Value("${app.libreoffice.sofficePath:}") 
+    private String libreOfficeSofficePath;
+
+    @Value("${app.libreoffice.timeoutSeconds:60}") 
+    private long libreOfficeTimeoutSeconds;
+
     // Configuration constantes
     private static final int MAX_IMAGE_SIZE = 5_000_000; // 5MB
     private static final Set<String> KNOWN_TEXT_TYPES = Set.of(
@@ -160,16 +179,6 @@ public class MultimodalIngestionService {
             ChatLanguageModel visionModel,
             MultimodalRAGService ragService) {
 
-
-        // ✅ LOG CRITIQUE AU TOUT DÉBUT
-        System.out.println("╔════════════════════════════════════════════════════════╗");
-        System.out.println("║                                                        ║");
-        System.out.println("║   MultimodalIngestionService CONSTRUCTOR              ║");
-        System.out.println("║   Version: 2.1.0 avec FIX DOCX                       ║");
-        System.out.println("║   Thread: " + Thread.currentThread().getName() + "     ║");
-        System.out.println("║                                                        ║");
-        System.out.println("╚════════════════════════════════════════════════════════╝");
-    
         this.textStore = textStore;
         this.imageStore = imageStore;
         this.embeddingModel = embeddingModel;
@@ -233,19 +242,8 @@ public class MultimodalIngestionService {
      */
     public void ingestFile(MultipartFile file) {
 
-        // ✅ LOGS IMMÉDIATS - AVANT TOUTE OPÉRATION
-        System.out.println("\n╔════════════════════════════════════════════════════════╗");
-        System.out.println("║          ingestFile() APPELÉ                           ║");
-        System.out.println("╚════════════════════════════════════════════════════════╝");
-
         String filename = file.getOriginalFilename();
         String batchId = UUID.randomUUID().toString();
-
-        System.out.println("📥 Filename: " + filename);
-        System.out.println("📥 BatchId: " + batchId);
-        System.out.println("📥 Size: " + file.getSize() + " bytes");
-        System.out.println("📥 Empty: " + file.isEmpty());
-        System.out.println("📥 Content-Type: " + file.getContentType());
         
         log.info("📥 [Ingestion] Batch: {} - Fichier: {} ({} KB)",
                 batchId, filename, String.format("%.2f", file.getSize() / 1024.0));
@@ -273,7 +271,8 @@ public class MultimodalIngestionService {
                 case PDF_WITH_IMAGES -> ingestPdfWithImages(file, batchId);
                 case PDF_TEXT_ONLY -> ingestPdfTextOnly(file, batchId);
                 case OFFICE_DOCX -> ingestDocxDocument(file, batchId);  // NOUVEAU
-                case OFFICE_TEXT_ONLY -> ingestOfficeTextOnly(file, batchId);
+                case OFFICE_XLSX -> ingestXlsxDocument(file, batchId);
+                case OFFICE_TEXT_ONLY ->  ingestOfficeTextOnly(file, batchId);
                 case IMAGE -> ingestImageFile(file, batchId);
                 case TEXT -> ingestTextFile(file, batchId);
                 case UNKNOWN -> ingestWithTika(file, batchId);
@@ -435,6 +434,7 @@ public class MultimodalIngestionService {
     private enum FileType {
         PDF_WITH_IMAGES, PDF_TEXT_ONLY, 
         OFFICE_DOCX,  // NOUVEAU : type spécifique pour DOCX
+        OFFICE_XLSX,  // NOUVEAU : type spécifique pour XLSX
         OFFICE_TEXT_ONLY,  // Pour autres formats Office (xls, ppt, etc.)
         IMAGE, TEXT, UNKNOWN
     }
@@ -451,6 +451,10 @@ public class MultimodalIngestionService {
         // CORRECTION CRITIQUE : Pour DOCX, retourner type spécifique sans ouvrir
         if ("docx".equals(extension)) {
             return FileType.OFFICE_DOCX;
+        }
+        // CORRECTION CRITIQUE : Pour XLSX, retourner type spécifique sans ouvrir
+        if ("xlsx".equals(extension)) {
+            return FileType.OFFICE_XLSX;
         }
         
         if (KNOWN_OFFICE_TYPES.contains(extension)) {
@@ -678,7 +682,500 @@ public class MultimodalIngestionService {
         
         indexDocument(document, file.getOriginalFilename(), "pdf", 1000, 100, batchId);
     }
+    
+    
+    
+    // ========================================================================
+    //   DEBUT XLSX DOCUMENT INGESTION 
+    //   DEBUT XLSX DOCUMENT INGESTION 
+    //    DEBUT XLSX DOCUMENT INGESTION 
+    // ========================================================================
+    // ========================================================================
+    // XLSX INGESTION (PROD) - TEXTE + IMAGES EMBEDDED + FALLBACK CHARTS
+    // Recommandations appliquées :
+    // - Bufferisation MultipartFile -> byte[] (stream one-shot évité)
+    // - Signature ZIP (PK)
+    // - Détection images robuste : drawings + relations + fallback getAllPictures()
+    // - Extraction images robuste : drawings + relations + fallback getAllPictures()
+    // - Sauvegarde image :
+    //      * PNG/JPG décodable -> votre saveImageToDisk(BufferedImage,..) + analyse Vision
+    //      * EMF/WMF/non décodable -> saveImageBytesToDisk(..) + indexation "référence" (pas de Vision possible sans conversion)
+    // - Extraction texte : DataFormatter + FormulaEvaluator
+    // - Modification :
+    //      Si images embedded = 0 mais charts > 0 => export visuel XLSX -> PDF (LibreOffice)
+    //      puis réutilisation du pipeline existant ingestPdfWithImages(pdf, batchId).
+    // ========================================================================
 
+    private void ingestXlsxDocument(MultipartFile file, String batchId) throws IOException {
+
+        if (file == null) throw new IOException("MultipartFile null");
+
+        final String filename = (file.getOriginalFilename() != null && !file.getOriginalFilename().isBlank())
+                ? file.getOriginalFilename()
+                : "unknown.xlsx";
+
+        if (file.isEmpty() || file.getSize() == 0) {
+            log.warn("[Ingestion] XLSX vide: filename={} batchId={}", filename, batchId);
+            throw new IOException("Fichier XLSX vide: " + filename);
+        }
+
+        final String baseFilename = sanitizeFilename(filename.replaceAll("\\.xlsx?$", ""));
+        log.info("📗 [Ingestion] XLSX reçu: filename={} sizeBytes={} batchId={}", filename, file.getSize(), batchId);
+
+        final byte[] bytes;
+        try {
+            bytes = file.getBytes();
+        } catch (Exception e) {
+            log.error("❌ [Ingestion] Impossible de lire les bytes XLSX: filename={} batchId={}", filename, batchId, e);
+            throw new IOException("Impossible de lire le fichier: " + filename, e);
+        }
+
+        // XLSX = ZIP OOXML
+        if (bytes.length < 2 || bytes[0] != 'P' || bytes[1] != 'K') {
+            throw new IOException("Le fichier n'est pas un XLSX valide (pas un ZIP OOXML): " + filename);
+        }
+
+        int imagesCount = 0;
+        int chartsCount = 0;
+        boolean hasAnyDrawing = false;
+
+        TextExtractionResult textResult;
+
+        try (InputStream is = new ByteArrayInputStream(bytes);
+            Workbook wb = WorkbookFactory.create(is)) {
+
+            // 1) TEXTE (toujours)
+            textResult = extractTextFromWorkbook(wb);
+
+            // 2) IMAGES + CHARTS (XSSF)
+            if (wb instanceof XSSFWorkbook xssfWb) {
+
+                // embedded pictures
+                boolean hasImages = hasImagesInXlsx(xssfWb);
+
+                // drawings ? (shapes, charts, etc)
+                hasAnyDrawing = hasAnyDrawingInXlsx(xssfWb);
+
+                // charts (robuste)
+                chartsCount = countChartsRobust(xssfWb);
+
+                log.info("🔍 [Ingestion] XLSX analysé: filename={} batchId={} hasImages={} charts={} hasAnyDrawing={}",
+                        filename, batchId, hasImages, chartsCount, hasAnyDrawing);
+
+                log.info("🖼️ [Ingestion] XLSX getAllPictures()={}", xssfWb.getAllPictures().size());
+
+                if (hasImages) {
+                    imagesCount = extractAndIndexImagesFromXlsx(xssfWb, filename, batchId, baseFilename);
+                }
+            }
+
+            // 3) Indexation texte
+            if (textResult.text() != null && !textResult.text().isBlank()) {
+                Map<String, Object> meta = new HashMap<>();
+                meta.put("source", filename);
+                meta.put("type", "xlsx");
+                meta.put("batchId", batchId);
+                meta.put("sheetCount", textResult.sheetCount());
+                meta.put("nonEmptyCells", textResult.nonEmptyCells());
+                meta.put("imagesCount", imagesCount);
+                meta.put("chartsCount", chartsCount);
+                meta.put("hasAnyDrawing", hasAnyDrawing);
+
+                Metadata md = Metadata.from(sanitizeMetadata(meta));
+                indexTextWithMetadata(textResult.text(), md, batchId);
+
+                log.info("✅ [Ingestion] XLSX texte indexé: chars={} sheets={} nonEmptyCells={} images={} charts={}",
+                        textResult.text().length(), textResult.sheetCount(), textResult.nonEmptyCells(), imagesCount, chartsCount);
+            } else {
+                log.warn("⚠️ [Ingestion] Aucun texte extrait du XLSX: filename={} batchId={}", filename, batchId);
+            }
+
+        } catch (Exception e) {
+            log.error("❌ [Ingestion] Échec traitement XLSX (POI): filename={} batchId={}", filename, batchId, e);
+            throw new IOException("Erreur traitement XLSX: " + filename, e);
+        }
+
+        // ========================================================================
+        // ✅ FALLBACK VISUEL
+        // Déclenchement amélioré :
+        // - imagesCount == 0
+        // - ET (chartsCount > 0 OU au moins un drawing présent)
+        // ========================================================================
+        if (imagesCount == 0 && (chartsCount > 0 || hasAnyDrawing)) {
+            log.info("📊 [Ingestion] Fallback visuel XLSX→PDF (charts/drawings détectés, pas d’images): filename={} batchId={} charts={} drawings={}",
+                    filename, batchId, chartsCount, hasAnyDrawing);
+
+            try {
+                Path pdfPath = convertXlsxToPdfWithLibreOffice(bytes, baseFilename);
+                byte[] pdfBytes = Files.readAllBytes(pdfPath);
+
+                MultipartFile pdfFile = new InMemoryMultipartFile(
+                        "file",
+                        baseFilename + ".pdf",
+                        "application/pdf",
+                        pdfBytes
+                );
+
+                ingestPdfWithImages(pdfFile, batchId);
+
+                log.info("✅ [Ingestion] Fallback PDF terminé: filename={} batchId={} pdfBytes={}",
+                        filename, batchId, pdfBytes.length);
+
+            } catch (Exception e) {
+                // On ne casse pas l’ingestion : texte déjà indexé
+                log.error("❌ [Ingestion] Échec fallback XLSX→PDF: filename={} batchId={}", filename, batchId, e);
+            }
+        }
+
+        log.info("✅ [Ingestion] XLSX traité: filename={} batchId={} images={} charts={} drawings={}",
+                filename, batchId, imagesCount, chartsCount, hasAnyDrawing);
+    }
+
+    // ========================================================================
+    // Détection images embedded (OK pour les images collées)
+    // ========================================================================
+    private boolean hasImagesInXlsx(XSSFWorkbook wb) {
+        try {
+            if (!wb.getAllPictures().isEmpty()) return true;
+
+            for (int i = 0; i < wb.getNumberOfSheets(); i++) {
+                Sheet sh = wb.getSheetAt(i);
+                if (!(sh instanceof XSSFSheet sheet)) continue;
+
+                XSSFDrawing drawing = resolveDrawing(sheet);
+                if (drawing == null) continue;
+
+                for (XSSFShape shape : drawing.getShapes()) {
+                    if (shape instanceof XSSFPicture) return true;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("⚠️ [Ingestion] Erreur détection images XLSX: {}", e.getMessage());
+        }
+        return false;
+    }
+
+    // ========================================================================
+    // Détection "drawing present" (shapes/charts/etc) -> utile pour fallback
+    // ========================================================================
+    private boolean hasAnyDrawingInXlsx(XSSFWorkbook wb) {
+        try {
+            for (int i = 0; i < wb.getNumberOfSheets(); i++) {
+                Sheet sh = wb.getSheetAt(i);
+                if (sh instanceof XSSFChartSheet) {
+                    // chart-sheet => visuel garanti
+                    return true;
+                }
+                if (!(sh instanceof XSSFSheet sheet)) continue;
+
+                XSSFDrawing drawing = resolveDrawing(sheet);
+                if (drawing == null) continue;
+
+                // Charts embedded (si supporté dans votre POI)
+                try {
+                    if (!drawing.getCharts().isEmpty()) return true;
+                } catch (NoSuchMethodError | Exception ignored) {
+                    // Certaines versions POI peuvent varier; on ne casse pas.
+                }
+            }
+        } catch (Exception e) {
+            log.warn("⚠️ [Ingestion] Erreur détection drawings XLSX: {}", e.getMessage());
+        }
+        return false;
+    }
+
+    // ========================================================================
+    // Détection charts ROBUSTE :
+    // - chart sheets
+    // - charts embedded via drawing.getCharts()
+    // ========================================================================
+    private int countChartsRobust(XSSFWorkbook wb) {
+        int charts = 0;
+        try {
+            for (int i = 0; i < wb.getNumberOfSheets(); i++) {
+                Sheet sh = wb.getSheetAt(i);
+
+                if (sh instanceof XSSFChartSheet cs) {
+                    charts += 1;
+                    continue;
+                }
+
+                if (!(sh instanceof XSSFSheet sheet)) continue;
+
+                XSSFDrawing drawing = resolveDrawing(sheet);
+                if (drawing == null) continue;
+
+                // 1) Méthode native si dispo
+                try {
+                    List<XSSFChart> embeddedCharts = drawing.getCharts(); // souvent présent
+                    if (embeddedCharts != null) charts += embeddedCharts.size();
+                    continue;
+                } catch (NoSuchMethodError ignored) {
+                    // pass
+                } catch (Exception ignored) {
+                    // pass
+                }
+
+                // 2) Fallback par relations (compile partout)
+                // Un chart est un POIXMLDocumentPart relationné (XSSFChart)
+                for (POIXMLDocumentPart rel : drawing.getRelations()) {
+                    if (rel instanceof XSSFChart) {
+                        charts++;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("⚠️ [Ingestion] Erreur détection charts XLSX: {}", e.getMessage());
+        }
+        return charts;
+    }
+
+    private XSSFDrawing resolveDrawing(XSSFSheet sheet) {
+        XSSFDrawing d = sheet.getDrawingPatriarch();
+        if (d != null) return d;
+        for (POIXMLDocumentPart rel : sheet.getRelations()) {
+            if (rel instanceof XSSFDrawing dd) return dd;
+        }
+        return null;
+    }
+
+    // ========================================================================
+    // EXTRACTION IMAGES EMBEDDED (comme votre version)
+    // ========================================================================
+    private int extractAndIndexImagesFromXlsx(XSSFWorkbook xssfWb,
+                                            String filename,
+                                            String batchId,
+                                            String baseFilename) {
+
+        int totalImagesExtracted = 0;
+
+        for (int s = 0; s < xssfWb.getNumberOfSheets(); s++) {
+            if (totalImagesExtracted >= maxImagesPerFile) break;
+
+            XSSFSheet sheet = xssfWb.getSheetAt(s);
+            String sheetName = sheet.getSheetName();
+
+            XSSFDrawing drawing = resolveDrawing(sheet);
+            if (drawing == null) continue;
+
+            int imageIndexInSheet = 0;
+
+            for (XSSFShape shape : drawing.getShapes()) {
+                if (totalImagesExtracted >= maxImagesPerFile) break;
+                if (!(shape instanceof XSSFPicture pic)) continue;
+
+                XSSFPictureData picData = pic.getPictureData();
+                if (picData == null) continue;
+
+                byte[] imgBytes = picData.getData();
+                if (imgBytes == null || imgBytes.length == 0) continue;
+
+                try {
+                    BufferedImage image = ImageIO.read(new ByteArrayInputStream(imgBytes));
+                    if (image == null) continue;
+
+                    totalImagesExtracted++;
+                    imageIndexInSheet++;
+
+                    String imageName = String.format("%s_batch%s_sheet%d_img%d",
+                            baseFilename,
+                            batchId.substring(0, Math.min(8, batchId.length())),
+                            s + 1,
+                            imageIndexInSheet);
+
+                    String savedImagePath = saveImageToDisk(image, imageName);
+
+                    Map<String, Object> metadata = new HashMap<>();
+                    metadata.put("source", "xlsx");
+                    metadata.put("filename", filename);
+                    metadata.put("sheetIndex", s + 1);
+                    metadata.put("sheetName", sheetName);
+                    metadata.put("imageNumber", totalImagesExtracted);
+                    metadata.put("imageIndexInSheet", imageIndexInSheet);
+                    metadata.put("savedPath", savedImagePath);
+                    metadata.put("batchId", batchId);
+
+                    analyzeAndIndexImage(image, imageName, metadata, batchId);
+
+                } catch (Exception e) {
+                    log.warn("⚠️ [Ingestion] Erreur extraction image XLSX sheet={} : {}", sheetName, e.getMessage());
+                }
+            }
+        }
+
+        if (totalImagesExtracted >= maxImagesPerFile) {
+            log.warn("⚠️ [Ingestion] Limite images atteinte sur XLSX: {}", maxImagesPerFile);
+        }
+
+        return totalImagesExtracted;
+    }
+
+    // ========================================================================
+    // TEXTE (DataFormatter + formules) - comme votre version
+    // ========================================================================
+    private record TextExtractionResult(String text, int sheetCount, long nonEmptyCells) {}
+
+    private TextExtractionResult extractTextFromWorkbook(Workbook wb) {
+        DataFormatter formatter = new DataFormatter();
+        FormulaEvaluator evaluator = wb.getCreationHelper().createFormulaEvaluator();
+
+        StringBuilder sb = new StringBuilder(64_000);
+        long nonEmptyCells = 0;
+
+        int sheets = wb.getNumberOfSheets();
+        for (int s = 0; s < sheets; s++) {
+            Sheet sheet = wb.getSheetAt(s);
+            String sheetName = sheet.getSheetName();
+
+            sb.append("=== Sheet: ").append(sheetName).append(" ===\n");
+
+            for (Row row : sheet) {
+                boolean any = false;
+
+                for (Cell cell : row) {
+                    String value;
+                    try {
+                        value = formatter.formatCellValue(cell, evaluator);
+                    } catch (Exception e) {
+                        continue;
+                    }
+
+                    if (value != null) {
+                        value = value.trim();
+                        if (!value.isEmpty()) {
+                            if (any) sb.append(" | ");
+                            sb.append(value);
+                            any = true;
+                            nonEmptyCells++;
+                        }
+                    }
+                }
+
+                if (any) sb.append('\n');
+            }
+
+            sb.append('\n');
+        }
+
+        return new TextExtractionResult(sb.toString(), sheets, nonEmptyCells);
+    }
+
+    // ========================================================================
+    // XLSX -> PDF via LibreOffice (headless)
+    // - nécessite LibreOffice installé (soffice accessible dans PATH)
+    // ========================================================================
+    private Path convertXlsxToPdfWithLibreOffice(byte[] xlsxBytes, String baseFilename) throws IOException {
+
+        if (!libreOfficeEnabled) {
+            throw new IOException("LibreOffice désactivé (app.libreoffice.enabled=false)");
+        }
+
+        String soffice = resolveSofficeExecutable();
+
+        Path tempDir = Files.createTempDirectory("xlsx2pdf_");
+        Path inputXlsx = tempDir.resolve(baseFilename + ".xlsx");
+        Path outDir = tempDir.resolve("out");
+        Files.createDirectories(outDir);
+
+        Files.write(inputXlsx, xlsxBytes, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+
+        List<String> cmd = List.of(
+                soffice,
+                "--headless",
+                "--nologo",
+                "--nofirststartwizard",
+                "--norestore",
+                "--convert-to", "pdf",
+                "--outdir", outDir.toAbsolutePath().toString(),
+                inputXlsx.toAbsolutePath().toString()
+        );
+
+        Process process;
+        try {
+            process = new ProcessBuilder(cmd)
+                    .redirectErrorStream(true)
+                    .start();
+        } catch (IOException e) {
+            // Message clair
+            throw new IOException("LibreOffice introuvable. Installez LibreOffice ou configurez app.libreoffice.sofficePath. Commande=" + soffice, e);
+        }
+
+        boolean finished;
+        try {
+            finished = process.waitFor(libreOfficeTimeoutSeconds, TimeUnit.SECONDS);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            process.destroyForcibly();
+            throw new IOException("Conversion LibreOffice interrompue", ie);
+        }
+
+        String output = readAll(process.getInputStream());
+
+        if (!finished) {
+            process.destroyForcibly();
+            throw new IOException("Timeout conversion LibreOffice (" + libreOfficeTimeoutSeconds + "s). Output=" + output);
+        }
+
+        int exit = process.exitValue();
+        if (exit != 0) {
+            throw new IOException("Échec conversion LibreOffice (exit=" + exit + "). Output=" + output);
+        }
+
+        // LibreOffice génère un PDF avec le même nom de base
+        Path pdf = outDir.resolve(baseFilename + ".pdf");
+        if (!Files.exists(pdf)) {
+            // Parfois LO change le nom (espaces, etc.) => chercher 1er pdf
+            try (var stream = Files.list(outDir)) {
+                Optional<Path> anyPdf = stream.filter(p -> p.toString().toLowerCase().endsWith(".pdf")).findFirst();
+                if (anyPdf.isPresent()) return anyPdf.get();
+            }
+            throw new IOException("PDF non généré par LibreOffice. Output=" + output);
+        }
+
+        return pdf;
+    }
+
+    private String readAll(InputStream in) {
+        try (in) {
+            return new String(in.readAllBytes());
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private String resolveSofficeExecutable() {
+        // 1) Config explicite (recommandé en prod)
+        if (libreOfficeSofficePath != null && !libreOfficeSofficePath.isBlank()) {
+            Path p = Paths.get(libreOfficeSofficePath);
+            if (Files.exists(p)) return p.toAbsolutePath().toString();
+            throw new IllegalStateException("LibreOffice sofficePath configuré mais introuvable: " + p);
+        }
+
+        // 2) Windows: emplacements standards
+        if (System.getProperty("os.name").toLowerCase().contains("win")) {
+            List<String> candidates = List.of(
+                    "C:\\\\Program Files\\\\LibreOffice\\\\program\\\\soffice.exe",
+                    "C:\\\\Program Files (x86)\\\\LibreOffice\\\\program\\\\soffice.exe"
+            );
+            for (String c : candidates) {
+                if (Files.exists(Paths.get(c))) return c;
+            }
+            // Dernier recours: "soffice.exe" via PATH
+            return "soffice.exe";
+        }
+
+        // 3) Linux/Mac: souvent dans PATH
+        return "soffice";
+    }
+
+
+
+    // ========================================================================
+    //   FIN XLSX DOCUMENT INGESTION 
+    //   FIN XLSX DOCUMENT INGESTION 
+    //   FIN XLSX DOCUMENT INGESTION 
+    // ========================================================================
+        
     // ========================================================================
     // Traitement DOCX unifié - Ouvre le document UNE SEULE FOIS
     // ========================================================================
