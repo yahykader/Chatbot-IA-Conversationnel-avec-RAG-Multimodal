@@ -704,8 +704,8 @@ public class MultimodalIngestionService {
     // - Modification :
     //      Si images embedded = 0 mais charts > 0 => export visuel XLSX -> PDF (LibreOffice)
     //      puis réutilisation du pipeline existant ingestPdfWithImages(pdf, batchId).
+    //      Excel Chart → substitution police → rendu dégradé → PDF
     // ========================================================================
-
     private void ingestXlsxDocument(MultipartFile file, String batchId) throws IOException {
 
         if (file == null) throw new IOException("MultipartFile null");

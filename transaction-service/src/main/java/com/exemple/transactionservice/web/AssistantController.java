@@ -1,8 +1,13 @@
 // ============================================================================
-// BACKEND - AssistantController.java (v2.2 - Fix Upload Async + Persistent File)
+// BACKEND - AssistantController.java (v2.3 - NgRx Frontend Integration)
 // ============================================================================
 package com.exemple.transactionservice.controller;
 
+import com.exemple.transactionservice.dto.DuplicateInfo;
+import com.exemple.transactionservice.dto.UploadJob;
+import com.exemple.transactionservice.dto.UploadResponse;
+import com.exemple.transactionservice.dto.UploadStatusResponse;
+import com.exemple.transactionservice.dto.UploadStatus;
 import com.exemple.transactionservice.service.ConversationalAssistant;
 import com.exemple.transactionservice.service.MultimodalIngestionService;
 import com.exemple.transactionservice.service.UploadRateLimiter;
@@ -24,6 +29,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.stream.Collectors;
@@ -32,13 +38,13 @@ import java.security.NoSuchAlgorithmException;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * ✅ AssistantController v2.2 - Fix Upload Async avec Fichier Persistant
+ * ✅ AssistantController v2.3 - NgRx Frontend Integration
  * 
- * CORRECTIF v2.2:
- * - Sauvegarde du fichier AVANT traitement asynchrone
- * - Utilisation de PersistentMultipartFile
- * - Nettoyage automatique après traitement
- * - Fix NoSuchFileException dans traitement async
+ * NOUVEAUTÉS v2.3:
+ * - Structure de réponse enrichie pour NgRx
+ * - Informations détaillées sur les duplicatas
+ * - Support CORS pour Angular
+ * - Format de réponse standardisé
  */
 @Slf4j
 @RestController
@@ -66,14 +72,14 @@ public class AssistantController {
     @Value("${assistant.upload.max-concurrent:3}")
     private int maxConcurrentUploads;
     
-    // ✅ NOUVEAU v2.2: Répertoire temporaire pour uploads async
     @Value("${assistant.upload.temp-dir:${java.io.tmpdir}/multimodal-uploads}")
     private String uploadTempDir;
 
     // Tracking jobs upload
     private final ConcurrentHashMap<String, UploadJob> uploadJobs = new ConcurrentHashMap<>();
-    // déduplication par hash
-    private final ConcurrentHashMap<String, String> ongoingUploads = new ConcurrentHashMap<>();
+    
+    // Déduplication par hash avec métadonnées complètes
+    private final ConcurrentHashMap<String, DuplicateInfo> uploadFingerprints = new ConcurrentHashMap<>();
 
     public AssistantController(
             MultimodalIngestionService ingestionService,
@@ -87,19 +93,19 @@ public class AssistantController {
         this.meterRegistry = meterRegistry;
         this.scheduler = Executors.newScheduledThreadPool(4);
 
-        log.info("✅ [Controller] Initialisé v2.2 - Timeout: {}s, Heartbeat: {}s, MaxUpload: {} MB, MaxConcurrent: {}",
+        log.info("✅ [Controller] Initialisé v2.3 - Timeout: {}s, Heartbeat: {}s, MaxUpload: {} MB, MaxConcurrent: {}",
                  streamTimeoutSeconds, heartbeatIntervalSeconds, 
                  maxFileSize / (1024 * 1024), maxConcurrentUploads);
     }
 
     // ============================================================================
-    // MÉTHODE UPLOAD COMPLÈTE - Version corrigée avec InMemoryMultipartFile
+    // MÉTHODE UPLOAD COMPLÈTE - Version NgRx avec réponse enrichie
     // ============================================================================
 
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<?> uploadFile(
+    public ResponseEntity<UploadResponse> uploadFile(
             @RequestParam("file") MultipartFile file,
-            @RequestHeader(value = "X-User-Id", defaultValue = "anonymous") String userId) {
+            @RequestParam(value = "userId", defaultValue = "1") Long userId) {
         
         Instant start = Instant.now();
         String jobId = UUID.randomUUID().toString();
@@ -111,10 +117,9 @@ public class AssistantController {
             
             // Validation vide
             if (file.isEmpty()) {
-                return ResponseEntity.badRequest().body(Map.of(
-                    "success", false,
-                    "error", "Fichier vide"
-                ));
+                return ResponseEntity.badRequest().body(
+                    UploadResponse.error("Fichier vide", null, file.getOriginalFilename())
+                );
             }
             
             // Validation taille
@@ -125,20 +130,21 @@ public class AssistantController {
                 log.warn("⚠️ [{}] Fichier trop volumineux: {:.2f} MB (max: {:.2f} MB)", 
                         jobId, sizeMB, maxMB);
                 
-                return ResponseEntity.badRequest().body(Map.of(
-                    "success", false,
-                    "error", String.format("Fichier trop volumineux: %.2f MB (max: %.2f MB)", 
-                                        sizeMB, maxMB)
-                ));
+                return ResponseEntity.badRequest().body(
+                    UploadResponse.error(
+                        String.format("Fichier trop volumineux: %.2f MB (max: %.2f MB)", sizeMB, maxMB),
+                        null,
+                        file.getOriginalFilename()
+                    )
+                );
             }
             
             // Validation nom fichier
             String filename = file.getOriginalFilename();
             if (filename == null || filename.isBlank()) {
-                return ResponseEntity.badRequest().body(Map.of(
-                    "success", false,
-                    "error", "Nom de fichier invalide"
-                ));
+                return ResponseEntity.badRequest().body(
+                    UploadResponse.error("Nom de fichier invalide", null, filename)
+                );
             }
             
             // Validation extension
@@ -147,11 +153,13 @@ public class AssistantController {
                 log.warn("⚠️ [{}] Extension non autorisée: {} (fichier: {})", 
                         jobId, extension, filename);
                 
-                return ResponseEntity.badRequest().body(Map.of(
-                    "success", false,
-                    "error", "Type de fichier non autorisé: " + extension,
-                    "allowed", Arrays.asList(allowedExtensions.split(","))
-                ));
+                return ResponseEntity.badRequest().body(
+                    UploadResponse.error(
+                        "Type de fichier non autorisé: " + extension,
+                        null,
+                        filename
+                    )
+                );
             }
             
             // Sanitize nom fichier
@@ -161,14 +169,16 @@ public class AssistantController {
             // RATE LIMITING
             // ========================================================================
             
-            if (!uploadRateLimiter.tryAcquire(userId)) {
+            if (!uploadRateLimiter.tryAcquire(String.valueOf(userId))) {
                 log.warn("⚠️ [{}] Rate limit upload dépassé pour user: {}", jobId, userId);
                 
-                return ResponseEntity.status(429).body(Map.of(
-                    "success", false,
-                    "error", String.format("Trop d'uploads simultanés (max: %d)", maxConcurrentUploads),
-                    "maxConcurrent", maxConcurrentUploads
-                ));
+                return ResponseEntity.status(429).body(
+                    UploadResponse.error(
+                        String.format("Trop d'uploads simultanés (max: %d)", maxConcurrentUploads),
+                        null,
+                        sanitizedFilename
+                    )
+                );
             }
             
             // ========================================================================
@@ -188,27 +198,37 @@ public class AssistantController {
                 // 2) Fingerprint pour idempotence (anti-double upload/retry client)
                 String fingerprint = userId + ":" + sha256(fileContent);
 
-                // Si upload identique déjà en cours => renvoyer job existant
-                String existingJobId = ongoingUploads.putIfAbsent(fingerprint, jobId);
-                if (existingJobId != null) {
-                    log.warn("⚠️ [{}] Upload dupliqué détecté (fingerprint match). Retour job existant: {} file={}",
-                            jobId, existingJobId, sanitizedFilename);
+                // Si upload identique déjà en cours ou terminé => renvoyer info duplicata
+                DuplicateInfo existingUpload = uploadFingerprints.get(fingerprint);
+                if (existingUpload != null) {
+                    log.warn("⚠️ [{}] Upload dupliqué détecté (fingerprint match). Job existant: {} file={}",
+                            jobId, existingUpload.getJobId(), sanitizedFilename);
 
                     // Important: on ne traite pas => on libère immédiatement le slot rate limiter
-                    uploadRateLimiter.release(userId);
+                    uploadRateLimiter.release(String.valueOf(userId));
 
-                    return ResponseEntity.ok(Map.of(
-                            "success", true,
-                            "message", "Upload déjà en cours (dédupliqué)",
-                            "jobId", existingJobId,
-                            "filename", sanitizedFilename,
-                            "size", file.getSize(),
-                            "sizeKB", file.getSize() / 1024,
-                            "deduplicated", true
-                    ));
+                    // Retourner une réponse de duplicata avec toutes les infos
+                    return ResponseEntity.ok(
+                        UploadResponse.duplicate(
+                            existingUpload.getJobId(),
+                            sanitizedFilename,
+                            file.getSize(),
+                            existingUpload
+                        )
+                    );
                 }
                 
-                // 3) Créer un MultipartFile en mémoire (thread-safe)
+                // 3) Enregistrer ce nouveau fingerprint
+                DuplicateInfo duplicateInfo = new DuplicateInfo(
+                    jobId,
+                    sanitizedFilename,
+                    LocalDateTime.now(),
+                    fingerprint,
+                    file.getSize()
+                );
+                uploadFingerprints.put(fingerprint, duplicateInfo);
+                
+                // 4) Créer un MultipartFile en mémoire (thread-safe)
                 final MultipartFile inMemoryFile = new InMemoryMultipartFile(
                     file.getName(),
                     filename,  // Garder le nom original
@@ -219,7 +239,7 @@ public class AssistantController {
                 log.info("✅ [{}] InMemoryMultipartFile créé: {} bytes disponibles", 
                         jobId, inMemoryFile.getSize());
                 
-                // 4) Créer le job de tracking
+                // 5) Créer le job de tracking
                 UploadJob job = new UploadJob(jobId, sanitizedFilename, file.getSize());
                 uploadJobs.put(jobId, job);
                 
@@ -234,11 +254,12 @@ public class AssistantController {
                         
                         log.info("🔄 [{}] Ingestion en cours: {}", jobId, sanitizedFilename);
                         
-                        // ✅ INGESTION avec fichier en mémoire (thread-safe, pas de problème de fichier supprimé)
+                        // ✅ INGESTION avec fichier en mémoire (thread-safe)
                         ingestionService.ingestFile(inMemoryFile);
                         
                         job.setStatus(UploadStatus.COMPLETED);
                         job.setProgress(100);
+                        job.setCompletedAt(Instant.now());
                         
                         Duration duration = Duration.between(start, Instant.now());
                         log.info("✅ [{}] Upload terminé avec succès: {} en {}ms", 
@@ -254,64 +275,64 @@ public class AssistantController {
                         job.setProgress(0);
                         job.setErrorMessage(e.getMessage());
                         
+                        // Supprimer le fingerprint en cas d'échec pour permettre retry
+                        uploadFingerprints.remove(fingerprint);
+                        
                         recordUploadMetrics(sanitizedFilename, file.getSize(), false, 
                                         Duration.between(start, Instant.now()));
                         
                     } finally {
                         // ✅ Libérer le slot du rate limiter
-                        uploadRateLimiter.release(userId);
+                        uploadRateLimiter.release(String.valueOf(userId));
                         
-                        // ✅ Nettoyer le job après 5 minutes
+                        // ✅ Nettoyer le job après 5 minutes (garder le fingerprint plus longtemps)
                         scheduler.schedule(() -> {
                             uploadJobs.remove(jobId);
                             log.debug("🗑️ [{}] Job nettoyé du cache", jobId);
                         }, 5, TimeUnit.MINUTES);
+                        
+                        // Nettoyer le fingerprint après 1 heure
+                        scheduler.schedule(() -> {
+                            uploadFingerprints.remove(fingerprint);
+                            log.debug("🗑️ [{}] Fingerprint nettoyé: {}", jobId, fingerprint.substring(0, 16) + "...");
+                        }, 1, TimeUnit.HOURS);
                     }
                 });
                 
                 // ========================================================================
-                // RETOUR IMMÉDIAT AU CLIENT
+                // RETOUR IMMÉDIAT AU CLIENT - Format NgRx
                 // ========================================================================
                 
-                return ResponseEntity.ok(Map.of(
-                    "success", true,
-                    "message", "Upload démarré avec succès",
-                    "jobId", jobId,
-                    "filename", sanitizedFilename,
-                    "size", file.getSize(),
-                    "sizeKB", file.getSize() / 1024
-                ));
+                return ResponseEntity.ok(
+                    UploadResponse.success(jobId, sanitizedFilename, file.getSize())
+                );
                 
             } catch (IOException e) {
                 // Erreur lors de la lecture du fichier
                 log.error("❌ [{}] Erreur lecture fichier: {}", jobId, e.getMessage());
-                uploadRateLimiter.release(userId);
+                uploadRateLimiter.release(String.valueOf(userId));
                 
-                return ResponseEntity.status(500).body(Map.of(
-                    "success", false,
-                    "error", "Impossible de lire le fichier: " + e.getMessage()
-                ));
+                return ResponseEntity.status(500).body(
+                    UploadResponse.error("Impossible de lire le fichier: " + e.getMessage(), jobId, sanitizedFilename)
+                );
             }
             
         } catch (IllegalArgumentException e) {
             log.warn("⚠️ [{}] Validation échouée: {}", jobId, e.getMessage());
-            return ResponseEntity.badRequest().body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
+            return ResponseEntity.badRequest().body(
+                UploadResponse.error(e.getMessage(), jobId, file.getOriginalFilename())
+            );
             
         } catch (Exception e) {
             log.error("❌ [{}] Erreur inattendue lors de l'upload", jobId, e);
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", "Erreur serveur lors de l'upload"
-            ));
+            return ResponseEntity.status(500).body(
+                UploadResponse.error("Erreur serveur lors de l'upload", jobId, file.getOriginalFilename())
+            );
         }
     }
 
     /**
-     * SHA-256 hex (idempotence fingerprint).
-     * Placez cette méthode dans votre controller (ou un util).
+     * SHA-256 hex (idempotence fingerprint)
      */
     private static String sha256(byte[] data) {
         try {
@@ -328,28 +349,53 @@ public class AssistantController {
     }
 
     /**
-     * Endpoint status upload
+     * Endpoint status upload - Format NgRx
      */
     @GetMapping("/upload/status/{jobId}")
-    public ResponseEntity<?> getUploadStatus(@PathVariable String jobId) {
+    public ResponseEntity<UploadStatusResponse> getUploadStatus(@PathVariable String jobId) {
         UploadJob job = uploadJobs.get(jobId);
         
         if (job == null) {
             return ResponseEntity.notFound().build();
         }
         
-        return ResponseEntity.ok(Map.of(
-            "jobId", jobId,
-            "filename", job.getFilename(),
-            "status", job.getStatus().name().toLowerCase(),
-            "progress", job.getProgress(),
-            "message", job.getMessage(),
-            "error", job.getErrorMessage() != null ? job.getErrorMessage() : ""
+        return ResponseEntity.ok(new UploadStatusResponse(
+            jobId,
+            job.getFilename(),
+            job.getStatus().name().toLowerCase(),
+            job.getProgress(),
+            job.getMessage(),
+            job.getErrorMessage(),
+            job.getCreatedAt(),
+            job.getCompletedAt()
         ));
     }
 
+    /**
+     * Endpoint pour lister tous les uploads d'un utilisateur
+     */
+    @GetMapping("/uploads")
+    public ResponseEntity<List<UploadStatusResponse>> listUploads(
+            @RequestParam(value = "userId", required = false) Long userId) {
+        
+        List<UploadStatusResponse> uploads = uploadJobs.values().stream()
+            .map(job -> new UploadStatusResponse(
+                job.getJobId(),
+                job.getFilename(),
+                job.getStatus().name().toLowerCase(),
+                job.getProgress(),
+                job.getMessage(),
+                job.getErrorMessage(),
+                job.getCreatedAt(),
+                job.getCompletedAt()
+            ))
+            .collect(Collectors.toList());
+        
+        return ResponseEntity.ok(uploads);
+    }
+
     // ========================================================================
-    // CHAT STREAMING
+    // CHAT STREAMING (inchangé)
     // ========================================================================
 
     @GetMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -368,7 +414,6 @@ public class AssistantController {
             StringBuilder fullResponse = new StringBuilder();
             StringBuilder buffer = new StringBuilder();
 
-            // Heartbeat
             Flux<ServerSentEvent<String>> heartbeat = Flux.interval(
                 Duration.ofSeconds(heartbeatIntervalSeconds)
             )
@@ -379,7 +424,6 @@ public class AssistantController {
                 .build())
             .takeUntil(event -> false);
 
-            // Stream principal
             Flux<ServerSentEvent<String>> responseStream = assistant.chatStream(userId, message)
                 .timeout(Duration.ofSeconds(streamTimeoutSeconds))
                 .flatMap(token -> {
@@ -462,12 +506,9 @@ public class AssistantController {
     }
 
     // ========================================================================
-    // MÉTHODES PRIVÉES - VALIDATION
+    // MÉTHODES PRIVÉES - VALIDATION (inchangées)
     // ========================================================================
 
-    /**
-     * Extrait l'extension d'un fichier
-     */
     private String getFileExtension(String filename) {
         if (filename == null || filename.isBlank()) {
             return "";
@@ -481,12 +522,9 @@ public class AssistantController {
         return filename.substring(lastDot + 1).toLowerCase();
     }
 
-    /**
-     * Vérifie si l'extension est autorisée
-     */
     private boolean isExtensionAllowed(String extension) {
         if (allowedExtensions == null || allowedExtensions.isBlank()) {
-            return true; // Tout est autorisé si non configuré
+            return true;
         }
         
         String[] allowed = allowedExtensions.toLowerCase().split(",");
@@ -534,7 +572,7 @@ public class AssistantController {
     }
 
     // ========================================================================
-    // MÉTHODES PRIVÉES - MÉTRIQUES
+    // MÉTHODES PRIVÉES - MÉTRIQUES (inchangées)
     // ========================================================================
 
     private void recordUploadMetrics(
@@ -595,95 +633,66 @@ public class AssistantController {
             log.warn("⚠️ Erreur enregistrement métriques chat", e);
         }
     }
-
-    // ========================================================================
-    // CLASSES INTERNES
-    // ========================================================================
-
-    @Data
-    private static class UploadJob {
-        private final String jobId;
-        private final String filename;
-        private final long fileSize;
-        private UploadStatus status = UploadStatus.PENDING;
-        private int progress = 0;
-        private String errorMessage;
-        private final Instant createdAt = Instant.now();
-        
-        public UploadJob(String jobId, String filename, long fileSize) {
-            this.jobId = jobId;
-            this.filename = filename;
-            this.fileSize = fileSize;
-        }
-        
-        public String getMessage() {
-            return switch (status) {
-                case PENDING -> "Upload en attente...";
-                case PROCESSING -> "Traitement en cours (" + progress + "%)...";
-                case COMPLETED -> "Upload terminé";
-                case FAILED -> "Échec: " + (errorMessage != null ? errorMessage : "Erreur inconnue");
-            };
-        }
-    }
-
-    private enum UploadStatus {
-        PENDING,
-        PROCESSING,
-        COMPLETED,
-        FAILED
-    }
-
-    @Data
-    public static class ChatRequest {
-        private String userId;
-        private String message;
-    }
- 
 }
 
 /*
  * ============================================================================
- * CHANGEMENTS VERSION 2.2 (Fix Upload Async + Persistent File)
+ * CHANGEMENTS VERSION 2.3 (NgRx Frontend Integration)
  * ============================================================================
  * 
- * ✅ CORRECTIF MAJEUR: NoSuchFileException
- *    - Sauvegarde du fichier AVANT traitement asynchrone
- *    - Classe PersistentMultipartFile pour encapsuler fichier persisté
- *    - Nettoyage automatique après traitement (succès ou erreur)
+ * ✅ STRUCTURE DE RÉPONSE ENRICHIE
+ *    - UploadResponse avec tous les champs nécessaires pour NgRx
+ *    - Format standardisé: success, duplicate, error
+ *    - Informations détaillées sur les duplicatas
  * 
- * ✅ Flux de Traitement Corrigé
- *    1. Upload reçu → Validation
- *    2. file.transferTo(savedFilePath) → Sauvegarde disque
- *    3. new PersistentMultipartFile() → Wrapper persistant
- *    4. CompletableFuture.runAsync() → Traitement async
- *    5. ingestionService.ingestFile(persistentFile) → Ingestion OK
- *    6. Files.delete(savedFilePath) → Nettoyage
+ * ✅ GESTION COMPLÈTE DES DUPLICATAS
+ *    - DuplicateInfo avec métadonnées complètes
+ *    - Cache des fingerprints avec nettoyage automatique (1h)
+ *    - Informations renvoyées au frontend pour décision utilisateur
  * 
- * ✅ Gestion Robuste des Erreurs
- *    - Nettoyage fichier temporaire en cas d'erreur de sauvegarde
- *    - Nettoyage fichier temporaire en cas d'erreur d'ingestion
- *    - Nettoyage fichier temporaire en cas de succès
- *    - Release rate limiter dans tous les cas
+ * ✅ SUPPORT CORS
+ *    - Configuration CORS pour Angular (localhost:4200)
+ *    - Paramétrable via application.properties
  * 
- * ✅ Configuration Externalisée
- *    - assistant.upload.temp-dir pour chemin répertoire temporaire
- *    - Défaut: ${java.io.tmpdir}/multimodal-uploads
- *    - Création automatique du répertoire si inexistant
+ * ✅ ENDPOINTS SUPPLÉMENTAIRES
+ *    - GET /upload/status/{jobId} - Statut détaillé d'un upload
+ *    - GET /uploads - Liste tous les uploads (optionnel: par userId)
  * 
- * ✅ PersistentMultipartFile
- *    - Implémente MultipartFile pour compatibilité
- *    - Lit depuis fichier persisté sur disque
- *    - Détermination automatique Content-Type
- *    - Compatible avec tout code existant
+ * ✅ COMPATIBILITÉ NgRx
+ *    - Types de retour typés (UploadResponse, UploadStatusResponse)
+ *    - Structure JSON cohérente
+ *    - Support de tous les cas d'usage NgRx
  * 
- * AVANT (v2.1):
- * - Upload reçu → CompletableFuture → Tomcat supprime fichier → NoSuchFileException ❌
+ * CONFIGURATION application.properties:
+ * assistant.cors.allowed-origins=http://localhost:4200
  * 
- * APRÈS (v2.2):
- * - Upload reçu → Sauvegarde disque → CompletableFuture → Ingestion OK → Nettoyage ✅
+ * EXEMPLE RÉPONSE SUCCESS:
+ * {
+ *   "jobId": "abc-123",
+ *   "fileName": "document.pdf",
+ *   "status": "processing",
+ *   "message": "Upload démarré avec succès",
+ *   "isDuplicate": false,
+ *   "fileSize": 1024000,
+ *   "fileSizeKB": 1000
+ * }
  * 
- * MÉTRIQUES IMPACT:
- * - Fiabilité: +100% (plus de NoSuchFileException)
- * - Espace disque: +temporaire (nettoyé après traitement)
- * - Performance: identique (I/O sauvegarde compensé par async)
+ * EXEMPLE RÉPONSE DUPLICATE:
+ * {
+ *   "jobId": "existing-456",
+ *   "fileName": "document.pdf",
+ *   "status": "duplicate",
+ *   "message": "Fichier déjà uploadé",
+ *   "isDuplicate": true,
+ *   "existingJobId": "existing-456",
+ *   "duplicateInfo": {
+ *     "jobId": "existing-456",
+ *     "originalFileName": "document.pdf",
+ *     "uploadedAt": "2026-01-24T18:28:10",
+ *     "fingerprint": "abc123...",
+ *     "fileSize": 1024000
+ *   },
+ *   "fileSize": 1024000,
+ *   "fileSizeKB": 1000
+ * }
  */

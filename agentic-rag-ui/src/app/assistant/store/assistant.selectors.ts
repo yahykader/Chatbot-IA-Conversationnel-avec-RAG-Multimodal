@@ -1,8 +1,9 @@
 // ============================================================================
-// SELECTORS - assistant.selectors.ts (VERSION ADAPTÉE ET OPTIMISÉE)
+// SELECTORS - assistant.selectors.ts (VERSION v3.0 - Progression temps réel)
 // ============================================================================
 import { createFeatureSelector, createSelector } from '@ngrx/store';
-import { AssistantState, messagesAdapter, filesAdapter } from './assistant.state';
+import { AssistantState, messagesAdapter, filesAdapter, LIMITS } from './assistant.state';
+import { UploadedFile } from './assistant.models';
 
 // ==================== FEATURE SELECTOR ====================
 
@@ -10,17 +11,11 @@ export const selectAssistantState = createFeatureSelector<AssistantState>('assis
 
 // ==================== MESSAGES SELECTORS ====================
 
-/**
- * ✅ Sélectionne l'état des messages
- */
 export const selectMessagesState = createSelector(
   selectAssistantState,
   (state) => state.messages
 );
 
-/**
- * ✅ Sélecteurs de base de l'EntityAdapter
- */
 const {
   selectAll: selectAllMessages,
   selectEntities: selectMessageEntities,
@@ -30,83 +25,63 @@ const {
 
 export { selectAllMessages, selectMessageEntities, selectMessageIds, selectTotalMessages };
 
-/**
- * ✅ CRITIQUE: Messages triés par séquence + timestamp
- * L'adapter trie déjà, mais on s'assure du tri pour la sécurité
- */
 export const selectMessagesSorted = createSelector(
   selectAllMessages,
   (messages) => [...messages].sort((a, b) => {
-    // Tri principal par séquence
     if (a.sequence !== b.sequence) {
       return a.sequence - b.sequence;
     }
-    // Tri secondaire par timestamp si séquences égales
     return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
   })
 );
 
-/**
- * ✅ État de chargement des messages
- */
 export const selectMessagesLoading = createSelector(
   selectMessagesState,
   (state) => state.loading
 );
 
-/**
- * ✅ Erreur des messages
- */
 export const selectMessagesError = createSelector(
   selectMessagesState,
   (state) => state.error
 );
 
-/**
- * ✅ Y a-t-il un message en cours de streaming ?
- */
-export const selectIsStreaming = createSelector(
-  selectAllMessages,
-  (messages) => messages.some(m => m.isStreaming)
+export const selectStreamingMessageId = createSelector(
+  selectMessagesState,
+  (state) => state.streamingMessageId
 );
 
-/**
- * ✅ Dernier message
- */
+export const selectIsStreaming = createSelector(
+  selectStreamingMessageId,
+  (messageId) => messageId !== null
+);
+
+export const selectStreamingMessage = createSelector(
+  selectStreamingMessageId,
+  selectMessageEntities,
+  (messageId, entities) => messageId ? entities[messageId] : null
+);
+
 export const selectLastMessage = createSelector(
   selectMessagesSorted,
   (messages) => messages.length > 0 ? messages[messages.length - 1] : null
 );
 
-/**
- * ✅ Messages de l'utilisateur uniquement
- */
 export const selectUserMessages = createSelector(
   selectMessagesSorted,
   (messages) => messages.filter(m => m.sender === 'user')
 );
 
-/**
- * ✅ Messages de l'assistant uniquement
- */
 export const selectAssistantMessages = createSelector(
   selectMessagesSorted,
   (messages) => messages.filter(m => m.sender === 'assistant')
 );
 
-/**
- * ✅ Peut-on envoyer un message ?
- * (pas de streaming en cours, pas de chargement)
- */
 export const selectCanSendMessage = createSelector(
   selectIsStreaming,
   selectMessagesLoading,
   (isStreaming, isLoading) => !isStreaming && !isLoading
 );
 
-/**
- * ✅ Statistiques des messages
- */
 export const selectMessageStats = createSelector(
   selectUserMessages,
   selectAssistantMessages,
@@ -121,17 +96,11 @@ export const selectMessageStats = createSelector(
 
 // ==================== FILES SELECTORS ====================
 
-/**
- * ✅ Sélectionne l'état des fichiers
- */
 export const selectFilesState = createSelector(
   selectAssistantState,
   (state) => state.files
 );
 
-/**
- * ✅ Sélecteurs de base de l'EntityAdapter
- */
 const {
   selectAll: selectAllFiles,
   selectEntities: selectFileEntities,
@@ -141,99 +110,243 @@ const {
 
 export { selectAllFiles, selectFileEntities, selectFileIds, selectTotalFiles };
 
-/**
- * ✅ Upload en cours ?
- */
+export const selectFileById = (id: string) => createSelector(
+  selectFileEntities,
+  (entities) => entities[id]
+);
+
 export const selectFilesUploading = createSelector(
   selectFilesState,
   (state) => state.uploading
 );
 
-/**
- * ✅ Erreur des fichiers
- */
 export const selectFilesError = createSelector(
   selectFilesState,
   (state) => state.error
 );
 
-/**
- * ✅ Fichiers uploadés avec succès
- */
-export const selectSuccessfulFiles = createSelector(
-  selectAllFiles,
-  (files) => files.filter(f => f.status === 'success')
+export const selectUploadStats = createSelector(
+  selectFilesState,
+  (state) => state.stats
 );
 
-/**
- * ✅ Fichiers en cours d'upload
- */
+export const selectUploadProgress = createSelector(
+  selectFilesState,
+  (state) => state.progress
+);
+
+export const selectUploadErrors = createSelector(
+  selectFilesState,
+  (state) => state.uploadErrors
+);
+
+export const selectPollingFileIds = createSelector(
+  selectFilesState,
+  (state) => state.pollingFileIds
+);
+
+export const selectShowDuplicateModal = createSelector(
+  selectFilesState,
+  (state) => state.showDuplicateModal
+);
+
+export const selectCurrentDuplicateFileId = createSelector(
+  selectFilesState,
+  (state) => state.currentDuplicateFileId
+);
+
+export const selectCurrentDuplicateFile = createSelector(
+  selectCurrentDuplicateFileId,
+  selectFileEntities,
+  (fileId, entities) => fileId ? entities[fileId] : null
+);
+
+// ==================== FILES BY STATUS SELECTORS ====================
+
+export const selectPendingFiles = createSelector(
+  selectAllFiles,
+  (files) => files.filter(f => f.status === 'pending')
+);
+
 export const selectUploadingFiles = createSelector(
   selectAllFiles,
   (files) => files.filter(f => f.status === 'uploading')
 );
 
-/**
- * ✅ Fichiers en erreur
- */
+export const selectProcessingFiles = createSelector(
+  selectAllFiles,
+  (files) => files.filter(f => f.status === 'processing')
+);
+
+export const selectCompletedFiles = createSelector(
+  selectAllFiles,
+  (files) => files.filter(f => f.status === 'completed')
+);
+
 export const selectFailedFiles = createSelector(
   selectAllFiles,
-  (files) => files.filter(f => f.status === 'error')
+  (files) => files.filter(f => f.status === 'failed')
+);
+
+export const selectDuplicateFiles = createSelector(
+  selectAllFiles,
+  (files) => files.filter(f => f.status === 'duplicate')
+);
+
+export const selectActiveFiles = createSelector(
+  selectAllFiles,
+  (files) => files.filter(f => 
+    f.status === 'pending' || 
+    f.status === 'uploading' || 
+    f.status === 'processing'
+  )
+);
+
+export const selectHasActiveFiles = createSelector(
+  selectActiveFiles,
+  (files) => files.length > 0
+);
+
+export const selectFilesInPolling = createSelector(
+  selectAllFiles,
+  selectPollingFileIds,
+  (files, pollingIds) => files.filter(f => pollingIds.has(f.id))
+);
+
+// ==================== FILE STATISTICS SELECTORS ====================
+
+/**
+ * ✅ CORRIGÉ : Statistiques détaillées avec gestion NaN
+ */
+export const selectFileStats = createSelector(
+  selectUploadStats,
+  selectAllFiles,
+  (stats, files) => {
+    const totalSize = files.reduce((acc, f) => acc + (f.size || 0), 0);
+    const completedSize = files
+      .filter(f => f.status === 'completed')
+      .reduce((acc, f) => acc + (f.size || 0), 0);
+    
+    return {
+      ...stats,
+      totalSize,
+      totalSizeMB: totalSize > 0 
+        ? (totalSize / (1024 * 1024)).toFixed(2) 
+        : '0.00',
+      completedSize,
+      completedSizeMB: completedSize > 0
+        ? (completedSize / (1024 * 1024)).toFixed(2)
+        : '0.00'
+    };
+  }
 );
 
 /**
- * ✅ Statistiques des fichiers
+ * ✅ AMÉLIORÉ : Progression moyenne avec gestion progress undefined
  */
-export const selectFileStats = createSelector(
-  selectSuccessfulFiles,
-  selectUploadingFiles,
-  selectFailedFiles,
-  (success, uploading, failed) => ({
-    total: success.length + uploading.length + failed.length,
-    successCount: success.length,
-    uploadingCount: uploading.length,
-    failedCount: failed.length,
-    totalSize: success.reduce((acc, f) => acc + f.size, 0),
-    totalSizeMB: (success.reduce((acc, f) => acc + f.size, 0) / (1024 * 1024)).toFixed(2)
-  })
+export const selectAverageProgress = createSelector(
+  selectAllFiles,
+  (files) => {
+    if (files.length === 0) return 0;
+    const totalProgress = files.reduce((sum, file) => sum + (file.progress ?? 0), 0);
+    return Math.round(totalProgress / files.length);
+  }
+);
+
+/**
+ * ✅ NOUVEAU : Progression détaillée par fichier actif
+ */
+export const selectActiveFilesProgress = createSelector(
+  selectActiveFiles,
+  (files) => files.map(file => ({
+    fileId: file.id,
+    fileName: file.name,
+    status: file.status,
+    progress: file.progress ?? 0,
+    size: file.size,
+    sizeFormatted: formatFileSize(file.size)
+  }))
+);
+
+/**
+ * ✅ AMÉLIORÉ : Temps estimé restant avec progression réelle
+ */
+export const selectEstimatedTimeRemaining = createSelector(
+  selectActiveFiles,
+  selectAverageProgress,
+  (activeFiles, avgProgress) => {
+    if (activeFiles.length === 0 || avgProgress === 0) return null;
+    
+    // Estimation basée sur la progression moyenne
+    const remainingProgress = 100 - avgProgress;
+    const estimatedSeconds = (remainingProgress / avgProgress) * 30;
+    
+    return {
+      seconds: Math.round(estimatedSeconds),
+      formatted: formatTime(estimatedSeconds)
+    };
+  }
+);
+
+/**
+ * ✅ NOUVEAU : Vitesse d'upload globale (bytes/sec)
+ */
+export const selectUploadSpeed = createSelector(
+  selectActiveFiles,
+  (files) => {
+    // Calcul basique - pourrait être amélioré avec des timestamps
+    const uploadingFiles = files.filter(f => f.status === 'uploading');
+    if (uploadingFiles.length === 0) return 0;
+    
+    // Estimation simplifiée: 1MB/s par fichier en moyenne
+    return uploadingFiles.length * 1024 * 1024;
+  }
 );
 
 // ==================== UI SELECTORS ====================
 
-/**
- * ✅ UserId de l'utilisateur
- */
 export const selectUserId = createSelector(
   selectAssistantState,
   (state) => state.userId
 );
 
-/**
- * ✅ Message en cours de saisie
- */
 export const selectCurrentMessage = createSelector(
   selectAssistantState,
   (state) => state.currentMessage
 );
 
-/**
- * ✅ Y a-t-il des messages ?
- */
+export const selectIsSidebarOpen = createSelector(
+  selectAssistantState,
+  (state) => state.isSidebarOpen
+);
+
+export const selectUploadConfig = createSelector(
+  selectAssistantState,
+  (state) => state.uploadConfig
+);
+
+export const selectGlobalLoading = createSelector(
+  selectAssistantState,
+  (state) => state.globalLoading
+);
+
+export const selectGlobalError = createSelector(
+  selectAssistantState,
+  (state) => state.globalError
+);
+
 export const selectHasMessages = createSelector(
   selectTotalMessages,
   (total) => total > 0
 );
 
-/**
- * ✅ Y a-t-il des fichiers ?
- */
 export const selectHasFiles = createSelector(
   selectTotalFiles,
   (total) => total > 0
 );
 
 /**
- * ✅ État global de l'UI
+ * ✅ AMÉLIORÉ : État global UI avec toutes les conditions
  */
 export const selectUIState = createSelector(
   selectMessagesLoading,
@@ -241,32 +354,255 @@ export const selectUIState = createSelector(
   selectFilesUploading,
   selectCanSendMessage,
   selectHasMessages,
-  (messagesLoading, isStreaming, filesUploading, canSend, hasMessages) => ({
-    isLoading: messagesLoading || isStreaming || filesUploading,
+  selectHasActiveFiles,
+  selectGlobalLoading,
+  selectShowDuplicateModal,
+  selectGlobalError,
+  (messagesLoading, isStreaming, filesUploading, canSend, hasMessages, hasActiveFiles, globalLoading, showDuplicateModal, globalError) => ({
+    isLoading: messagesLoading || isStreaming || filesUploading || globalLoading,
     isStreaming,
-    canSendMessage: canSend,
+    canSendMessage: canSend && !globalError,
     hasMessages,
+    hasActiveFiles,
     showWelcome: !hasMessages,
-    showSpinner: messagesLoading || filesUploading,
-    showStreamingIndicator: isStreaming
+    showSpinner: messagesLoading || filesUploading || globalLoading,
+    showStreamingIndicator: isStreaming,
+    showDuplicateModal,
+    showFileUploadArea: true,
+    showClearButton: hasMessages || hasActiveFiles,
+    hasGlobalError: !!globalError,
+    isDisabled: globalError !== null || !canSend
   })
 );
 
-/**
- * ✅ Compte des messages en cours de chargement/streaming
- */
 export const selectLoadingMessagesCount = createSelector(
   selectAllMessages,
   (messages) => messages.filter(m => m.isLoading || m.isStreaming).length
 );
 
-/**
- * ✅ Y a-t-il une activité en cours ?
- */
 export const selectHasActivity = createSelector(
   selectMessagesLoading,
   selectIsStreaming,
   selectFilesUploading,
-  (messagesLoading, isStreaming, filesUploading) => 
-    messagesLoading || isStreaming || filesUploading
+  selectHasActiveFiles,
+  (messagesLoading, isStreaming, filesUploading, hasActiveFiles) => 
+    messagesLoading || isStreaming || filesUploading || hasActiveFiles
 );
+
+// ==================== COMBINED/COMPUTED SELECTORS ====================
+
+export const selectOverview = createSelector(
+  selectMessageStats,
+  selectFileStats,
+  selectUploadProgress,
+  selectHasActivity,
+  (messageStats, fileStats, uploadProgress, hasActivity) => ({
+    messages: messageStats,
+    files: fileStats,
+    upload: uploadProgress,
+    isActive: hasActivity
+  })
+);
+
+export const selectConversationState = createSelector(
+  selectMessagesSorted,
+  selectIsStreaming,
+  selectStreamingMessage,
+  selectLastMessage,
+  (messages, isStreaming, streamingMessage, lastMessage) => ({
+    messages,
+    totalMessages: messages.length,
+    isStreaming,
+    streamingMessage,
+    lastMessage,
+    isEmpty: messages.length === 0,
+    canScroll: messages.length > 5
+  })
+);
+
+/**
+ * ✅ AMÉLIORÉ : État complet des uploads avec progression temps réel
+ */
+export const selectUploadState = createSelector(
+  selectAllFiles,
+  selectUploadStats,
+  selectUploadProgress,
+  selectActiveFiles,
+  selectDuplicateFiles,
+  selectFailedFiles,
+  selectShowDuplicateModal,
+  selectCurrentDuplicateFile,
+  selectAverageProgress,
+  selectEstimatedTimeRemaining,
+  (allFiles, stats, progress, activeFiles, duplicates, failed, showModal, currentDuplicate, avgProgress, estimatedTime) => ({
+    allFiles,
+    stats,
+    progress,
+    activeFiles,
+    duplicates,
+    failed,
+    showDuplicateModal: showModal,
+    currentDuplicate,
+    hasActiveUploads: activeFiles.length > 0,
+    hasDuplicates: duplicates.length > 0,
+    hasFailures: failed.length > 0,
+    averageProgress: avgProgress,
+    estimatedTimeRemaining: estimatedTime,
+    uploadInProgress: activeFiles.length > 0
+  })
+);
+
+/**
+ * ✅ AMÉLIORÉ : Vue liste avec progression temps réel
+ */
+export const selectFileListView = createSelector(
+  selectAllFiles,
+  selectPollingFileIds,
+  (files, pollingIds) => files.map(file => ({
+    ...file,
+    isPolling: pollingIds.has(file.id),
+    statusColor: getStatusColor(file.status),
+    statusIcon: getStatusIcon(file.status),
+    statusLabel: getStatusLabel(file.status),
+    progressPercent: `${file.progress ?? 0}%`,
+    progressValue: file.progress ?? 0,
+    sizeFormatted: formatFileSize(file.size),
+    canRetry: file.status === 'failed',
+    canRemove: file.status !== 'uploading' && file.status !== 'processing',
+    showProgress: file.status === 'uploading' || file.status === 'processing',
+    showLoader: file.status === 'uploading' || file.status === 'processing',
+    isActive: file.status === 'uploading' || file.status === 'processing' || file.status === 'pending',
+    hasError: file.status === 'failed' && !!file.error,
+    isDuplicate: file.status === 'duplicate',
+    isCompleted: file.status === 'completed'
+  }))
+);
+
+/**
+ * ✅ NOUVEAU : Notifications actives
+ */
+export const selectNotifications = createSelector(
+  selectAssistantState,
+  (state) => state.notifications || []
+);
+
+/**
+ * ✅ NOUVEAU : Peut uploader de nouveaux fichiers ?
+ */
+export const selectCanUploadMore = createSelector(
+  selectActiveFiles,
+  selectUploadConfig,
+  (activeFiles, config) => {
+    const maxConcurrent = config.maxConcurrentUploads || LIMITS.MAX_CONCURRENT_UPLOADS;
+    return activeFiles.length < maxConcurrent;
+  }
+);
+
+/**
+ * ✅ NOUVEAU : Limites atteintes ?
+ */
+export const selectLimitsReached = createSelector(
+  selectTotalFiles,
+  selectTotalMessages,
+  (totalFiles, totalMessages) => ({
+    filesLimitReached: totalFiles >= LIMITS.MAX_FILES,
+    messagesLimitReached: totalMessages >= LIMITS.MAX_MESSAGES,
+    shouldCleanup: totalFiles > LIMITS.MAX_FILES * 0.9 || totalMessages > LIMITS.MAX_MESSAGES * 0.9
+  })
+);
+
+/**
+ * ✅ NOUVEAU : Stats en temps réel pour le dashboard
+ */
+export const selectDashboardStats = createSelector(
+  selectMessageStats,
+  selectFileStats,
+  selectUploadProgress,
+  selectActiveFiles,
+  selectHasActivity,
+  selectAverageProgress,
+  (messageStats, fileStats, uploadProgress, activeFiles, hasActivity, avgProgress) => ({
+    messages: {
+      total: messageStats.total,
+      user: messageStats.userCount,
+      assistant: messageStats.assistantCount
+    },
+    files: {
+      total: fileStats.total,
+      completed: fileStats.completed,
+      failed: fileStats.failed,
+      active: activeFiles.length,
+      totalSizeMB: fileStats.totalSizeMB
+    },
+    progress: {
+      overall: uploadProgress.overallProgress,
+      average: avgProgress,
+      activeUploads: activeFiles.length
+    },
+    status: {
+      isActive: hasActivity,
+      hasErrors: fileStats.failed > 0
+    }
+  })
+);
+
+// ==================== HELPER FUNCTIONS ====================
+
+function formatFileSize(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+function formatTime(seconds: number): string {
+  if (seconds < 60) {
+    return `${Math.round(seconds)}s`;
+  } else if (seconds < 3600) {
+    const minutes = Math.floor(seconds / 60);
+    const secs = Math.round(seconds % 60);
+    return `${minutes}m ${secs}s`;
+  } else {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    return `${hours}h ${minutes}m`;
+  }
+}
+
+function getStatusColor(status: UploadedFile['status']): string {
+  const colors: Record<UploadedFile['status'], string> = {
+    'pending': 'secondary',
+    'uploading': 'info',
+    'processing': 'primary',
+    'completed': 'success',
+    'failed': 'danger',
+    'duplicate': 'warning'
+  };
+  return colors[status] || 'secondary';
+}
+
+function getStatusIcon(status: UploadedFile['status']): string {
+  const icons: Record<UploadedFile['status'], string> = {
+    'pending': '○',
+    'uploading': '↑',
+    'processing': '⟳',
+    'completed': '✓',
+    'failed': '✗',
+    'duplicate': '⚠'
+  };
+  return icons[status] || '○';
+}
+
+function getStatusLabel(status: UploadedFile['status']): string {
+  const labels: Record<UploadedFile['status'], string> = {
+    'pending': 'En attente',
+    'uploading': 'Upload en cours',
+    'processing': 'Traitement',
+    'completed': 'Terminé',
+    'failed': 'Échec',
+    'duplicate': 'Duplicata'
+  };
+  return labels[status] || status;
+}
+

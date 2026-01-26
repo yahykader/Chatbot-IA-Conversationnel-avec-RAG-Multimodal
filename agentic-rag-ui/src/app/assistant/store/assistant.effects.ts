@@ -1,15 +1,45 @@
 // ============================================================================
-// EFFECTS - assistant.effects.ts (VERSION ADAPTÉE ET OPTIMISÉE)
+// EFFECTS - assistant.effects.ts (VERSION v3.2 - Avec Notifications)
 // ============================================================================
 import { Injectable, inject } from '@angular/core';
+import { 
+  HttpResponse, 
+  HttpEvent, 
+  HttpEventType, 
+  HttpProgressEvent 
+} from '@angular/common/http';
 import { Actions, createEffect, ofType } from '@ngrx/effects';
 import { Store } from '@ngrx/store';
-import { of, concat } from 'rxjs';
-import { catchError, endWith, exhaustMap, map, tap, withLatestFrom } from 'rxjs/operators';
+import { of, concat, interval, EMPTY } from 'rxjs';
+import { 
+  catchError, 
+  endWith, 
+  exhaustMap, 
+  map, 
+  tap, 
+  withLatestFrom, 
+  switchMap,
+  mergeMap,
+  filter,
+  takeUntil,
+  take,
+  delay
+} from 'rxjs/operators';
 
 import * as AssistantActions from './assistant.actions';
 import { AssistantApiService } from '../service/assistant-api.service';
-import { selectUserId, selectAllMessages, selectAllFiles } from './assistant.selectors';
+import { 
+  selectUserId, 
+  selectAllMessages, 
+  selectAllFiles,
+  selectFileById,
+  selectPollingFileIds 
+} from './assistant.selectors';
+import { 
+  generateFileId,
+  UploadResponse
+} from './assistant.models';
+import { LIMITS } from './assistant.state';
 
 @Injectable()
 export class AssistantEffects {
@@ -21,10 +51,7 @@ export class AssistantEffects {
   // ==================== SEND MESSAGE WITH STREAMING ====================
   
   /**
-   * ✅ ADAPTÉ : Gestion du streaming SSE
-   * - exhaustMap empêche les envois multiples pendant un streaming
-   * - Le contenu est cumulatif (pas de delta)
-   * - Gestion complète des erreurs
+   * ✅ Gestion du streaming SSE
    */
   sendMessageStream$ = createEffect(() =>
     this.actions$.pipe(
@@ -33,32 +60,28 @@ export class AssistantEffects {
       exhaustMap(([action, userId]) => {
         console.log('💬 [Effects] Envoi message:', action.message);
 
-        // ✅ Timestamps distincts pour user et assistant
         const userTimestamp = new Date();
         const assistantTimestamp = new Date(userTimestamp.getTime() + 1);
         
-        // ✅ Génération des IDs
         const userMessageId = this.generateMessageId('user');
         const assistantMessageId = this.generateMessageId('assistant');
 
-        // ✅ Message utilisateur
         const userMessage = {
           id: userMessageId,
           content: action.message,
           sender: 'user' as const,
           timestamp: userTimestamp,
-          sequence: 0 // Sera assigné par le reducer
+          sequence: 0
         };
 
-        // ✅ Message assistant (placeholder avec loading)
         const assistantMessage = {
           id: assistantMessageId,
           content: '',
           sender: 'assistant' as const,
           timestamp: assistantTimestamp,
-          isLoading: true,      // Placeholder visible
-          isStreaming: false,   // Pas encore de streaming
-          sequence: 0           // Sera assigné par le reducer
+          isLoading: true,
+          isStreaming: false,
+          sequence: 0
         };
 
         console.log('✅ [Effects] Messages créés:', {
@@ -66,20 +89,12 @@ export class AssistantEffects {
           assistantMessageId
         });
 
-        // ✅ Séquence d'actions
         return concat(
-          // 1. Ajouter le message utilisateur
           of(AssistantActions.addUserMessage({ message: userMessage })),
-          
-          // 2. Ajouter le message assistant vide (loading)
           of(AssistantActions.addAssistantMessage({ message: assistantMessage })),
-          
-          // 3. Démarrer le streaming
           of(AssistantActions.startStreaming({ messageId: assistantMessageId })),
 
-          // 4. Stream SSE du contenu
           this.apiService.sendMessageStream(userId, action.message).pipe(
-            // ✅ Le contenu reçu est CUMULATIF
             map(cumulativeContent => {
               console.log('📥 [Effects] Contenu reçu:', cumulativeContent.substring(0, 50) + '...');
               
@@ -89,26 +104,25 @@ export class AssistantEffects {
               });
             }),
 
-            // ✅ Arrêter le streaming à la fin
             endWith(
               AssistantActions.stopStreaming({ messageId: assistantMessageId })
             ),
 
-            // ✅ Gestion des erreurs
             catchError((error) => {
               console.error('❌ [Effects] Erreur streaming:', error);
 
               const errorMessage = this.getErrorMessage(error);
 
               return of(
-                // Afficher le message d'erreur
                 AssistantActions.updateMessageContent({
                   messageId: assistantMessageId,
                   content: `❌ Erreur: ${errorMessage}`
                 }),
-                // Arrêter le streaming
+                AssistantActions.streamingError({ 
+                  messageId: assistantMessageId, 
+                  error: errorMessage 
+                }),
                 AssistantActions.stopStreaming({ messageId: assistantMessageId }),
-                // Dispatch l'action d'échec
                 AssistantActions.sendMessageFailure({ error: errorMessage })
               );
             })
@@ -118,11 +132,408 @@ export class AssistantEffects {
     )
   );
   
-  // ==================== LOAD MESSAGES ====================
+  // ==================== FILE UPLOAD EFFECTS ====================
   
   /**
-   * ✅ Charge les messages depuis localStorage au démarrage
+   * ✅ Upload avec progression HTTP temps réel
    */
+  uploadFile$ = createEffect(() =>
+    this.actions$.pipe(
+      ofType(AssistantActions.uploadFile),
+      mergeMap((action) => {
+        const fileId = generateFileId(action.file);
+        console.log('📤 [Effects] Upload fichier:', action.file.name, 'ID:', fileId);
+        
+        return this.apiService.uploadFile(action.file, action.userId).pipe(
+          tap((event: HttpEvent<UploadResponse>) => {
+            if (event.type === HttpEventType.UploadProgress) {
+              const progressEvent = event as HttpProgressEvent;
+              if (progressEvent.total) {
+                const progress = Math.round((100 * progressEvent.loaded) / progressEvent.total);
+                console.log('📊 [Effects] Progression upload:', progress, '%');
+                
+                this.store.dispatch(AssistantActions.updateFileProgress({ 
+                  fileId, 
+                  progress 
+                }));
+              }
+            }
+          }),
+          
+          filter((event): event is HttpResponse<UploadResponse> => 
+            event.type === HttpEventType.Response
+          ),
+          
+          map(response => response.body!),
+          
+          map(responseBody => {
+            console.log('📥 [Effects] Réponse upload:', responseBody);
+
+            if (responseBody.duplicate && responseBody.duplicateInfo) {
+              console.log('⚠️ [Effects] Duplicata détecté:', responseBody.duplicateInfo.jobId);
+              
+              return AssistantActions.uploadFileDuplicate({
+                file: action.file,
+                duplicateInfo: responseBody.duplicateInfo,
+                existingJobId: responseBody.duplicateInfo.jobId
+              });
+            }
+
+            console.log('✅ [Effects] Fichier uploadé, job ID:', responseBody.jobId);
+            
+            return AssistantActions.uploadFileSuccess({
+              file: action.file,
+              response: {
+                jobId: responseBody.jobId,
+                fileName: responseBody.fileName,
+                fileSize: responseBody.fileSize,
+                status: responseBody.status,
+                duplicate: false
+              }
+            });
+          }),
+          
+          catchError((error) => {
+            console.error('❌ [Effects] Erreur upload:', error);
+            return of(AssistantActions.uploadFileFailure({
+              file: action.file,
+              error: this.getErrorMessage(error)
+            }));
+          })
+        );
+      })
+    )
+  );
+
+  /**
+   * ✅ NOUVEAU : Notification upload réussi
+   */
+  notifyUploadFileSuccess$ = createEffect(() =>
+    this.actions$.pipe(
+      ofType(AssistantActions.uploadFileSuccess),
+      map(({ file }) => {
+        console.log('🎉 [Effects] Notification upload réussi:', file.name);
+        return AssistantActions.showNotification({
+          message: `Fichier "${file.name}" uploadé avec succès`,
+          notificationType: 'success',
+          duration: 3000
+        });
+      })
+    )
+  );
+
+  /**
+   * ✅ NOUVEAU : Notification upload échoué
+   */
+  notifyUploadFileFailure$ = createEffect(() =>
+    this.actions$.pipe(
+      ofType(AssistantActions.uploadFileFailure),
+      map(({ file, error }) => {
+        console.error('❌ [Effects] Notification échec upload:', file.name, error);
+        return AssistantActions.showNotification({
+          message: `Erreur lors de l'upload de "${file.name}": ${error}`,
+          notificationType: 'error',
+          duration: 5000
+        });
+      })
+    )
+  );
+
+  /**
+   * ✅ NOUVEAU : Notification duplicata détecté
+   */
+  notifyUploadFileDuplicate$ = createEffect(() =>
+    this.actions$.pipe(
+      ofType(AssistantActions.uploadFileDuplicate),
+      map(({ file }) => {
+        console.warn('⚠️ [Effects] Notification duplicata:', file.name);
+        return AssistantActions.showNotification({
+          message: `Le fichier "${file.name}" a déjà été uploadé`,
+          notificationType: 'warning',
+          duration: 4000
+        });
+      })
+    )
+  );
+
+  /**
+   * ✅ Démarrer le polling après upload réussi
+   */
+  startPollingAfterUpload$ = createEffect(() =>
+    this.actions$.pipe(
+      ofType(AssistantActions.uploadFileSuccess),
+      map(({ file, response }) => {
+        const fileId = generateFileId(file);
+        console.log('🔄 [Effects] Démarrage polling pour:', response.jobId);
+        
+        return AssistantActions.startPollingAfterUpload({ 
+          fileId, 
+          jobId: response.jobId 
+        });
+      })
+    )
+  );
+
+  /**
+   * ✅ Polling du statut avec progression temps réel
+   */
+pollUploadStatus$ = createEffect(() =>
+  this.actions$.pipe(
+    ofType(AssistantActions.startPollingAfterUpload),
+    mergeMap(({ fileId, jobId }) => {
+      console.log('🔄 [Effects] Polling statut pour job:', jobId);
+
+      return interval(LIMITS.POLLING_INTERVAL).pipe(
+        switchMap(() => 
+          this.apiService.getUploadStatus(jobId).pipe(
+            tap(status => {
+              console.log('📊 [Effects] Statut polling:', status);
+              
+              if (status.progress !== undefined) {
+                this.store.dispatch(AssistantActions.updateFileProgress({
+                  fileId,
+                  progress: status.progress
+                }));
+              }
+            }),
+            map(status => 
+              AssistantActions.pollUploadStatusSuccess({
+                fileId,
+                jobId: status.jobId,
+                status: status.status,
+                progress: status.progress,
+                message: status.message
+              })
+            ),
+            catchError(error => {
+              console.error('❌ [Effects] Erreur polling:', error);
+              return of(AssistantActions.pollUploadStatusFailure({
+                fileId,
+                jobId,
+                error: this.getErrorMessage(error)
+              }));
+            })
+          )
+        ),
+        // ✅ Arrêter UNIQUEMENT sur completed/failed/error
+        takeUntil(
+          this.actions$.pipe(
+            ofType(
+              AssistantActions.pollUploadStatusSuccess,
+              AssistantActions.pollUploadStatusFailure
+            ),
+            filter(action => 
+              'jobId' in action && action.jobId === jobId &&
+              (
+                ('status' in action && (action.status === 'completed' || action.status === 'failed')) ||
+                action.type === AssistantActions.pollUploadStatusFailure.type
+              )
+            )
+          )
+        )
+      );
+    })
+  )
+);
+
+  /**
+   * ✅ NOUVEAU : Notification traitement terminé
+   */
+  notifyPollUploadStatusCompleted$ = createEffect(() =>
+    this.actions$.pipe(
+      ofType(AssistantActions.pollUploadStatusSuccess),
+      filter(action => action.status === 'completed'),
+      map(({ message }) => {
+        console.log('✅ [Effects] Notification traitement terminé:', message);
+        return AssistantActions.showNotification({
+          message: message || 'Traitement du fichier terminé',
+          notificationType: 'success',
+          duration: 3000
+        });
+      })
+    )
+  );
+
+  /**
+   * ✅ NOUVEAU : Notification traitement échoué
+   */
+  notifyPollUploadStatusFailed$ = createEffect(() =>
+    this.actions$.pipe(
+      ofType(AssistantActions.pollUploadStatusFailure),
+      map(({ error }) => {
+        console.error('❌ [Effects] Notification échec traitement:', error);
+        return AssistantActions.showNotification({
+          message: `Erreur de traitement: ${error}`,
+          notificationType: 'error',
+          duration: 5000
+        });
+      })
+    )
+  );
+
+  /**
+   * ✅ Forcer le re-upload d'un duplicata
+   */
+  forceReupload$ = createEffect(() =>
+    this.actions$.pipe(
+      ofType(AssistantActions.forceReupload),
+      withLatestFrom(this.store),
+      mergeMap(([{ fileId, userId }, state]) => {
+        const file = selectFileById(fileId)(state);
+        
+        if (!file) {
+          console.warn('⚠️ [Effects] Fichier non trouvé pour re-upload:', fileId);
+          return of(AssistantActions.showNotification({
+            message: 'Fichier introuvable',
+            notificationType: 'error',
+            duration: 3000
+          }));
+        }
+
+        console.log('🔄 [Effects] Re-upload forcé:', file.name);
+        
+        return of(AssistantActions.showNotification({ 
+          message: 'Veuillez re-sélectionner le fichier pour le re-uploader',
+          notificationType: 'info',
+          duration: 300000
+        }));
+      })
+    )
+  );
+
+  /**
+   * ✅ Upload multiple avec progression batch
+   */
+  uploadMultipleFiles$ = createEffect(() =>
+    this.actions$.pipe(
+      ofType(AssistantActions.uploadMultipleFiles),
+      mergeMap(({ files, userId }) => {
+        console.log('📤 [Effects] Upload multiple:', files.length, 'fichiers');
+        
+        return concat(
+          of(AssistantActions.showNotification({
+            message: `Upload de ${files.length} fichier(s) en cours...`,
+            notificationType: 'info',
+            duration: 3000
+          })),
+          ...files.map(file => 
+            of(AssistantActions.uploadFile({ file, userId }))
+          )
+        );
+      })
+    )
+  );
+
+  /**
+   * ✅ Calculer la progression batch globale
+   */
+  updateBatchProgress$ = createEffect(() =>
+    this.actions$.pipe(
+      ofType(
+        AssistantActions.uploadFileSuccess,
+        AssistantActions.uploadFileFailure,
+        AssistantActions.uploadFileDuplicate
+      ),
+      withLatestFrom(this.store.select(selectAllFiles)),
+      map(([action, files]) => {
+        const totalFiles = files.length;
+        const completedFiles = files.filter(f => 
+          f.status === 'completed' || 
+          f.status === 'failed' || 
+          f.status === 'duplicate'
+        ).length;
+        const failedFiles = files.filter(f => f.status === 'failed').length;
+        const overallProgress = totalFiles > 0 
+          ? Math.round((completedFiles / totalFiles) * 100) 
+          : 0;
+
+        return AssistantActions.updateBatchProgress({
+          totalFiles,
+          completedFiles,
+          failedFiles,
+          overallProgress
+        });
+      })
+    )
+  );
+
+  // ==================== DUPLICATE MANAGEMENT EFFECTS ====================
+
+  /**
+   * ✅ Auto-afficher la modale de duplicata
+   */
+  showDuplicateModalAuto$ = createEffect(() =>
+    this.actions$.pipe(
+      ofType(AssistantActions.uploadFileDuplicate),
+      map(({ file }) => {
+        const fileId = generateFileId(file);
+        console.log('⚠️ [Effects] Affichage modale duplicata pour:', fileId);
+        return AssistantActions.showDuplicateModal({ fileId });
+      })
+    )
+  );
+
+  /**
+   * ✅ Utiliser un fichier duplicata existant
+   */
+  useDuplicateFile$ = createEffect(() =>
+    this.actions$.pipe(
+      ofType(AssistantActions.useDuplicateFile),
+      tap(({ fileId, existingJobId }) => {
+        console.log('✅ [Effects] Utilisation fichier existant:', existingJobId);
+      }),
+      mergeMap(() => [
+        AssistantActions.hideDuplicateModal(),
+        AssistantActions.showNotification({
+          message: 'Fichier existant utilisé avec succès',
+          notificationType: 'success',
+          duration: 3000
+        })
+      ])
+    )
+  );
+
+  // ==================== RETRY FAILED UPLOAD ====================
+
+  /**
+   * ✅ Retry upload échoué
+   */
+  retryFailedUpload$ = createEffect(() =>
+    this.actions$.pipe(
+      ofType(AssistantActions.retryFailedUpload),
+      map(({ file }) => {
+        console.log('🔄 [Effects] Retry upload:', file.name);
+        
+        return AssistantActions.showNotification({ 
+          message: 'Veuillez re-sélectionner le fichier pour réessayer',
+          notificationType: 'info',
+          duration: 4000
+        });
+      })
+    )
+  );
+
+  // ==================== CHAT ERROR HANDLING ====================
+
+  /**
+   * ✅ NOUVEAU : Notification erreur de chat
+   */
+  notifyChatError$ = createEffect(() =>
+    this.actions$.pipe(
+      ofType(AssistantActions.sendMessageFailure),
+      map(({ error }) => {
+        console.error('❌ [Effects] Notification erreur chat:', error);
+        return AssistantActions.showNotification({
+          message: `Erreur: ${error}`,
+          notificationType: 'error',
+          duration: 5000
+        });
+      })
+    )
+  );
+
+  // ==================== LOAD MESSAGES ====================
+  
   loadMessages$ = createEffect(() =>
     this.actions$.pipe(
       ofType(AssistantActions.loadMessagesFromStorage),
@@ -135,7 +546,6 @@ export class AssistantEffects {
           if (stored) {
             const messages = JSON.parse(stored);
             
-            // ✅ Validation des messages
             const validMessages = messages.filter((m: any) => 
               m && 
               m.id && 
@@ -161,9 +571,6 @@ export class AssistantEffects {
   
   // ==================== SAVE MESSAGES ====================
   
-  /**
-   * ✅ Sauvegarde automatique des messages après chaque modification
-   */
   saveMessages$ = createEffect(
     () =>
       this.actions$.pipe(
@@ -180,7 +587,6 @@ export class AssistantEffects {
           const STORAGE_KEY = 'assistant_messages';
           
           try {
-            // ✅ Ne sauvegarder que les messages complets (pas en streaming)
             const messagesToSave = messages
               .filter(m => !m.isStreaming && !m.isLoading)
               .map(m => ({
@@ -201,57 +607,8 @@ export class AssistantEffects {
     { dispatch: false }
   );
   
-  // ==================== UPLOAD FILE ====================
-  
-  /**
-   * ✅ Upload d'un fichier vers le backend
-   */
-  uploadFile$ = createEffect(() =>
-    this.actions$.pipe(
-      ofType(AssistantActions.uploadFile),
-      exhaustMap((action) => {
-        const fileId = this.generateFileId();
-        console.log('📤 [Effects] Upload fichier:', action.file.name);
-        
-        return this.apiService.uploadFile(action.file).pipe(
-          map(response => {
-            if (response.success) {
-              console.log('✅ [Effects] Fichier uploadé:', response.filename);
-              
-              return AssistantActions.uploadFileSuccess({
-                file: {
-                  id: fileId,
-                  name: response.filename,
-                  size: response.size,
-                  uploadDate: new Date(),
-                  status: 'success',
-                  progress: 100
-                }
-              });
-            } else {
-              return AssistantActions.uploadFileFailure({
-                fileId,
-                error: response.error || 'Erreur upload'
-              });
-            }
-          }),
-          catchError((error) => {
-            console.error('❌ [Effects] Erreur upload:', error);
-            return of(AssistantActions.uploadFileFailure({
-              fileId,
-              error: this.getErrorMessage(error)
-            }));
-          })
-        );
-      })
-    )
-  );
-  
   // ==================== LOAD FILES ====================
   
-  /**
-   * ✅ Charge les fichiers depuis localStorage
-   */
   loadFiles$ = createEffect(() =>
     this.actions$.pipe(
       ofType(AssistantActions.loadFilesFromStorage),
@@ -277,26 +634,42 @@ export class AssistantEffects {
   
   // ==================== SAVE FILES ====================
   
-  /**
-   * ✅ Sauvegarde automatique des fichiers
-   */
   saveFiles$ = createEffect(
     () =>
       this.actions$.pipe(
         ofType(
           AssistantActions.uploadFileSuccess,
-          AssistantActions.clearFiles
+          AssistantActions.uploadFileDuplicate,
+          AssistantActions.uploadFileFailure,
+          AssistantActions.pollUploadStatusSuccess,
+          AssistantActions.updateFileProgress,
+          AssistantActions.removeFile,
+          AssistantActions.clearFiles,
+          AssistantActions.clearCompletedFiles
         ),
         withLatestFrom(this.store.select(selectAllFiles)),
         tap(([, files]) => {
           const STORAGE_KEY = 'assistant_files';
           
           try {
-            // ✅ Ne sauvegarder que les fichiers réussis
-            const successFiles = files.filter(f => f.status === 'success');
+            const filesToSave = files
+              .filter(f => f.status !== 'uploading' && f.status !== 'pending')
+              .map(f => ({
+                id: f.id,
+                name: f.name,
+                size: f.size,
+                type: f.type,
+                uploadDate: f.uploadDate,
+                status: f.status,
+                progress: f.progress,
+                jobId: f.jobId,
+                error: f.error,
+                duplicateInfo: f.duplicateInfo,
+                existingJobId: f.existingJobId
+              }));
             
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(successFiles));
-            console.log('💾 [Effects] Fichiers sauvegardés:', successFiles.length);
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(filesToSave));
+            console.log('💾 [Effects] Fichiers sauvegardés:', filesToSave.length);
           } catch (error) {
             console.error('❌ [Effects] Erreur sauvegarde fichiers:', error);
           }
@@ -307,23 +680,10 @@ export class AssistantEffects {
   
   // ==================== HELPERS ====================
   
-  /**
-   * ✅ Génère un ID unique pour un message
-   */
   private generateMessageId(prefix: 'user' | 'assistant'): string {
     return `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
   }
   
-  /**
-   * ✅ Génère un ID unique pour un fichier
-   */
-  private generateFileId(): string {
-    return 'file_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
-  }
-  
-  /**
-   * ✅ Extrait le message d'erreur
-   */
   private getErrorMessage(error: any): string {
     if (typeof error === 'string') return error;
     if (error?.error?.message) return error.error.message;

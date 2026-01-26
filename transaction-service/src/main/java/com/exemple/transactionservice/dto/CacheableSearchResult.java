@@ -13,7 +13,9 @@ import lombok.NoArgsConstructor;
 
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -115,7 +117,7 @@ public class CacheableSearchResult implements Serializable {
         item.setScore(score);
         
         if (segment.metadata() != null) {
-            var metadata = segment.metadata();
+            Metadata metadata = segment.metadata();
             
             // Métadonnées communes
             item.setSource(metadata.getString("source"));
@@ -143,46 +145,49 @@ public class CacheableSearchResult implements Serializable {
      * Convertit un SearchResultItem en TextSegment (pour compatibilité)
      */
     public static TextSegment toTextSegment(SearchResultItem item) {
-        // Créer métadonnées
-        Metadata metadata = new Metadata();
+        // Créer métadonnées avec Map
+        Map<String, Object> metadataMap = new HashMap<>();
         
         // Ajouter métadonnées non-null
         if (item.getSource() != null) {
-            metadata.put("source", item.getSource());
+            metadataMap.put("source", item.getSource());
         }
         if (item.getType() != null) {
-            metadata.put("type", item.getType());
+            metadataMap.put("type", item.getType());
         }
         if (item.getPage() != null) {
-            metadata.put("page", item.getPage());
+            metadataMap.put("page", item.getPage());
         }
         if (item.getTotalPages() != null) {
-            metadata.put("totalPages", item.getTotalPages());
+            metadataMap.put("totalPages", item.getTotalPages());
         }
         if (item.getFilename() != null) {
-            metadata.put("filename", item.getFilename());
+            metadataMap.put("filename", item.getFilename());
         }
         if (item.getImageName() != null) {
-            metadata.put("imageName", item.getImageName());
+            metadataMap.put("imageName", item.getImageName());
         }
         if (item.getImagePath() != null) {
-            metadata.put("savedPath", item.getImagePath());
+            metadataMap.put("savedPath", item.getImagePath());
         }
         if (item.getImageNumber() != null) {
-            metadata.put("imageNumber", item.getImageNumber());
+            metadataMap.put("imageNumber", item.getImageNumber());
         }
         if (item.getWidth() != null) {
-            metadata.put("width", item.getWidth());
+            metadataMap.put("width", item.getWidth());
         }
         if (item.getHeight() != null) {
-            metadata.put("height", item.getHeight());
+            metadataMap.put("height", item.getHeight());
         }
         if (item.getImageId() != null) {
-            metadata.put("imageId", item.getImageId());
+            metadataMap.put("imageId", item.getImageId());
         }
         if (item.getSavedPath() != null) {
-            metadata.put("savedPath", item.getSavedPath());
+            metadataMap.put("savedPath", item.getSavedPath());
         }
+        
+        // Créer Metadata depuis Map
+        Metadata metadata = Metadata.from(metadataMap);
         
         // ✅ UTILISER TextSegment.from()
         return TextSegment.from(item.getContent(), metadata);
