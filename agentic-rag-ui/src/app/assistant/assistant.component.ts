@@ -7,7 +7,8 @@ import {
   ViewChild, 
   ElementRef, 
   AfterViewChecked, 
-  OnDestroy 
+  OnDestroy, 
+  HostListener
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
@@ -123,8 +124,10 @@ export class AssistantComponent implements OnInit, AfterViewChecked, OnDestroy {
   currentMessage = '';
   isVoiceEnabled = false;
   isRecording = false;
+  showFileDropdown = false;
   
   private shouldScrollToBottom = false;
+
   private lastMessageCount = 0;
   private destroy$ = new Subject<void>();
   
@@ -782,5 +785,23 @@ export class AssistantComponent implements OnInit, AfterViewChecked, OnDestroy {
   
   trackByFileId(index: number, file: UploadedFile): string {
     return file.id;
+  }
+
+  // =======================
+    toggleFileDropdown(): void {
+    this.showFileDropdown = !this.showFileDropdown;
+  }
+  
+  closeFileDropdown(): void {
+    this.showFileDropdown = false;
+  }
+  
+  // Fermer dropdown au clic extérieur
+  @HostListener('document:click', ['$event'])
+  onDocumentClick(event: Event): void {
+    const target = event.target as HTMLElement;
+    if (!target.closest('.file-dropdown')) {
+      this.showFileDropdown = false;
+    }
   }
 }

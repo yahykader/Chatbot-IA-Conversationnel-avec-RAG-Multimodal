@@ -839,6 +839,27 @@ kbd {
   }
 }
 
+// ✅ AJOUTER pour le dropdown custom
+.file-dropdown {
+  .dropdown-menu {
+    min-width: 200px;
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    
+    &.show {
+      display: block;
+    }
+  }
+  
+  .dropdown-item {
+    cursor: pointer;
+    
+    &:hover {
+      background-color: #f8f9fa;
+    }
+  }
+}
+
 // ✅ LOADER EN OVERLAY SUR FICHIER
 .file-loader-overlay {
   position: absolute;
