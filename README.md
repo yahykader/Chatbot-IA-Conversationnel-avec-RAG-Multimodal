@@ -427,6 +427,7 @@ Pour intéger Web RTC, ils existent ttois options:
 
 ✅ Avantages de Whisper
 
+
   ✅ Qualité exceptionnelle (état de l'art)
   ✅ 99+ langues supportées
   ✅ Tous navigateurs (Firefox, Safari, etc.)
