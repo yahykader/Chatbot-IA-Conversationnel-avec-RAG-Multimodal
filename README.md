@@ -426,6 +426,8 @@ Pour intéger Web RTC, ils existent ttois options:
 🎯 Option 3 : OpenAI Whisper (AVEC Backend)
 
 ✅ Avantages de Whisper
+
+
   ✅ Qualité exceptionnelle (état de l'art)
   ✅ 99+ langues supportées
   ✅ Tous navigateurs (Firefox, Safari, etc.)
@@ -433,3 +435,10 @@ Pour intéger Web RTC, ils existent ttois options:
   ✅ Robuste au bruit
   ✅ Détection automatique de la langue
 
+
+🎯 Vue d'Ensemble
+Objectifs du Cache Redis
+
+  ✅Réduire les coûts : Éviter appels LLM redondants (économie 70-90%)
+  ✅Améliorer performances : Réponse < 100ms vs 2-5s
+  ✅Optimiser UX : Expérience instantanée

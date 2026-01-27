@@ -5,7 +5,7 @@ import {
   importProvidersFrom
 } from '@angular/core'
 import { provideRouter } from '@angular/router';
-
+import { provideToastr } from 'ngx-toastr';
 import { routes } from './app.routes';
 import { provideAnimations } from '@angular/platform-browser/animations';
 import { provideHttpClient } from '@angular/common/http';
@@ -16,11 +16,13 @@ import { provideStoreDevtools } from '@ngrx/store-devtools';
 import { assistantReducer } from './assistant/store/assistant.reducer';
 import { AssistantEffects } from './assistant/store/assistant.effects';
 
+import { MaterialModule } from './material/material.module';
 export const appConfig: ApplicationConfig = {
   providers: [
     provideZoneChangeDetection({ eventCoalescing: true }),
     provideBrowserGlobalErrorListeners(),
     provideRouter(routes),
+    importProvidersFrom(MaterialModule),
     provideHttpClient(), 
     provideAnimations(),
     provideStore({
@@ -34,6 +36,12 @@ export const appConfig: ApplicationConfig = {
       traceLimit: 75
     }),
         // ✅ Configurer Markdown
-    importProvidersFrom(MarkdownModule.forRoot())
+    importProvidersFrom(MarkdownModule.forRoot()),
+        provideToastr({
+      timeOut: 3000,
+      positionClass: 'toast-top-right',
+      preventDuplicates: true,
+    })
   ]
+  
 };

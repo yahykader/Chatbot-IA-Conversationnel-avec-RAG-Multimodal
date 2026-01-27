@@ -1,5 +1,7 @@
 <!-- ============================================================================ -->
-<!-- TEMPLATE - assistant.component.html (VERSION FINALE CORRIGÉE) -->
+<!-- TEMPLATE - assistant.component.html (VERSION v3.2 - CORRIGÉ) -->
+<!-- Progression temps réel optimisée + Meilleur feedback visuel -->
+<!-- ✅ CORRECTION : Suppression des `?? 0` redondants sur file.progress -->
 <!-- ============================================================================ -->
 <div class="container-fluid vh-100 p-0">
   <div class="row g-0 h-100">
@@ -9,127 +11,465 @@
     <!-- ========================================== -->
     <aside class="col-lg-3 col-md-4 col-12 bg-white border-end shadow-sm d-flex flex-column">
       
-      <!-- Header -->
-      <div class="d-flex justify-content-between align-items-center p-3 border-bottom">
-        <h5 class="mb-0 fw-bold">
-          <i class="bi bi-folder-fill text-primary me-2"></i>
-          Fichiers Uploadés
-        </h5>
-        <button 
-          *ngIf="hasFiles$ | async" 
-          class="btn btn-sm btn-outline-danger"
-          (click)="clearFiles()"
-          title="Supprimer tous les fichiers">
-          <i class="bi bi-trash"></i>
-        </button>
-      </div>
-      
-      <!-- Liste des fichiers -->
-      <div class="flex-grow-1 overflow-auto p-3 custom-scrollbar">
-        <div class="list-group list-group-flush">
-          <div 
-            *ngFor="let file of files$ | async; trackBy: trackByFileId" 
-            class="list-group-item border rounded mb-2"
-            [ngClass]="{
-              'border-success bg-success-subtle': file.status === 'success',
-              'border-warning bg-warning-subtle': file.status === 'uploading',
-              'border-danger bg-danger-subtle': file.status === 'error'
-            }">
-            
-            <div class="d-flex align-items-start">
-              <div class="me-3 fs-3">
-                {{ getFileIcon(file.name) }}
-              </div>
+      <!-- Header avec stats -->
+      <div class="p-3 border-bottom">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h5 class="mb-0 fw-bold">
+            <i class="bi bi-folder-fill text-primary me-2"></i>
+            Fichiers
+          </h5>
+          @if (hasFiles$ | async) {
+            <!-- ✅ VERSION ANGULAR PURE -->
+            <div class="position-relative file-dropdown">
+              <button 
+                class="btn btn-sm btn-outline-secondary" 
+                type="button"
+                (click)="toggleFileDropdown(); $event.stopPropagation()">
+                <i class="bi bi-three-dots-vertical"></i>
+              </button>
               
-              <div class="flex-grow-1">
-                <h6 class="mb-1 text-truncate" [title]="file.name">{{ file.name }}</h6>
-                <small class="text-muted">
-                  {{ formatFileSize(file.size) }}
-                  <span *ngIf="file.status === 'uploading' && file.progress"> 
-                    • {{ file.progress }}%
-                  </span>
-                  <span *ngIf="file.status === 'success'">
-                    • {{ formatTime(file.uploadDate) }}
-                  </span>
-                </small>
-                
-                <div *ngIf="file.status === 'uploading' && file.progress !== undefined" 
-                     class="progress mt-2" 
-                     style="height: 4px;">
-                  <div 
-                    class="progress-bar progress-bar-striped progress-bar-animated bg-warning" 
-                    role="progressbar" 
-                    [style.width.%]="file.progress"
-                    [attr.aria-valuenow]="file.progress"
-                    aria-valuemin="0" 
-                    aria-valuemax="100">
+              @if (showFileDropdown) {
+                <div class="dropdown-menu dropdown-menu-end show position-absolute" 
+                    style="top: 100%; right: 0; z-index: 1000;">
+                  <a class="dropdown-item" 
+                    (click)="clearCompletedFiles(); closeFileDropdown(); $event.stopPropagation()">
+                    <i class="bi bi-check-circle me-2"></i>
+                    Effacer terminés
+                  </a>
+                  <hr class="dropdown-divider">
+                  <a class="dropdown-item text-danger" 
+                    (click)="clearFiles(); closeFileDropdown(); $event.stopPropagation()">
+                    <i class="bi bi-trash me-2"></i>
+                    Tout supprimer
+                  </a>
+                </div>
+              }
+            </div>
+          }
+        </div>
+        
+        <!-- ✅ Stats enrichies -->
+        @if (uploadStats$ | async; as stats) {
+          <div class="small text-muted">
+            <div class="d-flex justify-content-between mb-1">
+              <span>Total: <strong>{{ stats.total }}</strong></span>
+              @if (stats.completed > 0) {
+                <span class="text-success">
+                  ✓ {{ stats.completed }}
+                </span>
+              }
+            </div>
+            
+            <!-- Barre de progression globale avec pourcentage -->
+            @if (uploadProgress$ | async; as progress) {
+              @if (progress.overallProgress > 0) {
+                <div class="mb-1">
+                  <div class="d-flex justify-content-between align-items-center mb-1">
+                    <small class="text-muted">Progression globale</small>
+                    <small class="fw-bold text-primary">{{ progress.overallProgress }}%</small>
+                  </div>
+                  <div class="progress" style="height: 6px;">
+                    <div class="progress-bar bg-success progress-bar-striped progress-bar-animated" 
+                         role="progressbar" 
+                         [style.width.%]="progress.overallProgress"
+                         [attr.aria-valuenow]="progress.overallProgress"
+                         aria-valuemin="0"
+                         aria-valuemax="100">
+                    </div>
                   </div>
                 </div>
-                
-                <small *ngIf="file.status === 'error'" class="text-danger d-block mt-1">
-                  <i class="bi bi-exclamation-circle"></i> Échec de l'upload
-                </small>
-              </div>
+              }
+            }
+            
+            <!-- Indicateurs par statut -->
+            <div class="d-flex gap-2 mt-2 flex-wrap">
+              @if (stats.uploading > 0) {
+                <span class="badge bg-info">
+                  <i class="bi bi-arrow-up"></i> {{ stats.uploading }}
+                </span>
+              }
+              @if (stats.processing > 0) {
+                <span class="badge bg-primary">
+                  <i class="bi bi-arrow-repeat"></i> {{ stats.processing }}
+                </span>
+              }
+              @if (stats.duplicate > 0) {
+                <span class="badge bg-warning">
+                  <i class="bi bi-exclamation-triangle"></i> {{ stats.duplicate }}
+                </span>
+              }
+              @if (stats.failed > 0) {
+                <span class="badge bg-danger">
+                  <i class="bi bi-x-circle"></i> {{ stats.failed }}
+                </span>
+              }
+            </div>
+          </div>
+        }
+      </div>
+      
+      <!-- ✅ Tabs par statut -->
+      <ul class="nav nav-tabs px-3 pt-2" role="tablist">
+        <li class="nav-item" role="presentation">
+          <button class="nav-link active small" 
+                  data-bs-toggle="tab" 
+                  data-bs-target="#all-files">
+            Tous
+          </button>
+        </li>
+        @if (hasActiveFiles$ | async) {
+          <li class="nav-item" role="presentation">
+            <button class="nav-link small" 
+                    data-bs-toggle="tab" 
+                    data-bs-target="#active-files">
+              En cours
+              <span class="badge bg-primary ms-1">{{ (activeFiles$ | async)?.length }}</span>
+            </button>
+          </li>
+        }
+        @if ((duplicateFiles$ | async)?.length) {
+          <li class="nav-item" role="presentation">
+            <button class="nav-link small" 
+                    data-bs-toggle="tab" 
+                    data-bs-target="#duplicate-files">
+              Duplicatas
+              <span class="badge bg-warning ms-1">{{ (duplicateFiles$ | async)?.length }}</span>
+            </button>
+          </li>
+        }
+      </ul>
+      
+      <!-- Liste des fichiers -->
+      <div class="flex-grow-1 overflow-auto custom-scrollbar">
+        <div class="tab-content p-3">
+          
+          <!-- ✅ Tab: Tous les fichiers -->
+          <div class="tab-pane fade show active" id="all-files" role="tabpanel">
+            <div class="list-group list-group-flush">
+              @for (file of files$ | async; track file.id) {
+                <div 
+                  class="list-group-item border rounded mb-2 p-3 position-relative"
+                  [ngClass]="{
+                    'border-success bg-success-subtle': file.status === 'completed',
+                    'border-info bg-info-subtle': file.status === 'uploading',
+                    'border-primary bg-primary-subtle': file.status === 'processing',
+                    'border-warning bg-warning-subtle': file.status === 'duplicate',
+                    'border-danger bg-danger-subtle': file.status === 'failed',
+                    'border-secondary': file.status === 'pending'
+                  }">
+                  
+                  <!-- ✅ LOADER EN OVERLAY OPTIMISÉ -->
+                  @if (file.status === 'uploading' || file.status === 'processing') {
+                    <div class="file-loader-overlay">
+                      <div class="d-flex flex-column align-items-center">
+                        <!-- Spinner avec taille adaptative -->
+                        <div class="spinner-border mb-2" 
+                             style="width: 3rem; height: 3rem;"
+                             [class.text-info]="file.status === 'uploading'"
+                             [class.text-primary]="file.status === 'processing'"
+                             role="status">
+                          <span class="visually-hidden">Chargement...</span>
+                        </div>
+                        
+                        <!-- Pourcentage grande taille -->
+                        <span class="fw-bold fs-5 mb-1"
+                              [class.text-info]="file.status === 'uploading'"
+                              [class.text-primary]="file.status === 'processing'">
+                          {{ file.progress }}%
+                        </span>
+                        
+                        <!-- Label statut -->
+                        <small class="text-muted">
+                          @if (file.status === 'uploading') {
+                            <span><i class="bi bi-arrow-up me-1"></i>Upload en cours...</span>
+                          }
+                          @if (file.status === 'processing') {
+                            <span><i class="bi bi-arrow-repeat me-1"></i>Traitement...</span>
+                          }
+                        </small>
+                        
+                        <!-- Barre de progression dans l'overlay -->
+                        <div class="progress mt-2" style="width: 120px; height: 4px;">
+                          <div class="progress-bar progress-bar-striped progress-bar-animated"
+                               [class.bg-info]="file.status === 'uploading'"
+                               [class.bg-primary]="file.status === 'processing'"
+                               [style.width.%]="file.progress">
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  }
+                  
+                  <div class="d-flex align-items-start">
+                    <!-- Icône fichier -->
+                    <div class="me-3 fs-3">
+                      {{ getFileIcon(file.name) }}
+                    </div>
+                    
+                    <div class="flex-grow-1 min-width-0">
+                      <!-- Nom + Statut -->
+                      <div class="d-flex justify-content-between align-items-start mb-1">
+                        <h6 class="mb-0 text-truncate flex-grow-1" [title]="file.name">
+                          {{ file.name }}
+                        </h6>
+                        <span class="ms-2 fs-5">
+                          {{ getStatusIcon(file.status) }}
+                        </span>
+                      </div>
+                      
+                      <!-- Infos -->
+                      <small class="text-muted d-block">
+                        {{ formatFileSize(file.size) }}
+                        
+                        <!-- ✅ CORRIGÉ : Progression en temps réel -->
+                        @if (file.status === 'uploading') {
+                          <span class="text-info fw-bold"> • Upload {{ file.progress }}%</span>
+                        }
+                        @if (file.status === 'processing') {
+                          <span class="text-primary fw-bold"> • Traitement {{ file.progress }}%</span>
+                        }
+                        @if (file.status === 'completed' && file.uploadDate) {
+                          <span> • {{ formatTime(file.uploadDate) }}</span>
+                        }
+                        
+                        @if (file.jobId) {
+                          <span class="d-block mt-1">
+                            Job: <code class="small">{{ file.jobId.substring(0, 8) }}...</code>
+                          </span>
+                        }
+                      </small>
+                      
+                      <!-- ✅ CORRIGÉ : Barre de progression EN TEMPS RÉEL (hors overlay) -->
+                      @if ((file.status === 'uploading' || file.status === 'processing') && file.progress > 0) {
+                        <div class="progress mt-2" style="height: 6px;">
+                          <div 
+                            class="progress-bar progress-bar-striped progress-bar-animated"
+                            [ngClass]="{
+                              'bg-info': file.status === 'uploading',
+                              'bg-primary': file.status === 'processing'
+                            }"
+                            role="progressbar" 
+                            [style.width.%]="file.progress"
+                            [attr.aria-valuenow]="file.progress"
+                            aria-valuemin="0"
+                            aria-valuemax="100">
+                          </div>
+                        </div>
+                      }
+                      
+                      <!-- ✅ Message erreur -->
+                      @if (file.status === 'failed' && file.error) {
+                        <div class="alert alert-danger p-2 mt-2 mb-0 small">
+                          <i class="bi bi-exclamation-circle me-1"></i>
+                          {{ file.error }}
+                        </div>
+                      }
+                      
+                      <!-- ✅ Info duplicata -->
+                      @if (file.status === 'duplicate' && file.duplicateInfo) {
+                        <div class="alert alert-warning p-2 mt-2 mb-0 small">
+                          <i class="bi bi-info-circle me-1"></i>
+                          Uploadé le {{ formatDate(file.duplicateInfo.uploadedAt) }}
+                        </div>
+                      }
+                      
+                      <!-- ✅ Actions -->
+                      @if (file.status !== 'uploading' && file.status !== 'processing') {
+                        <div class="d-flex gap-1 mt-2">
+                          @if (file.status === 'failed') {
+                            <button 
+                              class="btn btn-sm btn-outline-primary"
+                              (click)="retryFailedUpload(file)"
+                              title="Réessayer">
+                              <i class="bi bi-arrow-clockwise"></i>
+                            </button>
+                          }
+                          
+                          <button 
+                            class="btn btn-sm btn-outline-danger"
+                            (click)="removeFile(file.id)"
+                            title="Supprimer">
+                            <i class="bi bi-trash"></i>
+                          </button>
+                        </div>
+                      }
+                    </div>
+                  </div>
+                </div>
+              } @empty {
+                <!-- État vide -->
+                <div class="text-center py-5">
+                  <i class="bi bi-folder2-open display-1 text-muted opacity-50"></i>
+                  <p class="text-muted mt-3">Aucun fichier uploadé</p>
+                </div>
+              }
             </div>
           </div>
           
-          <div *ngIf="!(hasFiles$ | async)" class="text-center py-5">
-            <i class="bi bi-folder2-open display-1 text-muted opacity-50"></i>
-            <p class="text-muted mt-3">Aucun fichier uploadé</p>
+          <!-- ✅ CORRIGÉ : Tab: Fichiers actifs OPTIMISÉ -->
+          <div class="tab-pane fade" id="active-files" role="tabpanel">
+            <div class="list-group list-group-flush">
+              @for (file of activeFiles$ | async; track file.id) {
+                <div class="list-group-item border rounded mb-2 p-3 border-primary bg-primary-subtle">
+                  
+                  <div class="d-flex align-items-start">
+                    <!-- Spinner -->
+                    <div class="spinner-border spinner-border-sm text-primary me-3 mt-1" 
+                         role="status">
+                      <span class="visually-hidden">Chargement...</span>
+                    </div>
+                    
+                    <div class="flex-grow-1">
+                      <!-- Nom + Badge -->
+                      <div class="d-flex justify-content-between align-items-start mb-2">
+                        <h6 class="mb-0 text-truncate">{{ file.name }}</h6>
+                        @if (file.status === 'uploading') {
+                          <span class="badge bg-info ms-2">Upload</span>
+                        }
+                        @if (file.status === 'processing') {
+                          <span class="badge bg-primary ms-2">Traitement</span>
+                        }
+                      </div>
+                      
+                      <!-- Pourcentage + Taille -->
+                      <div class="d-flex justify-content-between align-items-center mb-1">
+                        <small class="text-muted">{{ formatFileSize(file.size) }}</small>
+                        <strong class="text-primary">{{ file.progress }}%</strong>
+                      </div>
+                      
+                      <!-- ✅ CORRIGÉ : Progression temps réel -->
+                      <div class="progress" style="height: 8px;">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated bg-primary"
+                             [style.width.%]="file.progress"
+                             [attr.aria-valuenow]="file.progress"
+                             aria-valuemin="0"
+                             aria-valuemax="100">
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              } @empty {
+                <div class="text-center py-4">
+                  <p class="text-muted">Aucun upload en cours</p>
+                </div>
+              }
+            </div>
           </div>
+          
+          <!-- ✅ Tab: Duplicatas -->
+          <div class="tab-pane fade" id="duplicate-files" role="tabpanel">
+            <div class="list-group list-group-flush">
+              @for (file of duplicateFiles$ | async; track file.id) {
+                <div class="list-group-item border rounded mb-2 p-3 border-warning bg-warning-subtle">
+                  
+                  <div class="d-flex align-items-start">
+                    <i class="bi bi-exclamation-triangle text-warning fs-3 me-3"></i>
+                    
+                    <div class="flex-grow-1">
+                      <h6 class="mb-2">{{ file.name }}</h6>
+                      
+                      @if (file.duplicateInfo) {
+                        <div class="alert alert-warning p-2 mb-2 small">
+                          <i class="bi bi-info-circle me-1"></i>
+                          Déjà uploadé le {{ formatDate(file.duplicateInfo.uploadedAt) }}
+                        </div>
+                      }
+                      
+                      <div class="d-flex gap-2 flex-wrap">
+                        @if (file.existingJobId) {
+                          <button 
+                            class="btn btn-sm btn-primary"
+                            (click)="useDuplicateFile(file.id, file.existingJobId!)">
+                            <i class="bi bi-check-circle me-1"></i>
+                            Utiliser
+                          </button>
+                        }
+                        
+                        <button 
+                          class="btn btn-sm btn-warning"
+                          (click)="forceReupload(file.id)">
+                          <i class="bi bi-arrow-clockwise me-1"></i>
+                          Re-upload
+                        </button>
+                        
+                        <button 
+                          class="btn btn-sm btn-outline-danger"
+                          (click)="dismissDuplicate(file.id)">
+                          <i class="bi bi-x-circle me-1"></i>
+                          Annuler
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              } @empty {
+                <div class="text-center py-4">
+                  <p class="text-muted">Aucun duplicata</p>
+                </div>
+              }
+            </div>
+          </div>
+          
         </div>
       </div>
       
-      <!-- Zone d'upload -->
+      <!-- ✅ Zone d'upload TOUJOURS DISPONIBLE -->
       <div class="p-3 border-top">
         <div 
           class="upload-zone border border-2 border-dashed rounded-3 p-4 text-center"
           [ngClass]="{
             'border-primary bg-primary-subtle': dragOver,
-            'border-secondary': !dragOver,
-            'opacity-50': uploading$ | async
+            'border-secondary': !dragOver
           }"
           (click)="triggerFileInput()"
           (dragover)="onDragOver($event)"
           (dragleave)="onDragLeave($event)"
           (drop)="onDrop($event)"
-          [style.cursor]="(uploading$ | async) ? 'not-allowed' : 'pointer'">
+          style="cursor: pointer;">
           
+          <!-- ✅ Input TOUJOURS actif -->
           <input 
             #fileInput
             type="file" 
             hidden 
+            multiple
             (change)="onFileSelected($event)"
-            accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.xlsx,.xls"
-            [disabled]="uploading$ | async">
+            accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.xlsx,.xls,.csv">
           
-          <div *ngIf="!(uploading$ | async)">
+          <div>
             <i class="bi bi-cloud-upload display-4 text-primary"></i>
             <p class="mt-3 mb-1">
-              <strong class="text-primary">Cliquez</strong> ou glissez un fichier
+              <strong class="text-primary">Cliquez</strong> ou glissez des fichiers
             </p>
-            <small class="text-muted">PDF, DOCX, TXT, Images (max 50MB)</small>
+            <small class="text-muted">
+              PDF, DOCX, TXT, Images, Excel (max 20MB)
+              <br>
+              Upload multiple supporté
+            </small>
           </div>
           
-          <div *ngIf="uploading$ | async">
-            <div class="spinner-border text-primary" role="status">
-              <span class="visually-hidden">Chargement...</span>
+          <!-- ✅ Indicateur uploads en cours -->
+          @if (hasActiveFiles$ | async) {
+            <div class="mt-3">
+              <div class="badge bg-info">
+                <i class="bi bi-arrow-up"></i>
+                {{ (activeFiles$ | async)?.length }} upload(s) en cours
+              </div>
             </div>
-            <p class="mt-3 mb-0 text-muted">Upload en cours...</p>
-          </div>
+          }
         </div>
       </div>
       
     </aside>
     
     <!-- ========================================== -->
-    <!-- MAIN - Zone de Chat -->
+    <!-- MAIN - Zone de Chat (INCHANGÉ) -->
     <!-- ========================================== -->
     <main class="col-lg-9 col-md-8 col-12 d-flex flex-column bg-light">
       
       <!-- Header -->
-      <header class="bg-gradient p-3 shadow-sm" 
-              style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+      <header class="bg-white p-3 shadow-sm">
         <div class="d-flex justify-content-between align-items-center">
           <div>
             <h4 class="mb-1 text-dark fw-bold">
@@ -142,18 +482,26 @@
           </div>
           <div class="d-flex gap-2">
             <button 
+              class="btn btn-light btn-sm d-md-none"
+              (click)="toggleSidebar()">
+              <i class="bi bi-list"></i>
+            </button>
+            
+            <button 
               class="btn btn-light btn-sm"
               (click)="exportHistory()"
               title="Exporter l'historique">
               <i class="bi bi-download"></i>
             </button>
-            <button 
-              *ngIf="hasMessages$ | async"
-              class="btn btn-light btn-sm"
-              (click)="clearChat()">
-              <i class="bi bi-trash me-1"></i>
-              Effacer
-            </button>
+            
+            @if (hasMessages$ | async) {
+              <button 
+                class="btn btn-light btn-sm"
+                (click)="clearChat()">
+                <i class="bi bi-trash me-1"></i>
+                Effacer
+              </button>
+            }
           </div>
         </div>
       </header>
@@ -163,230 +511,338 @@
            class="flex-grow-1 overflow-auto p-4 custom-scrollbar" 
            style="scroll-behavior: smooth;">
         
-        <!-- Messages -->
-        <div 
-          *ngFor="let msg of messages$ | async; trackBy: trackByMessageId" 
-          [id]="'message-' + msg.id"
-          class="mb-4"
-          [ngClass]="{
-            'd-flex flex-row-reverse': msg.sender === 'user',
-            'd-flex': msg.sender === 'assistant'
-          }"
-          @slideIn>
-          
-          <!-- Avatar -->
-          <div class="flex-shrink-0 mx-3">
-            <div class="rounded-circle d-flex align-items-center justify-content-center"
-                 [ngClass]="{
-                   'bg-primary text-white': msg.sender === 'user',
-                   'bg-secondary text-white': msg.sender === 'assistant'
-                 }"
-                 style="width: 45px; height: 45px; font-size: 20px;">
-              <i *ngIf="msg.sender === 'user'" class="bi bi-person-fill"></i>
-              <i *ngIf="msg.sender === 'assistant'" class="bi bi-robot"></i>
-            </div>
-          </div>
-          
-          <!-- Message Content -->
-          <div class="flex-grow-1" style="max-width: 70%;">
-            <div 
-              class="card shadow-sm"
-              [ngClass]="{
-                'bg-primary text-white': msg.sender === 'user',
-                'bg-white': msg.sender === 'assistant',
-                'border-warning': msg.isStreaming
-              }">
-              <div class="card-body">
-                
-                <!-- Loading Indicator -->
-                <div *ngIf="msg.isLoading && !msg.content" class="d-flex gap-2 align-items-center">
-                  <div class="spinner-grow spinner-grow-sm text-secondary" role="status">
-                    <span class="visually-hidden">Chargement...</span>
-                  </div>
-                  <div class="spinner-grow spinner-grow-sm text-secondary" role="status" style="animation-delay: 0.2s;">
-                    <span class="visually-hidden">Chargement...</span>
-                  </div>
-                  <div class="spinner-grow spinner-grow-sm text-secondary" role="status" style="animation-delay: 0.4s;">
-                    <span class="visually-hidden">Chargement...</span>
-                  </div>
-                  <span class="text-muted ms-2">L'assistant réfléchit...</span>
-                </div>
-                
-                <!-- Message Text avec Markdown -->
-                <div *ngIf="msg.content" class="message-text-wrapper">
-                  <markdown 
-                    [data]="msg.content"
-                    class="markdown-content"
-                    [ngClass]="{'markdown-user': msg.sender === 'user'}">
-                  </markdown>
-                  <span *ngIf="msg.isStreaming" class="typing-cursor">▊</span>
-                </div>
-                
-                <!-- Actions -->
-                <div *ngIf="!msg.isLoading && !msg.isStreaming && msg.content" 
-                     class="mt-3 pt-2 border-top"
-                     [class.border-light]="msg.sender === 'user'">
-                  <div class="d-flex gap-2">
-                    <button 
-                      class="btn btn-sm"
-                      [ngClass]="{
-                        'btn-light': msg.sender === 'user',
-                        'btn-outline-secondary': msg.sender === 'assistant'
-                      }"
-                      (click)="copyMessage(msg.content)"
-                      title="Copier">
-                      <i class="bi bi-clipboard"></i>
-                    </button>
-                    <button 
-                      *ngIf="msg.sender === 'assistant'"
-                      class="btn btn-sm btn-outline-secondary"
-                      (click)="regenerateLastResponse()"
-                      title="Régénérer">
-                      <i class="bi bi-arrow-clockwise"></i>
-                    </button>
-                  </div>
-                </div>
+        @for (msg of messages$ | async; track msg.id) {
+          <div 
+            [id]="'message-' + msg.id"
+            class="mb-4"
+            [ngClass]="{
+              'd-flex flex-row-reverse': msg.sender === 'user',
+              'd-flex': msg.sender === 'assistant'
+            }"
+            @slideIn>
+            
+            <div class="flex-shrink-0 mx-3">
+              <div class="rounded-circle d-flex align-items-center justify-content-center"
+                   [ngClass]="{
+                     'bg-primary text-white': msg.sender === 'user',
+                     'bg-secondary text-white': msg.sender === 'assistant'
+                   }"
+                   style="width: 45px; height: 45px; font-size: 20px;">
+                @if (msg.sender === 'user') {
+                  <i class="bi bi-person-fill"></i>
+                } @else {
+                  <i class="bi bi-robot"></i>
+                }
               </div>
             </div>
             
-            <!-- Timestamp -->
-            <small 
-              class="text-muted mt-1 d-block"
-              [ngClass]="{
-                'text-end': msg.sender === 'user',
-                'text-start': msg.sender === 'assistant'
-              }">
-              <i class="bi bi-clock me-1"></i>
-              {{ formatTime(msg.timestamp) }}
-            </small>
+            <div class="flex-grow-1" style="max-width: 70%;">
+              <div 
+                class="card shadow-sm"
+                [ngClass]="{
+                  'bg-primary text-white': msg.sender === 'user',
+                  'bg-white': msg.sender === 'assistant',
+                  'border-warning border-2': msg.isStreaming
+                }">
+                <div class="card-body">
+                  
+                  @if (msg.isLoading && !msg.content) {
+                    <div class="d-flex gap-2 align-items-center">
+                      <div class="spinner-grow spinner-grow-sm text-secondary" role="status">
+                        <span class="visually-hidden">Chargement...</span>
+                      </div>
+                      <div class="spinner-grow spinner-grow-sm text-secondary" role="status" style="animation-delay: 0.2s;">
+                        <span class="visually-hidden">Chargement...</span>
+                      </div>
+                      <div class="spinner-grow spinner-grow-sm text-secondary" role="status" style="animation-delay: 0.4s;">
+                        <span class="visually-hidden">Chargement...</span>
+                      </div>
+                      <span class="text-muted ms-2">L'assistant réfléchit...</span>
+                    </div>
+                  }
+                  
+                  @if (msg.content) {
+                    <div class="message-text-wrapper">
+                      <markdown 
+                        [data]="msg.content"
+                        class="markdown-content"
+                        [ngClass]="{'markdown-user': msg.sender === 'user'}">
+                      </markdown>
+                      @if (msg.isStreaming) {
+                        <span class="typing-cursor">▊</span>
+                      }
+                    </div>
+                  }
+                  
+                  @if (msg.error) {
+                    <div class="alert alert-danger mb-0 mt-2">
+                      <i class="bi bi-exclamation-circle me-2"></i>
+                      {{ msg.error }}
+                    </div>
+                  }
+                  
+                  @if (!msg.isLoading && !msg.isStreaming && msg.content) {
+                    <div class="mt-3 pt-2 border-top"
+                         [class.border-light]="msg.sender === 'user'">
+                      <div class="d-flex gap-2">
+                        <button 
+                          class="btn btn-sm"
+                          [ngClass]="{
+                            'btn-light': msg.sender === 'user',
+                            'btn-outline-secondary': msg.sender === 'assistant'
+                          }"
+                          (click)="copyMessage(msg.content)"
+                          title="Copier">
+                          <i class="bi bi-clipboard"></i>
+                        </button>
+                        
+                        @if (msg.sender === 'assistant') {
+                          <button 
+                            class="btn btn-sm btn-outline-secondary"
+                            (click)="regenerateLastResponse()"
+                            title="Régénérer">
+                            <i class="bi bi-arrow-clockwise"></i>
+                          </button>
+                        }
+                        
+                        <button 
+                          class="btn btn-sm btn-outline-danger"
+                          (click)="deleteMessage(msg.id)"
+                          title="Supprimer">
+                          <i class="bi bi-trash"></i>
+                        </button>
+                      </div>
+                    </div>
+                  }
+                </div>
+              </div>
+              
+              <small 
+                class="text-muted mt-1 d-block"
+                [ngClass]="{
+                  'text-end': msg.sender === 'user',
+                  'text-start': msg.sender === 'assistant'
+                }">
+                <i class="bi bi-clock me-1"></i>
+                {{ formatTime(msg.timestamp) }}
+              </small>
+            </div>
           </div>
-        </div>
-        
-        <!-- État vide -->
-        <div *ngIf="!(hasMessages$ | async)" class="text-center py-5" @fadeIn>
-          <i class="bi bi-chat-dots display-1 text-muted opacity-50"></i>
-          <h3 class="mt-4 mb-2">Commencez une conversation</h3>
-          <p class="text-muted mb-4">Uploadez des documents et posez vos questions</p>
-          
-          <div class="d-flex flex-wrap justify-content-center gap-2">
-            <button 
-              class="btn btn-outline-primary btn-sm" 
-              (click)="sendMessage('Résume les documents uploadés')"
-              [disabled]="!(canSendMessage$ | async)">
-              <i class="bi bi-lightbulb me-1"></i>
-              Résumer les documents
-            </button>
-            <button 
-              class="btn btn-outline-primary btn-sm" 
-              (click)="sendMessage('Quelles sont les images dans les fichiers ?')"
-              [disabled]="!(canSendMessage$ | async)">
-              <i class="bi bi-image me-1"></i>
-              Trouver les images
-            </button>
-            <button 
-              class="btn btn-outline-primary btn-sm" 
-              (click)="sendMessage('Donne-moi les points clés')"
-              [disabled]="!(canSendMessage$ | async)">
-              <i class="bi bi-list-check me-1"></i>
-              Points clés
-            </button>
+        } @empty {
+          <div class="text-center py-5" @fadeIn>
+            <i class="bi bi-chat-dots display-1 text-muted opacity-50"></i>
+            <h3 class="mt-4 mb-2">Commencez une conversation</h3>
+            <p class="text-muted mb-4">Uploadez des documents et posez vos questions</p>
+            
+            <div class="d-flex flex-wrap justify-content-center gap-2">
+              <button 
+                class="btn btn-outline-primary btn-sm" 
+                (click)="sendMessage('Résume les documents uploadés')"
+                [disabled]="!(canSendMessage$ | async)">
+                <i class="bi bi-lightbulb me-1"></i>
+                Résumer les documents
+              </button>
+              <button 
+                class="btn btn-outline-primary btn-sm" 
+                (click)="sendMessage('Quelles sont les images dans les fichiers ?')"
+                [disabled]="!(canSendMessage$ | async)">
+                <i class="bi bi-image me-1"></i>
+                Trouver les images
+              </button>
+              <button 
+                class="btn btn-outline-primary btn-sm" 
+                (click)="sendMessage('Donne-moi les points clés')"
+                [disabled]="!(canSendMessage$ | async)">
+                <i class="bi bi-list-check me-1"></i>
+                Points clés
+              </button>
+            </div>
           </div>
-        </div>
+        }
         
       </div>
       
       <!-- Footer -->
       <footer class="border-top bg-white p-3 shadow-sm">
 
-        <!-- Indicateur de streaming -->
-        <div *ngIf="isStreaming$ | async" 
-             class="alert alert-info py-2 mb-2 d-flex align-items-center" 
-             role="alert">
-          <div class="spinner-border spinner-border-sm me-2" role="status">
-            <span class="visually-hidden">Streaming...</span>
-          </div>
-          <small class="mb-0">L'assistant est en train de répondre...</small>
-        </div>
-
-        <!-- ✅ NOUVEAU : Indicateur d'écoute vocale -->
-        <div *ngIf="isListening" 
-            class="alert alert-danger py-2 mb-2 d-flex align-items-center" 
-            role="alert">
-          <div class="spinner-grow spinner-grow-sm me-2" role="status">
-            <span class="visually-hidden">Écoute...</span>
-          </div>
-          <small class="mb-0">
-            🎤 Écoute en cours... Parlez maintenant
-            <button 
-              class="btn btn-sm btn-light ms-3" 
-              (click)="stopListening()">
-              <i class="bi bi-stop-fill"></i> Arrêter
+        @if (globalError$ | async; as error) {
+          <div class="alert alert-danger py-2 mb-2 d-flex justify-content-between align-items-center">
+            <div>
+              <i class="bi bi-exclamation-circle me-2"></i>
+              <small>{{ error }}</small>
+            </div>
+            <button class="btn btn-sm btn-light" (click)="clearGlobalError()">
+              <i class="bi bi-x"></i>
             </button>
-          </small>
-        </div>
+          </div>
+        }
+
+        @if (isStreaming$ | async) {
+          <div class="alert alert-info py-2 mb-2 d-flex align-items-center" role="alert">
+            <div class="spinner-border spinner-border-sm me-2" role="status">
+              <span class="visually-hidden">Streaming...</span>
+            </div>
+            <small class="mb-0">L'assistant est en train de répondre...</small>
+          </div>
+        }
+
+        @if (isRecording) {
+          <div class="alert alert-danger py-2 mb-2 d-flex align-items-center" role="alert">
+            <div class="spinner-grow spinner-grow-sm me-2" role="status">
+              <span class="visually-hidden">Enregistrement...</span>
+            </div>
+            <small class="mb-0">
+              🎤 Enregistrement en cours... Parlez maintenant
+              <button 
+                class="btn btn-sm btn-light ms-3" 
+                (click)="stopListening()">
+                <i class="bi bi-stop-fill"></i> Arrêter
+              </button>
+            </small>
+          </div>
+        }
         
-        <div class="input-group mb-2">
+        <div class="input-group-fused mb-2">
           <textarea
             #messageInput
             class="form-control"
             [(ngModel)]="currentMessage"
             (keydown)="onKeyDown($event)"
-            placeholder="{{ getPlaceholder() }}"
+            [placeholder]="getPlaceholder()"
             rows="2"
-            [disabled]="!(canSendMessage$ | async)"
-            style="resize: none;"></textarea>
-
-              <!-- ✅ Bouton Microphone (à côté du bouton Envoyer) -->
-            <app-voice-button
-              *ngIf="isVoiceEnabled"
-              (transcriptFinal)="onVoiceTranscriptFinal($event)"
-              (transcriptInterim)="onVoiceTranscriptInterim($event)"
-              (listeningChange)="onListeningChange($event)">
-            </app-voice-button>
+            [disabled]="!(canSendMessage$ | async) || isRecording">
+          </textarea>
           
-            <!-- Bouton Envoyer -->
-          <button 
-            class="btn btn-primary"
-            type="button"
-            (click)="sendMessage()"
-            [disabled]="!currentMessage.trim() || !(canSendMessage$ | async)"
-            style="min-width: 100px;">
+          <div class="button-group">
+            @if (isVoiceEnabled) {
+              <app-voice-button
+                [language]="'fr'"
+                (transcriptFinal)="onVoiceTranscriptFinal($event)"
+                (recordingChange)="onRecordingChange($event)"
+                (error)="onVoiceError($event)">
+              </app-voice-button>
+            }
             
-            <span *ngIf="!(isStreaming$ | async) && !(loading$ | async)">
-              <i class="bi bi-send-fill me-1"></i>
-              Envoyer
-            </span>
-            
-            <span *ngIf="(isStreaming$ | async) || (loading$ | async)">
-              <span class="spinner-border spinner-border-sm" role="status">
-                <span class="visually-hidden">Chargement...</span>
-              </span>
-            </span>
-          </button>
+            <button 
+              class="btn btn-primary btn-send"
+              type="button"
+              (click)="sendMessage()"
+              [disabled]="!currentMessage.trim() || !(canSendMessage$ | async) || isRecording">
+              
+              @if (!(isStreaming$ | async) && !(globalLoading$ | async)) {
+                <i class="bi bi-send-fill"></i>
+                <span class="d-none d-sm-inline ms-1">Envoyer</span>
+              } @else {
+                <span class="spinner-border spinner-border-sm"></span>
+              }
+            </button>
+          </div>
         </div>
         
-
-        <!-- Stats avec indication vocale -->
         <div class="d-flex justify-content-between align-items-center small text-muted">
           <span>
             <kbd>Enter</kbd> pour envoyer • <kbd>Shift + Enter</kbd> pour nouvelle ligne
-              <span *ngIf="isVoiceEnabled" class="ms-2">
-              • <i class="bi bi-mic-fill text-primary"></i> 
-              <strong class="text-primary">Vocal activé</strong>
+            @if (isVoiceEnabled) {
+              <span class="ms-2">
+                • <i class="bi bi-mic-fill text-primary"></i> 
+                <strong class="text-primary">Vocal activé</strong>
               </span>
+            }
           </span>
           
-          <span>
-            <i class="bi bi-chat-dots me-1"></i>
-            {{ (messages$ | async)?.length || 0 }} messages
-            <span class="mx-2">•</span>
-            <i class="bi bi-folder me-1"></i>
-            {{ (files$ | async)?.length || 0 }} fichiers
-          </span>
-        </div>       
+          @if (messageStats$ | async; as msgStats) {
+            <span>
+              <i class="bi bi-chat-dots me-1"></i>
+              {{ msgStats.total || 0 }} messages
+              @if (fileStats$ | async; as fileStats) {
+                <span class="mx-2">•</span>
+                <i class="bi bi-folder me-1"></i>
+                <span>{{ fileStats.total || 0 }} fichiers ({{ fileStats.totalSizeMB || '0.00' }} MB)</span>
+              }
+            </span>
+          }
+        </div>
       </footer>
       
     </main>
     
   </div>
 </div>
+
+<!-- ✅ Modale de duplicata (INCHANGÉ) -->
+@if (showDuplicateModal$ | async) {
+  <div class="modal fade show"
+       style="display: block;"
+       tabindex="-1"
+       @modalFade>
+    <div class="modal-dialog modal-dialog-centered">
+      @if (currentDuplicateFile$ | async; as file) {
+        <div class="modal-content">
+          <div class="modal-header bg-warning text-dark">
+            <h5 class="modal-title">
+              <i class="bi bi-exclamation-triangle me-2"></i>
+              Fichier duplicata détecté
+            </h5>
+            <button type="button" 
+                    class="btn-close" 
+                    (click)="closeDuplicateModal()">
+            </button>
+          </div>
+          
+          <div class="modal-body">
+            <div class="alert alert-warning">
+              <strong>{{ file.name }}</strong> a déjà été uploadé.
+            </div>
+            
+            @if (file.duplicateInfo) {
+              <div class="card">
+                <div class="card-body">
+                  <h6 class="card-subtitle mb-2 text-muted">Fichier original</h6>
+                  <ul class="list-unstyled mb-0 small">
+                    <li><strong>Nom:</strong> {{ file.duplicateInfo.originalFileName }}</li>
+                    <li><strong>Date:</strong> {{ formatDate(file.duplicateInfo.uploadedAt) }}</li>
+                    <li><strong>Taille:</strong> {{ formatFileSize(file.duplicateInfo.fileSize) }}</li>
+                    <li><strong>Job ID:</strong> <code>{{ file.duplicateInfo.jobId }}</code></li>
+                  </ul>
+                </div>
+              </div>
+            }
+            
+            <p class="mt-3 text-muted small">
+              Que souhaitez-vous faire ?
+            </p>
+          </div>
+          
+          <div class="modal-footer">
+            <button type="button" 
+                    class="btn btn-secondary"
+                    (click)="dismissDuplicate(file.id)">
+              <i class="bi bi-x-circle me-1"></i>
+              Annuler
+            </button>
+            
+            @if (file.existingJobId) {
+              <button type="button" 
+                      class="btn btn-primary"
+                      (click)="useDuplicateFile(file.id, file.existingJobId!)">
+                <i class="bi bi-check-circle me-1"></i>
+                Utiliser l'existant
+              </button>
+            }
+            
+            <button type="button" 
+                    class="btn btn-warning"
+                    (click)="forceReupload(file.id)">
+              <i class="bi bi-arrow-clockwise me-1"></i>
+              Re-uploader quand même
+            </button>
+          </div>
+        </div>
+      }
+    </div>
+  </div>
+  
+  <div class="modal-backdrop fade show"
+       (click)="closeDuplicateModal()">
+  </div>
+}

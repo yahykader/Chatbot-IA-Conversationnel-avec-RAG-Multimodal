@@ -1,5 +1,5 @@
 // ============================================================================
-// CONFIGURATION - RAGToolsConfig.java (MISE À JOUR)
+// CONFIGURATION - RAGToolsConfig.java (v2.0)
 // ============================================================================
 package com.exemple.transactionservice.config;
 
@@ -7,35 +7,68 @@ import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
+/**
+ * ✅ Configuration RAGTools v2.0
+ * Toutes les propriétés externalisées pour tuning sans recompilation
+ */
 @Data
 @Configuration
 @ConfigurationProperties(prefix = "rag.tools")
 public class RAGToolsConfig {
     
-    /** Nombre maximum de résultats pour recherche de documents */
-    private int maxDocumentResults = 10;
+    // ==================== RÉSULTATS ====================
     
-    /** Nombre maximum de résultats pour recherche d'images */
-    private int maxImageResults = 10;
+    /**
+     * Nombre max de résultats documents
+     */
+    private int maxDocumentResults = 5;
     
-    /** Nombre maximum de résultats pour recherche multimodale */
+    /**
+     * Nombre max de résultats images
+     */
+    private int maxImageResults = 3;
+    
+    /**
+     * Nombre max de résultats multimodaux (total)
+     */
     private int maxMultimodalResults = 4;
     
-    /** Longueur minimale d'une requête */
+    /**
+     * ✅ NOUVEAU v2.0: Limite absolue pour recherche
+     */
+    private int maxAllowedResults = 50;
+    
+    // ==================== VALIDATION ====================
+    
+    /**
+     * Longueur minimum requête
+     */
     private int minQueryLength = 3;
     
-    /** Longueur maximale d'une requête */
+    /**
+     * Longueur maximum requête
+     */
     private int maxQueryLength = 500;
     
-    /** Longueur maximale du texte d'un résultat (pour éviter la surcharge) */
+    /**
+     * Longueur max texte résultat affiché
+     */
     private int maxResultTextLength = 1000;
     
-    /** Afficher les métriques de qualité dans les résultats */
+    // ==================== AFFICHAGE ====================
+    
+    /**
+     * Afficher métriques détaillées
+     */
     private boolean showMetrics = true;
     
-    // NOUVEAU : Filtrer les résultats par type de document
+    /**
+     * Filtrer par type de document
+     */
     private boolean filterByDocumentType = true;
     
-    // NOUVEAU : Inclure les métadonnées dans les résultats
+    /**
+     * Inclure métadonnées dans résultats
+     */
     private boolean includeMetadata = true;
 }
