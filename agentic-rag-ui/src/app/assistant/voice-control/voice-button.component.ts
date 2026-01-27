@@ -1,15 +1,14 @@
 // ============================================================================
-// COMPONENT - voice-button.component.ts (ADAPTÉ POUR WHISPER)
+// COMPONENT - voice-button.component.ts (Angular 21 Pure - Whisper)
 // ============================================================================
 import { Component, OnInit, OnDestroy, Output, EventEmitter, Input } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { Subject } from 'rxjs';
+import { Subject, interval } from 'rxjs';
 import { takeUntil } from 'rxjs/operators';
-
-import { VoiceService, WhisperResponse } from '../service/VoiceService';
+import { VoiceService, WhisperResponse } from '../service/voice.service';
 
 /**
- * ✅ Composant bouton vocal avec OpenAI Whisper
+ * ✅ Composant bouton vocal avec OpenAI Whisper - Angular 21
  */
 @Component({
   selector: 'app-voice-button',
@@ -32,10 +31,16 @@ export class VoiceButtonComponent implements OnInit, OnDestroy {
   isSupported = false;
   isRecording = false;
   isProcessing = false;
+  errorMessage: string = '';
   
+  private recordingStartMs: number | null = null;
+  private recordingDuration: string = '';
+  private durationInterval: any = null;
   private destroy$ = new Subject<void>();
   
   constructor(private voiceService: VoiceService) {}
+  
+  // ==================== LIFECYCLE ====================
   
   ngOnInit(): void {
     // Vérifier support
@@ -47,16 +52,20 @@ export class VoiceButtonComponent implements OnInit, OnDestroy {
       .pipe(takeUntil(this.destroy$))
       .subscribe(error => {
         console.error('❌ [VoiceButton] Erreur:', error);
-        this.error.emit(error);
+        this.handleError(error);
         this.isRecording = false;
         this.isProcessing = false;
+        this.stopDurationTimer();
       });
   }
   
   ngOnDestroy(): void {
+    this.stopDurationTimer();
     this.destroy$.next();
     this.destroy$.complete();
   }
+  
+  // ==================== PUBLIC METHODS ====================
   
   /**
    * ✅ Toggle enregistrement
@@ -77,14 +86,17 @@ export class VoiceButtonComponent implements OnInit, OnDestroy {
       console.log('🎤 [VoiceButton] Démarrage enregistrement');
       
       await this.voiceService.startRecording();
+      
       this.isRecording = true;
+      this.recordingStartMs = Date.now();
+      this.startDurationTimer();
       this.recordingChange.emit(true);
       
       console.log('✅ [VoiceButton] Enregistrement en cours');
       
     } catch (error: any) {
       console.error('❌ [VoiceButton] Erreur démarrage:', error);
-      this.error.emit(error.message || 'Erreur lors du démarrage');
+      this.handleError(error.message || 'Erreur lors du démarrage');
     }
   }
   
@@ -97,6 +109,7 @@ export class VoiceButtonComponent implements OnInit, OnDestroy {
       
       this.isRecording = false;
       this.isProcessing = true;
+      this.stopDurationTimer();
       this.recordingChange.emit(false);
       
       // Arrêter l'enregistrement et obtenir l'audio
@@ -120,7 +133,7 @@ export class VoiceButtonComponent implements OnInit, OnDestroy {
             } else {
               const errorMsg = response.error || 'Aucune transcription reçue';
               console.error('❌ [VoiceButton] Erreur:', errorMsg);
-              this.error.emit(errorMsg);
+              this.handleError(errorMsg);
             }
           },
           error: (error) => {
@@ -128,16 +141,27 @@ export class VoiceButtonComponent implements OnInit, OnDestroy {
             this.isProcessing = false;
             
             const errorMsg = error.error?.error || error.message || 'Erreur lors de la transcription';
-            this.error.emit(errorMsg);
+            this.handleError(errorMsg);
           }
         });
         
     } catch (error: any) {
       console.error('❌ [VoiceButton] Erreur arrêt:', error);
       this.isProcessing = false;
-      this.error.emit(error.message || 'Erreur lors de l\'arrêt');
+      this.handleError(error.message || 'Erreur lors de l\'arrêt');
     }
   }
+  
+  /**
+   * ✅ Méthode publique pour arrêter depuis le parent
+   */
+  public stopRecognition(): void {
+    if (this.isRecording) {
+      this.stopRecording();
+    }
+  }
+  
+  // ==================== GETTERS ====================
   
   /**
    * ✅ Tooltip dynamique
@@ -156,11 +180,78 @@ export class VoiceButtonComponent implements OnInit, OnDestroy {
   }
   
   /**
-   * ✅ Méthode publique pour arrêter depuis le parent
+   * ✅ Durée d'enregistrement formatée
    */
-  public stopRecognition(): void {
+  getRecordingDuration(): string {
+    return this.recordingDuration;
+  }
+  
+  /**
+   * ✅ Badge text (optionnel)
+   */
+  getBadgeText(): string {
     if (this.isRecording) {
-      this.stopRecording();
+      return '●';
     }
+    if (this.isProcessing) {
+      return '...';
+    }
+    return '';
+  }
+  
+  /**
+   * ✅ Couleur du bouton selon l'état
+   */
+  getButtonClass(): string {
+    if (this.isRecording) {
+      return 'btn-danger';
+    }
+    if (this.isProcessing) {
+      return 'btn-warning';
+    }
+    return 'btn-outline-secondary';
+  }
+  
+  // ==================== PRIVATE METHODS ====================
+  
+  /**
+   * ✅ Démarre le timer de durée
+   */
+  private startDurationTimer(): void {
+    this.recordingDuration = '00:00';
+    
+    this.durationInterval = setInterval(() => {
+      if (this.recordingStartMs === null) return;
+      
+      const totalSeconds = Math.floor((Date.now() - this.recordingStartMs) / 1000);
+      const mm = String(Math.floor(totalSeconds / 60)).padStart(2, '0');
+      const ss = String(totalSeconds % 60).padStart(2, '0');
+      this.recordingDuration = `${mm}:${ss}`;
+    }, 1000);
+  }
+  
+  /**
+   * ✅ Arrête le timer de durée
+   */
+  private stopDurationTimer(): void {
+    if (this.durationInterval) {
+      clearInterval(this.durationInterval);
+      this.durationInterval = null;
+    }
+    this.recordingDuration = '';
+    this.recordingStartMs = null;
+  }
+  
+  /**
+   * ✅ Gère les erreurs
+   */
+  private handleError(message: string): void {
+    this.errorMessage = message;
+    this.error.emit(message);
+    
+    // Auto-clear après 5 secondes
+    setTimeout(() => {
+      this.errorMessage = '';
+    }, 5000);
   }
 }

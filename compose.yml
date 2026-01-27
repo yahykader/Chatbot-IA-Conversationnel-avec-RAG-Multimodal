@@ -1,3 +1,4 @@
+version: '3.8'
 services:
   pgvector:
     container_name: rag-agpgdb
@@ -12,6 +13,37 @@ services:
       - '5432:5432'
     networks:
       - agentic-chatbot-net
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: dev-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - agentic_rag_chatbot_data:/data
+    command: redis-server --appendonly yes --requirepass "dev_password_123"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - agentic-chatbot-net
+
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: redis-commander
+    environment:
+      - REDIS_HOSTS=local:redis:6379:0:dev_password_123
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    restart: unless-stopped
+    networks:
+      - agentic-chatbot-net
+
 volumes:
   agentic_rag_chatbot_data:
 networks:

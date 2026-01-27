@@ -1,0 +1,26 @@
+/* You can add global styles to this file, and also import other style files */
+
+@use "bootstrap/dist/css/bootstrap.min.css";
+@use "bootstrap-icons/font/bootstrap-icons.min.css";
+@use 'ngx-toastr/toastr';
+
+/*@use '@angular/material' as mat;
+
+@include mat.core();
+
+$primary: mat.m2-define-palette(mat.$m2-green-palette, 600);
+$accent:  mat.m2-define-palette(mat.$m2-indigo-palette, 500);
+$warn:    mat.m2-define-palette(mat.$m2-red-palette, 600);
+
+$theme: mat.m2-define-light-theme((
+  color: (
+    primary: $primary,
+    accent: $accent,
+    warn: $warn
+  ),
+  typography: mat.m2-define-typography-config(),
+  density: 0
+));
+
+@include mat.all-component-themes($theme);*/
+

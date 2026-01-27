@@ -433,3 +433,11 @@ Pour intéger Web RTC, ils existent ttois options:
   ✅ Ponctuation automatique
   ✅ Robuste au bruit
   ✅ Détection automatique de la langue
+
+
+🎯 Vue d'Ensemble
+Objectifs du Cache Redis
+
+  ✅Réduire les coûts : Éviter appels LLM redondants (économie 70-90%)
+  ✅Améliorer performances : Réponse < 100ms vs 2-5s
+  ✅Optimiser UX : Expérience instantanée
