@@ -19,6 +19,7 @@ import org.springframework.boot.actuate.health.HealthIndicator;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 import jakarta.annotation.PostConstruct;
 import java.sql.Connection;
@@ -28,6 +29,7 @@ import java.time.Duration;
 
 @Slf4j
 @Configuration
+@ConditionalOnProperty(name="openai.enabled", havingValue="true")
 public class PgVectorConfig {
 
     // ========================================================================
@@ -62,8 +64,11 @@ public class PgVectorConfig {
     // PROPRIÉTÉS DE CONFIGURATION - OpenAI
     // ========================================================================
     
-    @Value("${openai.api.key}")
+    @Value("${openai.api.key:}")
     private String openAiKey;
+
+    @Value("${openai.enabled:true}")
+    private boolean openAiEnabled;
     
     @Value("${openai.embedding.model:text-embedding-3-small}")
     private String embeddingModelName;
@@ -115,6 +120,11 @@ public class PgVectorConfig {
                 "❌ Configuration OpenAI invalide: " +
                 "La clé API 'openai.api.key' est requise dans application.properties"
             );
+        }
+
+        if (!openAiEnabled) {
+            log.warn("OpenAI désactivé (openai.enabled=false)");
+            return;
         }
         
         if (!openAiKey.startsWith("sk-")) {

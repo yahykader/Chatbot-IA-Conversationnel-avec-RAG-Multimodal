@@ -1,5 +1,9 @@
 version: '3.8'
+
 services:
+  # ============================================================================
+  # BASE DE DONNÉES PGVECTOR
+  # ============================================================================
   pgvector:
     container_name: rag-agpgdb
     image: 'pgvector/pgvector:pg16'
@@ -13,14 +17,23 @@ services:
       - '5432:5432'
     networks:
       - agentic-chatbot-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d vectordb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
+  # ============================================================================
+  # REDIS CACHE
+  # ============================================================================
   redis:
     image: redis:7.2-alpine
     container_name: dev-redis
     ports:
       - "6379:6379"
     volumes:
-      - agentic_rag_chatbot_data:/data
+      - redis_data:/data
     command: redis-server --appendonly yes --requirepass "dev_password_123"
     restart: unless-stopped
     healthcheck:
@@ -31,6 +44,9 @@ services:
     networks:
       - agentic-chatbot-net
 
+  # ============================================================================
+  # REDIS COMMANDER (Interface Web)
+  # ============================================================================
   redis-commander:
     image: rediscommander/redis-commander:latest
     container_name: redis-commander
@@ -44,8 +60,177 @@ services:
     networks:
       - agentic-chatbot-net
 
+  # ============================================================================
+  # ZIPKIN - DISTRIBUTED TRACING 📊
+  # ============================================================================
+  zipkin:
+    image: openzipkin/zipkin:latest
+    container_name: rag-zipkin
+    ports:
+      - "9411:9411"
+    depends_on:
+      pgvector:
+        condition: service_healthy
+    environment:
+      STORAGE_TYPE: mem
+      #POSTGRES_HOST: pgvector
+      #POSTGRES_PORT: 5432
+      #POSTGRES_DB: zipkin
+      #POSTGRES_USER: admin
+      #POSTGRES_PASSWORD: 1234
+      JAVA_OPTS: -Xms256m -Xmx512m
+    networks:
+      - agentic-chatbot-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9411/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ============================================================================
+  # CLAMAV ANTIVIRUS 🛡️
+  # ============================================================================
+  clamav:
+    image: clamav/clamav:latest
+    container_name: rag-clamav
+    ports:
+      - "3310:3310"
+    volumes:
+      - clamav_data:/var/lib/clamav
+    environment:
+      - CLAMAV_NO_FRESHCLAM=false
+      - CLAMD_CONF_MaxThreads=2
+      - CLAMD_CONF_MaxConnectionQueueLength=15
+      - CLAMD_CONF_StreamMaxLength=104857600  # 100 MB
+    healthcheck:
+      test: ["CMD", "clamdscan", "--ping", "1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5m
+    restart: unless-stopped
+    networks:
+      - agentic-chatbot-net
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+  
+  grafana:
+    image: grafana/grafana:latest
+    container_name: rag-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    networks:
+      - agentic-chatbot-net  
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: rag-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+    networks:
+      - agentic-chatbot-net
+
+  # ============================================================================
+  # APPLICATION SPRING BOOT (transaction-service)
+  # ============================================================================
+  # OPTION 1: Avec Dockerfile existant (si votre Dockerfile est fonctionnel)
+  # app:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: transaction-service
+  #   ports:
+  #     - "8080:8080"
+  #   depends_on:
+  #     pgvector:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #     clamav:
+  #       condition: service_healthy
+  #     zipkin:
+  #       condition: service_healthy
+  #   environment:
+  #     # Database
+  #     - SPRING_DATASOURCE_URL=jdbc:postgresql://pgvector:5432/vectordb
+  #     - SPRING_DATASOURCE_USERNAME=admin
+  #     - SPRING_DATASOURCE_PASSWORD=1234
+      
+  #     # Redis
+  #     - SPRING_REDIS_HOST=redis
+  #     - SPRING_REDIS_PORT=6379
+  #     - SPRING_REDIS_PASSWORD=dev_password_123
+      
+  #     # ClamAV Antivirus
+  #     - ANTIVIRUS_ENABLED=true
+  #     - CLAMAV_HOST=clamav
+  #     - CLAMAV_PORT=3310
+  #     - ANTIVIRUS_TIMEOUT=30000
+  #     - ANTIVIRUS_CHUNK_SIZE=8192
+  #     - ANTIVIRUS_MAX_FILE_SIZE=104857600
+      
+  #     # Zipkin Tracing
+  #     - MANAGEMENT_TRACING_SAMPLING_PROBABILITY=1.0
+  #     - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
+      
+  #     # Spring Profile
+  #     - SPRING_PROFILES_ACTIVE=docker
+      
+  #     # JVM Options
+  #     - JAVA_OPTS=-Xmx2g -Xms512m
+  #   volumes:
+  #     - ./uploads:/app/uploads
+  #     - ./logs:/app/logs
+  #   networks:
+  #     - agentic-chatbot-net
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 60s
+
+# ==============================================================================
+# VOLUMES
+# ==============================================================================
 volumes:
   agentic_rag_chatbot_data:
+    driver: local
+  redis_data:
+    driver: local
+  clamav_data:
+    driver: local
+  grafana_data:
+    driver: local
+  prometheus_data:
+    driver: local
+
+# ==============================================================================
+# NETWORKS
+# ==============================================================================
 networks:
   agentic-chatbot-net:
     driver: bridge

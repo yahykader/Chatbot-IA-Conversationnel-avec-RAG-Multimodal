@@ -1,8 +1,8 @@
-package com.exemple.transactionservice.dto;
+// package com.exemple.transactionservice.dto;
 
-public enum UploadStatus {
-        PENDING,
-        PROCESSING,
-        COMPLETED,
-        FAILED
-}
+// public enum UploadStatus {
+//         PENDING,
+//         PROCESSING,
+//         COMPLETED,
+//         FAILED
+// }
