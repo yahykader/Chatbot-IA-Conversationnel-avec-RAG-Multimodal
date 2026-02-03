@@ -4,9 +4,10 @@
 // ============================================================================
 package com.exemple.transactionservice.service.rag.ingestion.cache;
 
-import dev.langchain4j.data.embedding.Embedding;
+import com.exemple.transactionservice.service.rag.ingestion.metrics.CacheMetrics;
 import com.exemple.transactionservice.service.rag.ingestion.compression.EmbeddingCompressor;
 import com.exemple.transactionservice.service.rag.ingestion.compression.EmbeddingCompressor.CompressedEmbedding;
+import dev.langchain4j.data.embedding.Embedding;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -36,6 +37,7 @@ public class EmbeddingCache {
     private final RedisTemplate<String, Object> redisTemplate;
     private final LettuceConnectionFactory connectionFactory;
     private final EmbeddingCompressor compressor;
+    private final CacheMetrics cacheMetrics; 
     
     @Value("${cache.embeddings.enabled:true}")
     private boolean enabled;
@@ -52,13 +54,15 @@ public class EmbeddingCache {
     public EmbeddingCache(
             @Qualifier("embeddingCacheRedisTemplate") RedisTemplate<String, Object> redisTemplate,
             LettuceConnectionFactory connectionFactory,
-            EmbeddingCompressor compressor) {
+            EmbeddingCompressor compressor,
+            CacheMetrics cacheMetrics) {
         
         this.redisTemplate = redisTemplate;
         this.connectionFactory = connectionFactory;
         this.compressor = compressor;
+        this.cacheMetrics = cacheMetrics;
         
-        log.info("✅ EmbeddingCache initialisé");
+        log.info("✅ EmbeddingCache initialise");
         log.info("   - Enabled: {}", enabled);
         log.info("   - TTL: {} jours", ttlDays);
         log.info("   - Compression: {}", compressionEnabled);
@@ -115,8 +119,11 @@ public class EmbeddingCache {
             
             if (cached == null) {
                 log.debug("❌ Cache MISS: {}", truncateKey(key));
+                cacheMetrics.recordMiss();
                 return Optional.empty();
             }
+
+            cacheMetrics.recordHit();
             
             Embedding embedding = deserializeEmbedding(cached);
             
@@ -128,6 +135,7 @@ public class EmbeddingCache {
             
         } catch (Exception e) {
             log.error("❌ Erreur cache get: {}", e.getMessage());
+            cacheMetrics.recordMiss();
             return Optional.empty();
         }
     }
@@ -173,6 +181,7 @@ public class EmbeddingCache {
             }
             else {
                 log.warn("⚠️ Type inconnu ignoré: {}", cached.getClass().getName());
+                cacheMetrics.recordMiss();
                 return null;
             }
             

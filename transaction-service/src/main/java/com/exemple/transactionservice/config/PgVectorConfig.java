@@ -3,6 +3,7 @@
 // ============================================================================
 package com.exemple.transactionservice.config;
 
+import com.exemple.transactionservice.service.rag.ingestion.metrics.OpenAiMetrics;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.model.chat.StreamingChatLanguageModel;
@@ -31,6 +32,8 @@ import java.time.Duration;
 @Configuration
 @ConditionalOnProperty(name="openai.enabled", havingValue="true")
 public class PgVectorConfig {
+
+    // private final OpenAiMetrics metrics;
 
     // ========================================================================
     // PROPRIÉTÉS DE CONFIGURATION - PgVector
@@ -210,14 +213,14 @@ public class PgVectorConfig {
      * Dimensions: text-embedding-3-small = 1536, text-embedding-3-large = 3072
      */
     @Bean
-    public EmbeddingModel embeddingModel() {
-        log.info("🧠 Création du bean EmbeddingModel");
+    public EmbeddingModel embeddingModel(OpenAiMetrics metrics) {
+        log.info("🧠 Creation du bean EmbeddingModel");
         log.info("   - Model: {}", embeddingModelName);
         log.info("   - Dimension: {}", embeddingDimension);
         log.info("   - Timeout: {}s", timeoutSeconds);
         log.info("   - Max Retries: {}", maxRetries);
         
-        return OpenAiEmbeddingModel.builder()
+            EmbeddingModel baseModel = OpenAiEmbeddingModel.builder()
                 .apiKey(openAiKey)
                 .modelName(embeddingModelName)
                 .timeout(Duration.ofSeconds(timeoutSeconds))
@@ -225,6 +228,8 @@ public class PgVectorConfig {
                 .logRequests(logRequests)
                 .logResponses(logResponses)
                 .build();
+        
+        return new MeteredEmbeddingModel(baseModel, metrics);
     }
 
     // ========================================================================
@@ -284,10 +289,10 @@ public class PgVectorConfig {
                     .build();
             
         } catch (Exception e) {
-            log.error("   ❌ Échec de création du store '{}'", tableName, e);
+            log.error("   ❌ Échec de creation du store '{}'", tableName, e);
             throw new IllegalStateException(
-                "Impossible de créer le store PgVector '" + tableName + "'. " +
-                "Vérifiez que l'extension pgvector est installée: " +
+                "Impossible de creer le store PgVector '" + tableName + "'. " +
+                "Verifiez que l'extension pgvector est installee: " +
                 "CREATE EXTENSION IF NOT EXISTS vector;",
                 e
             );
@@ -396,23 +401,13 @@ public class PgVectorConfig {
     
     /**
      * EmbeddingModel mocké pour les tests
-     */
+  
     @Bean
     @Profile("test")
     public EmbeddingModel testEmbeddingModel() {
         log.info("🧪 Utilisation du mock EmbeddingModel pour les tests");
         // Retourner un mock ou une implémentation in-memory
-        return embeddingModel(); // À remplacer par un mock si nécessaire
+        return new MeteredEmbeddingModel(baseModel, metrics);; // À remplacer par un mock si nécessaire
     }
+           */
 }
-/*
-    Bénéfices des améliorations
-    ✅ Sécurité renforcée : Masquage des secrets, validation stricte
-    ✅ Robustesse : Retry automatique, timeouts configurables, health checks
-    ✅ Configuration flexible : Profils d'environnement (dev/prod/test), properties externalisées
-    ✅ Observabilité : Logs détaillés sans exposer de secrets, métriques Actuator
-    ✅ Testabilité : Profil de test dédié, validation des beans
-    ✅ Production-ready : Pool de connexions, gestion d'erreurs complète
-    ✅ Maintenabilité : Code bien structuré, commenté, séparation des responsabilités
-    ✅ Validation : Tests de connexion au démarrage, détection précoce des problèmes
-*/
