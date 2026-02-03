@@ -121,7 +121,37 @@ services:
         reservations:
           memory: 512M
           cpus: '0.5'
-  
+
+  # ============================================================================
+  # PROMETHEUS - METRICS COLLECTION 📊
+  # ============================================================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: rag-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+      - '--storage.tsdb.retention.time=30d'
+    networks:
+      - agentic-chatbot-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ============================================================================
+  # GRAFANA - VISUALIZATION 📈
+  # ============================================================================
   grafana:
     image: grafana/grafana:latest
     container_name: rag-grafana
@@ -130,27 +160,135 @@ services:
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_INSTALL_PLUGINS=redis-datasource,grafana-clock-panel,grafana-simple-json-datasource
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+      - GF_ANALYTICS_REPORTING_ENABLED=false
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning
-      - ./grafana/dashboards:/var/lib/grafana/dashboards
-    networks:
-      - agentic-chatbot-net  
-
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: rag-prometheus
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
-      - prometheus_data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time=30d'
+    depends_on:
+      - prometheus
     networks:
       - agentic-chatbot-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ============================================================================
+  # REDIS EXPORTER - Métriques Redis pour Prometheus
+  # ============================================================================
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: rag-redis-exporter
+    ports:
+      - "9121:9121"
+    environment:
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=dev_password_123
+    depends_on:
+      - redis
+    networks:
+      - agentic-chatbot-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9121/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ============================================================================
+  # POSTGRES EXPORTER - Métriques PostgreSQL pour Prometheus
+  # ============================================================================
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: rag-postgres-exporter
+    ports:
+      - "9187:9187"
+    environment:
+      - DATA_SOURCE_NAME=postgresql://admin:1234@pgvector:5432/vectordb?sslmode=disable
+    depends_on:
+      pgvector:
+        condition: service_healthy
+    networks:
+      - agentic-chatbot-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9187/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ============================================================================
+  # NODE EXPORTER - Métriques système (CPU, RAM, Disk)
+  # ============================================================================
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: rag-node-exporter
+    ports:
+      - "9100:9100"
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    networks:
+      - agentic-chatbot-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9100/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ============================================================================
+  # CADVISOR - Métriques Docker containers
+  # ============================================================================
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: rag-cadvisor
+    ports:
+      - "8080:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    privileged: true
+    devices:
+      - /dev/kmsg
+    networks:
+      - agentic-chatbot-net
+    restart: unless-stopped
+
+# ==============================================================================
+# VOLUMES
+# ==============================================================================
+volumes:
+  agentic_rag_chatbot_data:
+    driver: local
+  redis_data:
+    driver: local
+  clamav_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+# ==============================================================================
+# NETWORKS
+# ==============================================================================
+networks:
+  agentic-chatbot-net:
+    driver: bridge
 
   # ============================================================================
   # APPLICATION SPRING BOOT (transaction-service)
@@ -212,25 +350,3 @@ services:
   #     timeout: 10s
   #     retries: 3
   #     start_period: 60s
-
-# ==============================================================================
-# VOLUMES
-# ==============================================================================
-volumes:
-  agentic_rag_chatbot_data:
-    driver: local
-  redis_data:
-    driver: local
-  clamav_data:
-    driver: local
-  grafana_data:
-    driver: local
-  prometheus_data:
-    driver: local
-
-# ==============================================================================
-# NETWORKS
-# ==============================================================================
-networks:
-  agentic-chatbot-net:
-    driver: bridge
