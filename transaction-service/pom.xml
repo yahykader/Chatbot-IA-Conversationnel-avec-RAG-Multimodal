@@ -30,6 +30,8 @@
         <java.version>21</java.version>  <!-- Ou votre version Java, LangChain4j supporte 17+ -->
         <maven.compiler.source>${java.version}</maven.compiler.source>
         <maven.compiler.target>${java.version}</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <!-- Version LangChain4J 1.10.0 -->
         <langchain4j.version>1.10.0</langchain4j.version>
     </properties>
@@ -71,7 +73,11 @@
             <artifactId>lombok</artifactId>
             <optional>true</optional>
         </dependency>
-
+        <!-- pom.xml -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-websocket</artifactId>
+        </dependency>
         <!-- WebFlux pour SSE Streaming -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

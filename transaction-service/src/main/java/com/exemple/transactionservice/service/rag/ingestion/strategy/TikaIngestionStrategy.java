@@ -1,9 +1,10 @@
 // ============================================================================
-// STRATEGY - TikaIngestionStrategy.java (VERSION AVEC STREAMING)
+// STRATEGY - TikaIngestionStrategy.java (VERSION AVEC STREAMING + PROGRESS)
 // Stratégie d'ingestion universelle avec Apache Tika - Fallback 1000+ formats
 // ============================================================================
 package com.exemple.transactionservice.service.rag.ingestion.strategy;
 
+import com.exemple.transactionservice.service.rag.ingestion.progress.ProgressNotifier;
 import com.exemple.transactionservice.service.rag.ingestion.cache.EmbeddingCache;
 import com.exemple.transactionservice.service.rag.ingestion.deduplication.DeduplicationService;
 import com.exemple.transactionservice.service.rag.ingestion.deduplication.TextDeduplicationService;
@@ -21,6 +22,7 @@ import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
@@ -36,36 +38,7 @@ import java.util.Map;
 import java.util.concurrent.TimeoutException;
 
 /**
- * Stratégie d'ingestion universelle avec Apache Tika - VERSION AVEC STREAMING.
- * 
- * ✨ NOUVEAU dans cette version :
- * ✅ Streaming automatique pour fichiers >100MB
- * ✅ Mémoire optimisée pour gros fichiers
- * ✅ Support fichiers jusqu'à 1GB+ (formats exotiques)
- * ✅ Détection automatique du mode
- * 
- * Fallback ULTIME pour tous les formats non gérés par les strategies spécialisées.
- * Apache Tika supporte 1000+ formats de fichiers.
- * 
- * Améliorations précédentes :
- * ✅ Métriques Prometheus intégrées
- * ✅ Deduplication avec Redis
- * ✅ Retry automatique (3 tentatives)
- * ✅ Extraction metadata enrichie (MIME, titre, auteur, dates)
- * ✅ Détection automatique format
- * 
- * Formats supportés (exemples) :
- * - Office legacy : DOC, PPT, XLS, VSD
- * - OpenOffice : ODT, ODS, ODP, ODG
- * - Apple iWork : Pages, Numbers, Keynote
- * - eBooks : EPUB, MOBI, AZW
- * - Archives : ZIP, RAR, 7z, TAR, GZ
- * - Scientific : LaTeX, BibTeX
- * - CAD : DWG, DXF
- * - Audio/Video : MP3, MP4 (metadata)
- * - Et 1000+ autres formats...
- * 
- * Priorité : 10 (la plus basse - fallback absolu)
+ * Stratégie d'ingestion universelle avec Apache Tika - VERSION AVEC STREAMING + PROGRESS.
  */
 @Slf4j
 @Component
@@ -80,6 +53,10 @@ public class TikaIngestionStrategy implements IngestionStrategy {
     private final DeduplicationService deduplicationService;
     private final TextDeduplicationService textDeduplicationService;
     private final EmbeddingCache embeddingCache;
+    
+    // ✅ AJOUT : ProgressNotifier (injection optionnelle)
+    @Autowired(required = false)
+    private ProgressNotifier progressNotifier;
     
     public TikaIngestionStrategy(
             @Qualifier("textEmbeddingStore") EmbeddingStore<TextSegment> textStore,
@@ -97,10 +74,9 @@ public class TikaIngestionStrategy implements IngestionStrategy {
         this.sanitizer = sanitizer;
         this.metrics = metrics;
         this.deduplicationService = deduplicationService;
-        this.textDeduplicationService =  textDeduplicationService;
+        this.textDeduplicationService = textDeduplicationService;
         this.embeddingCache = embeddingCache;
         
-        // Initialiser Tika parser
         this.tikaParser = new ApacheTikaDocumentParser();
         
         log.info("✅ [{}] Strategy initialisée avec streaming support (fallback 1000+ formats)", 
@@ -109,13 +85,8 @@ public class TikaIngestionStrategy implements IngestionStrategy {
     
     @Override
     public boolean canHandle(MultipartFile file, String extension) {
-        // TOUJOURS retourner true - c'est le fallback universel
         return true;
     }
-    
-    // ========================================================================
-    // ✨ MÉTHODE PRINCIPALE AVEC STREAMING
-    // ========================================================================
     
     @Override
     public IngestionResult ingest(MultipartFile file, String batchId) throws Exception {
@@ -123,58 +94,80 @@ public class TikaIngestionStrategy implements IngestionStrategy {
         String extension = getExtension(filename);
         long fileSize = file.getSize();
         
-        // Métrique : Démarrer timer
         long startTime = System.currentTimeMillis();
         metrics.startProcessing();
         
         try {
+            // ✅ AJOUT : Progress - Upload started
+            if (progressNotifier != null) {
+                progressNotifier.uploadStarted(batchId, filename, fileSize);
+            }
+            
             log.info("🔧 [{}] Traitement TIKA (fallback universel): {} ({} MB, ext: {})", 
                 getName(), filename, fileSize / 1_000_000, extension.toUpperCase());
             
-            // ========== VALIDATIONS ==========
-            
             if (file.isEmpty() || fileSize == 0) {
+                // ✅ AJOUT : Progress - Error
+                if (progressNotifier != null) {
+                    progressNotifier.error(batchId, filename, "Fichier vide");
+                }
                 throw new IOException("Fichier vide: " + filename);
             }
             
-            // Déduplication
+            // ✅ AJOUT : Progress - Déduplication
+            if (progressNotifier != null) {
+                progressNotifier.notifyProgress(batchId, filename, "DEDUPLICATION", 10, 
+                    "Vérification des duplicates...");
+            }
+            
             DeduplicationService.DuplicationInfo dupInfo = 
                 deduplicationService.checkDuplication(file);
             
             if (dupInfo.isDuplicate()) {
+                // ✅ AJOUT : Progress - Error
+                if (progressNotifier != null) {
+                    progressNotifier.error(batchId, filename, 
+                        "Fichier déjà traité (batch: " + dupInfo.originalBatchId() + ")");
+                }
+                
                 metrics.recordDuplicate(getName());
                 throw new DuplicateFileException(
                     String.format("Fichier déjà traité (batch: %s)", 
-                        dupInfo.originalBatchId())
+                        dupInfo.originalBatchId()),
+                    dupInfo.originalBatchId()
                 );
             }
             
-            // ========== ✨ DÉTECTION MODE STREAMING ==========
+            // ✅ AJOUT : Progress - Upload completed
+            if (progressNotifier != null) {
+                progressNotifier.uploadCompleted(batchId, filename);
+            }
             
             log.info("🔄 [{}] Extraction avec Apache Tika...", getName());
             
             IngestionResult result;
             
             if (StreamingFileReader.requiresStreaming(file)) {
-                // ✅ STREAMING pour >100MB
                 log.info("📖 [{}] STREAMING activé: {} MB", 
                     getName(), fileSize / 1_000_000);
                 result = ingestWithStreaming(file, filename, extension, batchId, fileSize);
                 
             } else {
-                // ✅ MODE NORMAL pour <100MB
                 log.debug("📄 [{}] Mode normal: {} MB", 
                     getName(), fileSize / 1_000_000);
                 result = ingestNormal(file, filename, extension, batchId, fileSize);
             }
-            
-            // ========== POST-TRAITEMENT ==========
             
             deduplicationService.markAsIngested(file, batchId);
             
             long duration = System.currentTimeMillis() - startTime;
             metrics.recordSuccess(getName(), duration, result.textEmbeddings(), 0);
             metrics.recordFileSize(getName(), fileSize);
+            
+            // ✅ AJOUT : Progress - Completed
+            if (progressNotifier != null) {
+                progressNotifier.completed(batchId, filename, result.textEmbeddings(), 0);
+            }
             
             log.info("✅ [{}] Fichier traité via Tika: {} - {} chunks, durée={}ms mode={}",
                 getName(), filename, result.textEmbeddings(), duration,
@@ -187,6 +180,11 @@ public class TikaIngestionStrategy implements IngestionStrategy {
             throw e;
             
         } catch (Exception e) {
+            // ✅ AJOUT : Progress - Error
+            if (progressNotifier != null) {
+                progressNotifier.error(batchId, filename, e.getMessage());
+            }
+            
             long duration = System.currentTimeMillis() - startTime;
             metrics.recordError(getName(), e.getClass().getSimpleName(), duration);
             metrics.endProcessing();
@@ -199,31 +197,26 @@ public class TikaIngestionStrategy implements IngestionStrategy {
         }
     }
     
-    // ========================================================================
-    // ✨ INGESTION NORMALE (<100MB)
-    // ========================================================================
-    
-    /**
-     * Ingestion normale pour petits fichiers
-     */
     private IngestionResult ingestNormal(MultipartFile file, String filename,
                                           String extension, String batchId,
                                           long fileSize) throws Exception {
         
-        // Parsing avec retry depuis InputStream
+        // ✅ AJOUT : Progress - Processing
+        if (progressNotifier != null) {
+            progressNotifier.processingStarted(batchId, filename);
+        }
+        
+        // ✅ AJOUT : Progress - Parsing
+        if (progressNotifier != null) {
+            progressNotifier.notifyProgress(batchId, filename, "TIKA_PARSING", 20, 
+                "Extraction avec Apache Tika...");
+        }
+        
         Document document = parseDocumentWithRetry(file);
         
         return processDocument(document, filename, extension, batchId, fileSize);
     }
     
-    // ========================================================================
-    // ✨ INGESTION STREAMING (>100MB)
-    // ========================================================================
-    
-    /**
-     * Ingestion streaming pour gros fichiers (>100MB).
-     * Sauvegarde en fichier temporaire puis parse depuis fichier.
-     */
     private IngestionResult ingestWithStreaming(MultipartFile file, String filename,
                                                  String extension, String batchId,
                                                  long fileSize) throws Exception {
@@ -231,24 +224,40 @@ public class TikaIngestionStrategy implements IngestionStrategy {
         Path tempFile = null;
         
         try {
-            // ✨ Sauvegarder en fichier temporaire (streaming)
+            // ✅ AJOUT : Progress - Streaming
+            if (progressNotifier != null) {
+                progressNotifier.notifyProgress(batchId, filename, "STREAMING", 15, 
+                    "Chargement en streaming...");
+            }
+            
             log.debug("💾 [{}] Création fichier temporaire...", getName());
             tempFile = StreamingFileReader.saveToTempFileWithProgress(file, bytesWritten -> {
                 if (bytesWritten % (50 * 1024 * 1024) == 0) {
                     log.info("📊 [{}] Sauvegarde: {} MB", 
                         getName(), bytesWritten / 1_000_000);
+                    
+                    // ✅ AJOUT : Progress streaming détaillé
+                    if (progressNotifier != null) {
+                        int percentage = 15 + (int)((bytesWritten / (double)fileSize) * 10);
+                        progressNotifier.notifyProgress(batchId, filename, "STREAMING", percentage, 
+                            String.format("Chargement: %d MB", bytesWritten / 1_000_000));
+                    }
                 }
             });
             
             log.info("✅ [{}] Fichier temporaire créé: {}", getName(), tempFile);
             
-            // ✨ Parser depuis fichier (streaming)
+            // ✅ AJOUT : Progress - Parsing
+            if (progressNotifier != null) {
+                progressNotifier.notifyProgress(batchId, filename, "TIKA_PARSING", 25, 
+                    "Extraction avec Apache Tika...");
+            }
+            
             Document document = parseDocumentFromFileWithRetry(tempFile);
             
             return processDocument(document, filename, extension, batchId, fileSize);
             
         } finally {
-            // ✨ Nettoyer fichier temporaire
             if (tempFile != null) {
                 try {
                     Files.deleteIfExists(tempFile);
@@ -261,13 +270,6 @@ public class TikaIngestionStrategy implements IngestionStrategy {
         }
     }
     
-    // ========================================================================
-    // TRAITEMENT DOCUMENT (LOGIQUE COMMUNE)
-    // ========================================================================
-    
-    /**
-     * Traite un document Tika (logique commune normal/streaming)
-     */
     private IngestionResult processDocument(Document document, String filename,
                                              String extension, String batchId,
                                              long fileSize) throws Exception {
@@ -285,20 +287,29 @@ public class TikaIngestionStrategy implements IngestionStrategy {
         
         log.debug("📝 [{}] Contenu extrait: {} caractères", getName(), content.length());
         
-        // Extraction metadata Tika
+        // ✅ AJOUT : Progress - Metadata extraction
+        if (progressNotifier != null) {
+            progressNotifier.notifyProgress(batchId, filename, "METADATA", 35, 
+                "Extraction des métadonnées...");
+        }
+        
         Metadata tikaMetadata = document.metadata();
         Map<String, Object> enrichedMetadata = extractTikaMetadata(
             tikaMetadata, filename, extension, batchId
         );
         
-        // Log metadata intéressantes
         if (enrichedMetadata.containsKey("mimeType")) {
             log.info("🔍 [{}] Type MIME détecté: {}", 
                 getName(), enrichedMetadata.get("mimeType"));
         }
         
-        // Chunking et indexation
-        var chunkResult = chunkAndIndexText(content, enrichedMetadata, batchId);
+        // ✅ AJOUT : Progress - Chunking
+        if (progressNotifier != null) {
+            progressNotifier.notifyProgress(batchId, filename, "CHUNKING", 40, 
+                "Découpage du texte...");
+        }
+        
+        var chunkResult = chunkAndIndexText(content, enrichedMetadata, batchId, filename);
         int textEmbeddings = chunkResult.indexed();
         int duplicates = chunkResult.duplicates();
         
@@ -307,7 +318,6 @@ public class TikaIngestionStrategy implements IngestionStrategy {
                 duplicates, textEmbeddings);
         }
         
-        // Résultat
         Map<String, Object> resultMetadata = new HashMap<>(enrichedMetadata);
         resultMetadata.put("strategy", getName());
         resultMetadata.put("parser", "apache-tika");
@@ -316,13 +326,6 @@ public class TikaIngestionStrategy implements IngestionStrategy {
         return new IngestionResult(textEmbeddings, 0, resultMetadata);
     }
     
-    // ========================================================================
-    // PARSING AVEC RETRY
-    // ========================================================================
-    
-    /**
-     * Parse document avec retry depuis MultipartFile
-     */
     @Retryable(
         value = {IOException.class, TimeoutException.class},
         maxAttempts = 3,
@@ -344,9 +347,6 @@ public class TikaIngestionStrategy implements IngestionStrategy {
         }
     }
     
-    /**
-     * ✨ NOUVEAU : Parse document avec retry depuis File (streaming)
-     */
     @Retryable(
         value = {IOException.class, TimeoutException.class},
         maxAttempts = 3,
@@ -368,13 +368,6 @@ public class TikaIngestionStrategy implements IngestionStrategy {
         }
     }
     
-    // ========================================================================
-    // EXTRACTION METADATA TIKA
-    // ========================================================================
-    
-    /**
-     * Extrait et enrichit les metadata Tika
-     */
     private Map<String, Object> extractTikaMetadata(
             Metadata tikaMetadata,
             String filename,
@@ -383,7 +376,6 @@ public class TikaIngestionStrategy implements IngestionStrategy {
         
         Map<String, Object> enriched = new HashMap<>();
         
-        // Metadata de base
         enriched.put("filename", filename);
         enriched.put("extension", extension);
         enriched.put("batchId", batchId);
@@ -393,46 +385,39 @@ public class TikaIngestionStrategy implements IngestionStrategy {
             return enriched;
         }
         
-        // Type MIME
         String mimeType = getMetadataValue(tikaMetadata, "Content-Type");
         if (mimeType != null) {
             enriched.put("mimeType", mimeType);
         }
         
-        // Titre
         String title = getMetadataValue(tikaMetadata, "title", "dc:title");
         if (title != null) {
             enriched.put("title", title);
         }
         
-        // Auteur
         String author = getMetadataValue(tikaMetadata, 
             "author", "dc:creator", "Author", "creator");
         if (author != null) {
             enriched.put("author", author);
         }
         
-        // Créateur/Application
         String creator = getMetadataValue(tikaMetadata, "Creator", "Application-Name");
         if (creator != null) {
             enriched.put("creator", creator);
         }
         
-        // Date création
         String creationDate = getMetadataValue(tikaMetadata, 
             "Creation-Date", "dcterms:created", "meta:creation-date");
         if (creationDate != null) {
             enriched.put("creationDate", creationDate);
         }
         
-        // Date modification
         String modifiedDate = getMetadataValue(tikaMetadata, 
             "Last-Modified", "dcterms:modified", "Last-Save-Date");
         if (modifiedDate != null) {
             enriched.put("modifiedDate", modifiedDate);
         }
         
-        // Nombre de pages
         String pageCount = getMetadataValue(tikaMetadata, 
             "xmpTPg:NPages", "Page-Count", "meta:page-count");
         if (pageCount != null) {
@@ -443,7 +428,6 @@ public class TikaIngestionStrategy implements IngestionStrategy {
             }
         }
         
-        // Nombre de mots
         String wordCount = getMetadataValue(tikaMetadata, 
             "meta:word-count", "Word-Count");
         if (wordCount != null) {
@@ -454,14 +438,12 @@ public class TikaIngestionStrategy implements IngestionStrategy {
             }
         }
         
-        // Langue
         String language = getMetadataValue(tikaMetadata, 
             "language", "dc:language", "meta:language");
         if (language != null) {
             enriched.put("language", language);
         }
         
-        // Mots-clés
         String keywords = getMetadataValue(tikaMetadata, 
             "Keywords", "dc:subject", "meta:keyword");
         if (keywords != null) {
@@ -473,9 +455,6 @@ public class TikaIngestionStrategy implements IngestionStrategy {
         return enriched;
     }
     
-    /**
-     * Obtient une valeur de metadata (essaie plusieurs clés)
-     */
     private String getMetadataValue(Metadata metadata, String... keys) {
         for (String key : keys) {
             String value = metadata.get(key);
@@ -486,14 +465,10 @@ public class TikaIngestionStrategy implements IngestionStrategy {
         return null;
     }
     
-    // ========================================================================
-    // CHUNKING AVEC DÉDUPLICATION
-    // ========================================================================
-    
     private record ChunkResult(int indexed, int duplicates) {}
 
     private ChunkResult chunkAndIndexText(String text, Map<String, Object> baseMetadata,
-                                    String batchId) {
+                                    String batchId, String filename) {
         
         int chunkSize = 1000;
         int overlap = 100;
@@ -501,24 +476,39 @@ public class TikaIngestionStrategy implements IngestionStrategy {
         int duplicates = 0;
         int chunkIndex = 0;
 
-        // ✅ Si texte plus court que chunkSize, indexer tel quel
+        // ✅ Estimer nombre de chunks
+        int estimatedChunks = text.length() <= chunkSize ? 1 : 
+            (int) Math.ceil(text.length() / (double)(chunkSize - overlap));
+
         if (text.length() <= chunkSize) {
-            Map<String, Object> meta = new HashMap<>();
+            Map<String, Object> meta = new HashMap<>(baseMetadata);
             meta.put("type", "tika_text");
             meta.put("chunkIndex", 0);
             meta.put("batchId", batchId);
             
             Metadata metadata = Metadata.from(sanitizer.sanitize(meta));
+            
+            // ✅ AJOUT : Progress embedding
+            if (progressNotifier != null) {
+                progressNotifier.notifyProgress(batchId, filename, "EMBEDDING", 50, 
+                    "Création embedding...");
+            }
+            
             String embeddingId = indexText(text.trim(), metadata, batchId);
             
             if (embeddingId != null) {
                 tracker.addTextEmbeddingId(batchId, embeddingId);
+                
+                // ✅ AJOUT : Progress terminé
+                if (progressNotifier != null) {
+                    progressNotifier.embeddingProgress(batchId, filename, 1, 1);
+                }
+                
                 return new ChunkResult(1, 0);
             }
             return new ChunkResult(0, 1);
         }
         
-        // ✅ Sinon, chunking avec overlap
         int start = 0;
 
         while (start < text.length()) {
@@ -538,13 +528,20 @@ public class TikaIngestionStrategy implements IngestionStrategy {
                 if (embeddingId != null) {
                     tracker.addTextEmbeddingId(batchId, embeddingId);
                     indexed++;
+                    
+                    // ✅ AJOUT : Progress tous les 10 chunks
+                    if (indexed % 10 == 0 || indexed == estimatedChunks) {
+                        if (progressNotifier != null) {
+                            progressNotifier.embeddingProgress(batchId, filename, 
+                                indexed, estimatedChunks);
+                        }
+                    }
                 } else {
                     duplicates++;
                 }
 
                 chunkIndex++;
             }
-            // ✅ Avancer de (chunkSize - overlap), minimum 1
             start += Math.max(1, chunkSize - overlap);
         }
         
@@ -554,9 +551,6 @@ public class TikaIngestionStrategy implements IngestionStrategy {
         return new ChunkResult(indexed, duplicates);
     }
     
-    /**
-     * Indexe du texte
-     */
     private String indexText(String text, Metadata metadata, String batchId) {
         
         if (!textDeduplicationService.checkAndMark(text, batchId)) {
@@ -584,9 +578,7 @@ public class TikaIngestionStrategy implements IngestionStrategy {
         }
         return text.substring(0, maxLength) + "...";
     }
-    /**
-     * Extrait l'extension
-     */
+    
     private String getExtension(String filename) {
         if (filename == null || filename.isBlank()) {
             return "unknown";
@@ -607,16 +599,9 @@ public class TikaIngestionStrategy implements IngestionStrategy {
     
     @Override
     public int getPriority() {
-        return 10; // Priorité la plus basse - fallback absolu
+        return 10;
     }
     
-    // ========================================================================
-    // INFORMATIONS FORMATS SUPPORTÉS
-    // ========================================================================
-    
-    /**
-     * Retourne des exemples de formats supportés
-     */
     public static String[] getSupportedFormatExamples() {
         return new String[]{
             "doc", "ppt", "xls", "vsd",
@@ -633,63 +618,24 @@ public class TikaIngestionStrategy implements IngestionStrategy {
         };
     }
     
-    /**
-     * Retourne une description des capacités Tika
-     */
     public static String getCapabilities() {
         return "Apache Tika fallback strategy - Supporte 1000+ formats de fichiers " +
                "incluant Office legacy, OpenOffice, iWork, eBooks, archives, formats " +
                "scientifiques, CAD, et extraction de metadata pour audio/video.";
     }
 }
+
+
 /*
-
-## 🎯 **ARCHITECTURE FINALE COMPLÈTE**
-```
-┌──────────────────────────────────────┐
-│    Upload Fichier (n'importe quel   │
-│         format, jusqu'à 5GB)         │
-└──────────────┬───────────────────────┘
-               │
-               ▼
-    ┌──────────────────────┐
-    │ MultimodalIngestion  │
-    │      Service         │
-    └──────────┬───────────┘
-               │
-      ┌────────┴─────────┐
-      │  Strategy Router │
-      │  (par priorité)  │
-      └────────┬─────────┘
-               │
-    ┌──────────┴──────────────────┐
-    │                             │
-    ▼                             ▼
-Priorité 1-4              Priorité 10
-(Spécialisées)            (Fallback)
-    │                             │
-    ▼                             ▼
-PDF, DOCX, XLSX,            TIKA
-Image, Text              (1000+ formats)
-    │                             │
-    │         ┌───────────────────┘
-    │         │
-    ▼         ▼
-┌──────────────────┐
-│ StreamingReader  │
-│   >100MB ?       │
-└────────┬─────────┘
-         │
-    ┌────┴────┐
-    │         │
-    ▼         ▼
-STREAMING  NORMAL
-  (20MB)   (100MB)
-    │         │
-    └────┬────┘
-         │
-         ▼
-   Indexation
-   (pgvector)
-
-*/
+    ## 🎯 Étapes du progress pour TIKA
+    ```
+    5% - Upload started
+    10% - Vérification des duplicates
+    12% - Upload completed
+    15-25% - Streaming (si >100MB)
+    20-25% - Extraction Apache Tika
+    35% - Extraction des métadonnées
+    40% - Découpage du texte
+    50-90% - Création embeddings (progress détaillé)
+    100% - Completed
+ */

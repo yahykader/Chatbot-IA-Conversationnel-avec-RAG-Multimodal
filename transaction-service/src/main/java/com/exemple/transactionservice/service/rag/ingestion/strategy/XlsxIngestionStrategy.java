@@ -1,9 +1,10 @@
 // ============================================================================
-// STRATEGY - XlsxIngestionStrategy.java (VERSION COMPLÈTE AVEC VISION AI)
-// Fusion + Déduplication + Vision AI sur PDF
+// STRATEGY - XlsxIngestionStrategy.java (VERSION COMPLÈTE AVEC VISION AI + PROGRESS)
+// Fusion + Déduplication + Vision AI sur PDF + Progress temps réel
 // ============================================================================
 package com.exemple.transactionservice.service.rag.ingestion.strategy;
 
+import com.exemple.transactionservice.service.rag.ingestion.progress.ProgressNotifier;
 import com.exemple.transactionservice.service.rag.ingestion.cache.EmbeddingCache;
 import com.exemple.transactionservice.service.rag.ingestion.analyzer.ImageSaver;
 import com.exemple.transactionservice.service.rag.ingestion.analyzer.VisionAnalyzer;
@@ -30,6 +31,7 @@ import org.apache.pdfbox.rendering.PDFRenderer;
 import org.apache.poi.ooxml.POIXMLDocumentPart;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.*;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.retry.annotation.Backoff;
@@ -49,7 +51,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
- * ✨ STRATÉGIE D'INGESTION XLSX - VERSION COMPLÈTE
+ * ✨ STRATÉGIE D'INGESTION XLSX - VERSION COMPLÈTE AVEC PROGRESS
  * 
  * ✅ ROBUSTESSE :
  *    - Détection charts robuste (3 méthodes)
@@ -74,8 +76,13 @@ import java.util.concurrent.TimeoutException;
  *    - Analyse Vision AI de chaque page
  *    - Indexation dans imageEmbeddings
  * 
+ * ✅ PROGRESS TEMPS RÉEL :
+ *    - WebSocket notifications
+ *    - Suivi granulaire par étape
+ *    - Progress streaming, LibreOffice, Vision AI
+ * 
  * @author System
- * @version 4.0.0
+ * @version 5.0.0
  */
 @Slf4j
 @Component
@@ -99,6 +106,10 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
     private final FileSignatureValidator signatureValidator;
     private final EmbeddingCache embeddingCache;
     
+    // ✅ AJOUT : ProgressNotifier (injection optionnelle)
+    @Autowired(required = false)
+    private ProgressNotifier progressNotifier;
+    
     // ========================================================================
     // CONFIGURATION
     // ========================================================================
@@ -115,7 +126,6 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
     @Value("${app.libreoffice.timeoutSeconds:60}")
     private int libreofficeTimeoutSeconds;
     
-    // ✨ NOUVEAU : Configuration Vision AI sur PDF
     @Value("${document.max-pdf-pages-to-analyze:20}")
     private int maxPdfPagesToAnalyze;
     
@@ -164,7 +174,7 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
         this.signatureValidator = signatureValidator;
         this.embeddingCache = embeddingCache;
         
-        log.info("✅ [{}] Strategy initialisée (streaming + déduplication + Vision AI)", getName());
+        log.info("✅ [{}] Strategy initialisée (streaming + déduplication + Vision AI + progress)", getName());
     }
     
     @Override
@@ -185,26 +195,59 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
         metrics.startProcessing();
         
         try {
+            // ✅ AJOUT : Progress - Upload started
+            if (progressNotifier != null) {
+                progressNotifier.uploadStarted(batchId, filename, fileSize);
+            }
+            
             log.info("📗 [{}] Traitement XLSX: {} ({} MB)", 
                 getName(), filename, fileSize / 1_000_000);
             
             // ========== VALIDATIONS ==========
             
             if (file.isEmpty() || fileSize == 0) {
+                // ✅ AJOUT : Progress - Error
+                if (progressNotifier != null) {
+                    progressNotifier.error(batchId, filename, "Fichier vide");
+                }
                 throw new IOException("Fichier XLSX vide: " + filename);
             }
             
+            // ✅ AJOUT : Progress - Validation
+            if (progressNotifier != null) {
+                progressNotifier.notifyProgress(batchId, filename, "VALIDATION", 8, 
+                    "Validation du fichier...");
+            }
+            
             signatureValidator.validate(file, "xlsx");
+            
+            // ✅ AJOUT : Progress - Déduplication
+            if (progressNotifier != null) {
+                progressNotifier.notifyProgress(batchId, filename, "DEDUPLICATION", 10, 
+                    "Vérification des duplicates...");
+            }
             
             DeduplicationService.DuplicationInfo dupInfo = 
                 deduplicationService.checkDuplication(file);
             
             if (dupInfo.isDuplicate()) {
+                // ✅ AJOUT : Progress - Error
+                if (progressNotifier != null) {
+                    progressNotifier.error(batchId, filename, 
+                        "Fichier déjà traité (batch: " + dupInfo.originalBatchId() + ")");
+                }
+                
                 metrics.recordDuplicate(getName());
                 log.warn("⚠️ [{}] XLSX doublon: {}", getName(), filename);
                 throw new DuplicateFileException(
-                    String.format("XLSX déjà traité (batch: %s)", dupInfo.originalBatchId())
+                    String.format("XLSX déjà traité (batch: %s)", dupInfo.originalBatchId()),
+                    dupInfo.originalBatchId()
                 );
+            }
+            
+            // ✅ AJOUT : Progress - Upload completed
+            if (progressNotifier != null) {
+                progressNotifier.uploadCompleted(batchId, filename);
             }
             
             // ========== DÉTECTION MODE STREAMING ==========
@@ -239,6 +282,12 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
             );
             metrics.recordFileSize(getName(), fileSize);
             
+            // ✅ AJOUT : Progress - Completed
+            if (progressNotifier != null) {
+                progressNotifier.completed(batchId, filename, 
+                    result.textEmbeddings(), result.imageEmbeddings());
+            }
+            
             log.info("✅ [{}] XLSX traité: {} - text={} images={} durée={}ms mode={}",
                 getName(), filename, result.textEmbeddings(), 
                 result.imageEmbeddings(), duration,
@@ -251,6 +300,11 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
             throw e;
             
         } catch (Exception e) {
+            // ✅ AJOUT : Progress - Error
+            if (progressNotifier != null) {
+                progressNotifier.error(batchId, filename, e.getMessage());
+            }
+            
             long duration = System.currentTimeMillis() - startTime;
             metrics.recordError(getName(), e.getClass().getSimpleName(), duration);
             metrics.endProcessing();
@@ -270,6 +324,12 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
     private IngestionResult ingestNormal(MultipartFile file, String batchId) throws Exception {
         
         String filename = file.getOriginalFilename();
+        
+        // ✅ AJOUT : Progress - Processing
+        if (progressNotifier != null) {
+            progressNotifier.processingStarted(batchId, filename);
+        }
+        
         byte[] bytes = file.getBytes();
         
         if (bytes.length < 2 || bytes[0] != 'P' || bytes[1] != 'K') {
@@ -292,15 +352,33 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
         Path tempFile = null;
         
         try {
+            // ✅ AJOUT : Progress - Streaming
+            if (progressNotifier != null) {
+                progressNotifier.notifyProgress(batchId, filename, "STREAMING", 15, 
+                    "Chargement XLSX en streaming...");
+            }
+            
             log.debug("💾 [{}] Création fichier temporaire...", getName());
             tempFile = StreamingFileReader.saveToTempFileWithProgress(file, bytesWritten -> {
                 if (bytesWritten % (50 * 1024 * 1024) == 0) {
                     log.info("📊 [{}] Sauvegarde: {} MB", 
                         getName(), bytesWritten / 1_000_000);
+                    
+                    // ✅ AJOUT : Progress streaming détaillé
+                    if (progressNotifier != null) {
+                        int percentage = 15 + (int)((bytesWritten / (double)file.getSize()) * 10);
+                        progressNotifier.notifyProgress(batchId, filename, "STREAMING", percentage, 
+                            String.format("Chargement: %d MB", bytesWritten / 1_000_000));
+                    }
                 }
             });
             
             log.info("✅ [{}] Fichier temporaire créé: {}", getName(), tempFile);
+            
+            // ✅ AJOUT : Progress - Processing
+            if (progressNotifier != null) {
+                progressNotifier.processingStarted(batchId, filename);
+            }
             
             byte[] bytes = Files.readAllBytes(tempFile);
             
@@ -333,6 +411,12 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
             String filename, 
             String batchId,
             byte[] xlsxBytes) throws Exception {
+        
+        // ✅ AJOUT : Progress - Analysis
+        if (progressNotifier != null) {
+            progressNotifier.notifyProgress(batchId, filename, "ANALYSIS", 25, 
+                "Analyse du contenu XLSX...");
+        }
         
         int sheetCount = workbook.getNumberOfSheets();
         int chartCount = countChartsRobust(workbook);
@@ -500,6 +584,12 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
         
         log.info("🔄 [{}] Conversion XLSX → PDF via LibreOffice", getName());
         
+        // ✅ AJOUT : Progress - LibreOffice conversion
+        if (progressNotifier != null) {
+            progressNotifier.notifyProgress(batchId, filename, "LIBREOFFICE", 30, 
+                "Conversion en PDF via LibreOffice...");
+        }
+        
         String sofficeBinary = resolveSofficeExecutable();
         String baseFilename = FileUtils.sanitizeFilename(FileUtils.removeExtension(filename));
         Path tempDir = Files.createTempDirectory("xlsx2pdf_");
@@ -568,6 +658,12 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
             
             log.info("✅ [{}] PDF généré: {} ({} KB)", 
                 getName(), pdfPath.getFileName(), Files.size(pdfPath) / 1024);
+            
+            // ✅ AJOUT : Progress - PDF generated
+            if (progressNotifier != null) {
+                progressNotifier.notifyProgress(batchId, filename, "PDF_GENERATED", 50, 
+                    "PDF généré, analyse en cours...");
+            }
             
             byte[] pdfBytes = Files.readAllBytes(pdfPath);
             
@@ -694,14 +790,11 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
         int pagesAnalyzed = 0;
         String batchShort = batchId.substring(0, Math.min(8, batchId.length()));
         
-        // ✅ Solution universelle : Fichier temporaire (compatible toutes versions PDFBox)
         Path tempPdf = Files.createTempFile("xlsx_pdf_", ".pdf");
         
         try {
-            // Écrire PDF dans fichier temporaire
             Files.write(tempPdf, pdfBytes);
             
-            // Charger depuis fichier (PDFBox 3.x - utilise Loader)
             try (PDDocument document = Loader.loadPDF(tempPdf.toFile())) {
                 
                 PDFRenderer pdfRenderer = new PDFRenderer(document);
@@ -714,7 +807,6 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
                 for (int pageIndex = 0; pageIndex < maxPages; pageIndex++) {
                     
                     try {
-                        // 1. Rendre la page en image
                         BufferedImage pageImage = pdfRenderer.renderImageWithDPI(
                             pageIndex, 
                             pdfRenderDpi
@@ -725,7 +817,6 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
                             pageImage.getWidth(), pageImage.getHeight(),
                             pdfRenderDpi);
                         
-                        // 2. Sauvegarder l'image
                         String imageName = String.format("%s_batch%s_page%d",
                             baseFilename,
                             batchShort,
@@ -734,7 +825,6 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
                         
                         String savedImagePath = imageSaver.saveImage(pageImage, imageName);
                         
-                        // 3. Métadonnées
                         Map<String, Object> metadata = new HashMap<>();
                         metadata.put("source", "xlsx_to_pdf");
                         metadata.put("pdfPath", pdfSavedPath);
@@ -749,7 +839,6 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
                         metadata.put("width", pageImage.getWidth());
                         metadata.put("height", pageImage.getHeight());
                         
-                        // 4. Vision AI
                         String embeddingId = analyzeAndIndexImageWithRetry(
                             pageImage,
                             imageName,
@@ -759,8 +848,15 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
                         tracker.addImageEmbeddingId(batchId, embeddingId);
                         pagesAnalyzed++;
                         
-                        // Log progress
-                        if ((pageIndex + 1) % 5 == 0 || (pageIndex + 1) == maxPages) {
+                        // ✅ AJOUT : Progress tous les 3 pages
+                        if ((pageIndex + 1) % 3 == 0 || (pageIndex + 1) == maxPages) {
+                            if (progressNotifier != null) {
+                                int percentage = 50 + (int)(((pageIndex + 1) / (double)maxPages) * 30);
+                                progressNotifier.notifyProgress(batchId, baseFilename + ".xlsx", 
+                                    "PDF_VISION", percentage, 
+                                    String.format("Analyse Vision AI: page %d/%d", pageIndex + 1, maxPages));
+                            }
+                            
                             log.info("📊 [{}] Progress: {}/{} pages analysées", 
                                 getName(), pageIndex + 1, maxPages);
                         }
@@ -782,7 +878,6 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
             throw e;
             
         } finally {
-            // Supprimer fichier temporaire
             try {
                 Files.deleteIfExists(tempPdf);
             } catch (IOException ignored) {
@@ -802,6 +897,12 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
             String batchId) throws Exception {
         
         log.info("📗🖼️ [{}] Extraction texte + images XLSX", getName());
+        
+        // ✅ AJOUT : Progress - Extraction
+        if (progressNotifier != null) {
+            progressNotifier.notifyProgress(batchId, filename, "EXTRACTION", 30, 
+                "Extraction des données...");
+        }
         
         int textEmbeddings = 0;
         int imageEmbeddings = 0;
@@ -880,6 +981,12 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
                             totalImagesExtracted++;
                             imageIndexInSheet++;
                             
+                            // ✅ AJOUT : Progress images tous les 5
+                            if (totalImagesExtracted % 5 == 0 && progressNotifier != null) {
+                                progressNotifier.imageProgress(batchId, filename, 
+                                    totalImagesExtracted, maxImagesPerFile);
+                            }
+                            
                             String imageName = String.format("%s_batch%s_sheet%d_img%d",
                                 baseFilename, batchShort, sheetIndex + 1, imageIndexInSheet);
                             
@@ -917,6 +1024,12 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
         }
         
         // INDEXER TEXTE
+        // ✅ AJOUT : Progress - Chunking
+        if (fullText.length() > 0 && progressNotifier != null) {
+            progressNotifier.notifyProgress(batchId, filename, "CHUNKING", 70, 
+                "Découpage du texte...");
+        }
+        
         if (fullText.length() > 0) {
             var chunkResult = chunkAndIndexText(fullText.toString(), filename, batchId);
             textEmbeddings = chunkResult.indexed();
@@ -952,6 +1065,12 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
             String batchId) throws Exception {
         
         log.info("📝 [{}] Extraction texte XLSX", getName());
+        
+        // ✅ AJOUT : Progress - Extraction
+        if (progressNotifier != null) {
+            progressNotifier.notifyProgress(batchId, filename, "EXTRACTION", 30, 
+                "Extraction du texte...");
+        }
         
         StringBuilder fullText = new StringBuilder();
         DataFormatter dataFormatter = new DataFormatter();
@@ -995,6 +1114,12 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
         
         if (fullText.length() == 0) {
             throw new IllegalArgumentException("XLSX vide: " + filename);
+        }
+        
+        // ✅ AJOUT : Progress - Chunking
+        if (progressNotifier != null) {
+            progressNotifier.notifyProgress(batchId, filename, "CHUNKING", 50, 
+                "Découpage du texte...");
         }
         
         var chunkResult = chunkAndIndexText(fullText.toString(), filename, batchId);
@@ -1075,6 +1200,10 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
         int indexed = 0;
         int duplicates = 0;
         int chunkIndex = 0;
+        
+        // ✅ Estimer nombre de chunks
+        int estimatedChunks = text.length() <= chunkSize ? 1 : 
+            (int) Math.ceil(text.length() / (double)(chunkSize - overlap));
 
         if (text.length() <= chunkSize) {
             Map<String, Object> meta = new HashMap<>();
@@ -1084,10 +1213,23 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
             meta.put("batchId", batchId);
             
             Metadata metadata = Metadata.from(sanitizer.sanitize(meta));
+            
+            // ✅ AJOUT : Progress embedding
+            if (progressNotifier != null) {
+                progressNotifier.notifyProgress(batchId, filename, "EMBEDDING", 80, 
+                    "Création embedding...");
+            }
+            
             String embeddingId = indexText(text.trim(), metadata, batchId);
             
             if (embeddingId != null) {
                 tracker.addTextEmbeddingId(batchId, embeddingId);
+                
+                // ✅ AJOUT : Progress terminé
+                if (progressNotifier != null) {
+                    progressNotifier.embeddingProgress(batchId, filename, 1, 1);
+                }
+                
                 return new ChunkResult(1, 0);
             }
             return new ChunkResult(0, 1);
@@ -1111,6 +1253,14 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
                 if (embeddingId != null) {
                     tracker.addTextEmbeddingId(batchId, embeddingId);
                     indexed++;
+                    
+                    // ✅ AJOUT : Progress tous les 10 chunks
+                    if (indexed % 10 == 0 || indexed == estimatedChunks) {
+                        if (progressNotifier != null) {
+                            progressNotifier.embeddingProgress(batchId, filename, 
+                                indexed, estimatedChunks);
+                        }
+                    }
                 } else {
                     duplicates++;
                 }

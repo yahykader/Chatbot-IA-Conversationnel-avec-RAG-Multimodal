@@ -273,7 +273,7 @@ public class MultimodalIngestionService {
             totalText,
             totalImages,
             duration,
-            duplicateCount // ✅ AJOUTÉ
+            duplicateCount
         );
         
         return CompletableFuture.completedFuture(result);

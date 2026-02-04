@@ -1,5 +1,5 @@
 // ============================================================================
-// STRATEGY - ImageIngestionStrategy.java (VERSION AVEC STREAMING)
+// STRATEGY - ImageIngestionStrategy.java (VERSION AVEC STREAMING + PROGRESS)
 // Stratégie d'ingestion pour images avec streaming gros fichiers (>100MB)
 // ============================================================================
 package com.exemple.transactionservice.service.rag.ingestion.strategy;
@@ -10,6 +10,7 @@ import com.exemple.transactionservice.service.rag.ingestion.analyzer.VisionAnaly
 import com.exemple.transactionservice.service.rag.ingestion.deduplication.DeduplicationService;
 import com.exemple.transactionservice.service.rag.ingestion.metrics.IngestionMetrics;
 import com.exemple.transactionservice.service.rag.ingestion.model.IngestionResult;
+import com.exemple.transactionservice.service.rag.ingestion.progress.ProgressNotifier;
 import com.exemple.transactionservice.service.rag.ingestion.tracker.IngestionTracker;
 import com.exemple.transactionservice.service.rag.ingestion.util.FileUtils;
 import com.exemple.transactionservice.service.rag.ingestion.util.MetadataSanitizer;
@@ -22,6 +23,7 @@ import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.retry.annotation.Backoff;
@@ -41,26 +43,14 @@ import java.util.Set;
 import java.util.concurrent.TimeoutException;
 
 /**
- * Stratégie d'ingestion pour fichiers images - VERSION AVEC STREAMING.
+ * Stratégie d'ingestion pour fichiers images - VERSION AVEC STREAMING + PROGRESS.
  * 
  * ✨ NOUVEAU dans cette version :
  * ✅ Streaming automatique pour fichiers >100MB
  * ✅ Mémoire constante (~20MB) pour grosses images
  * ✅ Support images jusqu'à 500MB+ (photos haute résolution)
  * ✅ Détection automatique du mode
- * 
- * Formats supportés : PNG, JPG, JPEG, GIF, BMP, TIFF, WEBP, SVG
- * 
- * ✨ FONCTIONNALITÉS COMPLÈTES
-        ✅ 4 strategies avec streaming automatique
-        ✅ Détection automatique du mode (>100MB)
-        ✅ Mémoire constante (~20MB)
-        ✅ Support fichiers jusqu'à 1GB+
-        ✅ Fallback LibreOffice pour XLSX charts
-        ✅ Métriques Prometheus intégrées
-        ✅ Retry automatique Vision AI
-        ✅ Déduplication Redis
-        ✅ Validation sécurité magic bytes
+ * ✅ Progress WebSocket en temps réel
  */
 @Slf4j
 @Component
@@ -76,6 +66,10 @@ public class ImageIngestionStrategy implements IngestionStrategy {
     private final DeduplicationService deduplicationService;
     private final FileSignatureValidator signatureValidator;
     private final EmbeddingCache embeddingCache;
+    
+    // ✅ AJOUT : ProgressNotifier (injection optionnelle)
+    @Autowired(required = false)
+    private ProgressNotifier progressNotifier;
     
     @Value("${document.images.max-width:4096}")
     private int maxImageWidth;
@@ -133,14 +127,29 @@ public class ImageIngestionStrategy implements IngestionStrategy {
         metrics.startProcessing();
         
         try {
+            // ✅ AJOUT : Progress - Upload started
+            if (progressNotifier != null) {
+                progressNotifier.uploadStarted(batchId, filename, file.getSize());
+            }
+            
             log.info("🖼️ [{}] Traitement image: {} ({} KB, type: {})", 
                 getName(), filename, 
                 String.format("%.2f", file.getSize() / 1024.0),
                 extension.toUpperCase());
             
+            // ✅ AJOUT : Progress - Validation
+            if (progressNotifier != null) {
+                progressNotifier.notifyProgress(batchId, filename, "VALIDATION", 10, "Validation de l'image...");
+            }
+            
             validateSecurity(file, extension);
             checkDuplication(file, filename);
             validateBasic(file, filename);
+            
+            // ✅ AJOUT : Progress - Upload completed
+            if (progressNotifier != null) {
+                progressNotifier.uploadCompleted(batchId, filename);
+            }
             
             // ✨ DÉTECTION STREAMING
             IngestionResult result;
@@ -158,6 +167,11 @@ public class ImageIngestionStrategy implements IngestionStrategy {
             metrics.recordSuccess(getName(), duration, 0, 1);
             metrics.recordFileSize(getName(), file.getSize());
             
+            // ✅ AJOUT : Progress - Completed
+            if (progressNotifier != null) {
+                progressNotifier.completed(batchId, filename, 0, 1);
+            }
+            
             log.info("✅ [{}] Image indexée: durée={}ms mode={}",
                 getName(), duration,
                 StreamingFileReader.requiresStreaming(file) ? "STREAMING" : "NORMAL");
@@ -165,10 +179,20 @@ public class ImageIngestionStrategy implements IngestionStrategy {
             return result;
             
         } catch (DuplicateFileException e) {
+            // ✅ AJOUT : Progress - Error
+            if (progressNotifier != null) {
+                progressNotifier.error(batchId, filename, "Fichier déjà traité");
+            }
+            
             metrics.recordDuplicate(getName());
             metrics.endProcessing();
             throw e;
         } catch (Exception e) {
+            // ✅ AJOUT : Progress - Error
+            if (progressNotifier != null) {
+                progressNotifier.error(batchId, filename, e.getMessage());
+            }
+            
             long duration = System.currentTimeMillis() - startTime;
             metrics.recordError(getName(), e.getClass().getSimpleName(), duration);
             metrics.endProcessing();
@@ -179,6 +203,11 @@ public class ImageIngestionStrategy implements IngestionStrategy {
     }
     
     private IngestionResult ingestNormal(MultipartFile file, String batchId) throws Exception {
+        // ✅ AJOUT : Progress - Processing
+        if (progressNotifier != null) {
+            progressNotifier.processingStarted(batchId, file.getOriginalFilename());
+        }
+        
         byte[] imageBytes = file.getBytes();
         BufferedImage image = ImageIO.read(new ByteArrayInputStream(imageBytes));
         
@@ -194,13 +223,32 @@ public class ImageIngestionStrategy implements IngestionStrategy {
         
         Path tempFile = null;
         try {
+            // ✅ AJOUT : Progress - Streaming
+            if (progressNotifier != null) {
+                progressNotifier.notifyProgress(batchId, file.getOriginalFilename(), 
+                    "STREAMING", 20, "Chargement image en streaming...");
+            }
+            
             log.debug("💾 [{}] Création fichier temporaire...", getName());
             tempFile = StreamingFileReader.saveToTempFileWithProgress(file, bytesWritten -> {
                 if (bytesWritten % (50 * 1024 * 1024) == 0) {
                     log.info("📊 [{}] Sauvegarde: {} MB", 
                         getName(), bytesWritten / 1_000_000);
+                    
+                    // ✅ AJOUT : Progress streaming détaillé
+                    if (progressNotifier != null) {
+                        int percentage = 20 + (int)((bytesWritten / (double)file.getSize()) * 30);
+                        progressNotifier.notifyProgress(batchId, file.getOriginalFilename(), 
+                            "STREAMING", percentage, 
+                            String.format("Chargement: %d MB", bytesWritten / 1_000_000));
+                    }
                 }
             });
+            
+            // ✅ AJOUT : Progress - Processing
+            if (progressNotifier != null) {
+                progressNotifier.processingStarted(batchId, file.getOriginalFilename());
+            }
             
             BufferedImage image = ImageIO.read(tempFile.toFile());
             if (image == null) {
@@ -219,12 +267,36 @@ public class ImageIngestionStrategy implements IngestionStrategy {
     private IngestionResult processImage(BufferedImage image, String filename,
                                           String batchId, long fileSize) throws Exception {
         
+        // ✅ AJOUT : Progress - Validation dimensions
+        if (progressNotifier != null) {
+            progressNotifier.notifyProgress(batchId, filename, "VALIDATION", 60, 
+                "Validation des dimensions...");
+        }
+        
         validateImageDimensions(image, filename);
+        
+        // ✅ AJOUT : Progress - Saving image
+        if (progressNotifier != null) {
+            progressNotifier.notifyProgress(batchId, filename, "SAVING", 70, 
+                "Sauvegarde de l'image...");
+        }
         
         String imageName = generateImageName(filename, batchId);
         String savedImagePath = imageSaver.saveImage(image, imageName);
         
+        // ✅ AJOUT : Progress - Vision analysis
+        if (progressNotifier != null) {
+            progressNotifier.notifyProgress(batchId, filename, "VISION_ANALYSIS", 80, 
+                "Analyse Vision AI...");
+        }
+        
         String description = analyzeImageWithRetry(image);
+        
+        // ✅ AJOUT : Progress - Indexing
+        if (progressNotifier != null) {
+            progressNotifier.notifyProgress(batchId, filename, "INDEXING", 90, 
+                "Création embedding...");
+        }
         
         Map<String, Object> metadata = buildMetadata(
             filename, getExtension(filename), batchId, savedImagePath, 
@@ -254,7 +326,8 @@ public class ImageIngestionStrategy implements IngestionStrategy {
         if (dupInfo.isDuplicate()) {
             throw new DuplicateFileException(
                 String.format("Fichier déjà traité (batch: %s)", 
-                    dupInfo.originalBatchId())
+                    dupInfo.originalBatchId()),
+                dupInfo.originalBatchId()
             );
         }
     }
@@ -358,50 +431,18 @@ public class ImageIngestionStrategy implements IngestionStrategy {
         return 4;
     }
 }
-
 /*
-
-## 🚀 **ARCHITECTURE FINALE**
-```
-┌────────────────────────────────────┐
-│  Fichier Upload (n'importe où)    │
-└─────────────┬──────────────────────┘
-              │
-              ▼
-    ┌──────────────────────┐
-    │ MultimodalIngestion  │
-    │      Service         │
-    └──────────┬───────────┘
-               │
-      ┌────────┴─────────┐
-      │   Strategy       │
-      │   Selection      │
-      └────────┬─────────┘
-               │
-    ┌──────────┴──────────┐
-    │                     │
-    ▼                     ▼
- <100MB                >100MB
-    │                     │
-    ▼                     ▼
-ingestNormal()    ingestWithStreaming()
-    │                     │
-    │         ┌───────────┘
-    │         │
-    │         ▼
-    │    StreamingFileReader
-    │         │
-    │         ▼
-    │    Temp File
-    │         │
-    └────┬────┘
-         │
-         ▼
-   Process File
-   (logique commune)
-         │
-         ▼
-    Indexation
-
+    ## 🎯 Étapes du progress pour IMAGE
+    ```
+    5% - Upload started
+    10% - Validation de l'image
+    15% - Upload completed
+    20-50% - Streaming (si >100MB)
+    60% - Validation des dimensions
+    70% - Sauvegarde de l'image
+    80% - Analyse Vision AI
+    90% - Création embedding
+    100% - Completed (0 texte, 1 image)
 
 */
+
