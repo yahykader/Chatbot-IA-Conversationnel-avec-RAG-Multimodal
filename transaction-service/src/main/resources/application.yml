@@ -577,3 +577,65 @@ info:
       - Distributed Tracing
       - Async Processing
       - Vision AI Integration
+
+
+# ============================================================================
+# Configuration Retrieval Augmentor
+# ============================================================================
+retrieval:
+  # Query Transformer
+  query-transformer:
+    enabled: true
+    method: llm  # llm | rule-based | hybrid
+    model: gpt-4o-mini
+    max-variants: 5
+    timeout-ms: 2000
+    enable-synonyms: true
+    enable-temporal-context: true
+  
+  # Query Router
+  query-router:
+    enabled: true
+    default-strategy: HYBRID  # TEXT_ONLY | IMAGE_ONLY | HYBRID | STRUCTURED
+    confidence-threshold: 0.7
+  
+  # Retrievers
+  retrievers:
+    parallel-timeout: 5000
+    text:
+      enabled: true
+      top-k: 20
+      similarity-threshold: 0.7
+    image:
+      enabled: true
+      top-k: 5
+      similarity-threshold: 0.6
+    bm25:
+      enabled: true
+      top-k: 10
+      language: french
+  
+  # Aggregator
+  aggregator:
+    fusion-method: rrf  # rrf | weighted
+    rrf-k: 60
+    text-weight: 0.5
+    image-weight: 0.3
+    bm25-weight: 0.2
+    max-candidates: 30
+    final-top-k: 10
+  
+  # Reranker
+  reranker:
+    enabled: false
+    model: cross-encoder/ms-marco-MiniLM-L-6-v2
+    top-k: 10
+    batch-size: 32
+  
+  # Content Injector
+  content-injector:
+    max-tokens: 200000
+    system-prompt-tokens: 200
+    instructions-tokens: 250
+    enable-citations: true
+    citation-format: "<cite index=\"{index}\">{content}</cite>"
