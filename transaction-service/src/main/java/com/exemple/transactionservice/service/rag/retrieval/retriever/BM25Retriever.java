@@ -40,14 +40,14 @@ public class BM25Retriever implements Retriever {
                 String combinedQuery = String.join(" ", queries);
                 
                 String sql = """
-                    SELECT 
-                        id,
-                        content,
+                    SELECT
+                        embedding_id,
+                        text,
                         metadata,
-                        ts_rank(to_tsvector('french', content), query) as score
+                        ts_rank(to_tsvector('french', text), query) as score
                     FROM text_embeddings,
                          plainto_tsquery('french', ?) query
-                    WHERE to_tsvector('french', content) @@ query
+                    WHERE to_tsvector('french', text) @@ query
                     ORDER BY score DESC
                     LIMIT ?
                     """;
@@ -56,8 +56,8 @@ public class BM25Retriever implements Retriever {
                     sql,
                     new Object[]{combinedQuery, topK},
                     (rs, rowNum) -> ScoredChunk.builder()
-                        .id(rs.getString("id"))
-                        .content(rs.getString("content"))
+                        .id(rs.getString("embedding_id"))
+                        .content(rs.getString("text"))
                         .metadata(parseJsonb(rs.getString("metadata")))
                         .score(rs.getDouble("score"))
                         .retrieverName("bm25")

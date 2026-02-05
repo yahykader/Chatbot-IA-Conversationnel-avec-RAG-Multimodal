@@ -1,0 +1,92 @@
+
+
+data: data: {
+    "data": {
+        "response": {
+            "sessionId": "session_e3412f3aacb0433c",
+            "conversationId": "conv_b4bd7a407e2541a8",
+            "query": "quelle est le nom et prenom du cv et ses competences  ",
+            "answer": "Le CV appartient à une personne nommée Abdlekader YAYA ou YAHYAOUI Abdelkader. Les deux noms sont mentionnés dans les documents, mais il semble qu'il puisse s'agir de la même personne, bien que cela ne soit pas complètement certain. Concernant les compétences, voici un résumé :\n\n### Compétences de Abdlekader YAYA / YAHYAOUI Abdelkader :\n\n1. **Backend :**\n   - Java, J2EE\n   - Spring Boot, Spring MVC\n   - Microservices, API REST, Hibernate\n   - FastAPI (Python), Keycloak\n\n2. **Frontend :**\n   - Angular (versions 12-16), TypeScript, HTML, CSS\n   - Microfrontend, NgRx\n\n3. **Intelligence Artificielle :**\n   - LangChain, Hugging Face, LangChain4j\n   - RAG, Agent IA, Embeddings, Vector Search\n   - Integration de l'IA Générative dans les applications\n\n4. **Cloud et DevOps :**\n   - Google Cloud Platform (GCP), BigQuery, Cloud Run, Cloud Storage\n   - Docker, Kubernetes, ArgoCD, Jenkins, GitLab CI\n   - Méthodologies Agile/Scrum, TDD/BDD, CI/CD\n\n5. **Bases de Données :**\n   - PostgreSQL, MySQL, MongoDB\n\n6. **Autres :**\n   - Code Review, Clean Code, SOLID\n   - Monitoring applicatif : Prometheus, Grafana, ELK\n\nCes compétences sont basées sur les informations extraites des documents fournis <cite index=\"1\">Il s'agit d'un CV appartenant à une personne nommée Abdlekader YAYA...</cite><cite index=\"2\">YAHYAOUI  Abdelkader E-mail: yahyaouiabdelkader85@gmail.com...</cite>.",
+            "sources": [{
+                    "file": "pdf_rendered",
+                    "page": "1",
+                    "relevance": 0.01639344262295082,
+                    "type": "image"
+                }, {
+                    "file": "CV-JAVA-IA-2.pdf",
+                    "page": "1",
+                    "relevance": 0.01639344262295082,
+                    "type": "pdf_page_1"
+                }, {
+                    "file": "xlsx_to_pdf",
+                    "page": null,
+                    "relevance": 0.016129032258064516,
+                    "type": "pdf_page_chart"
+                }, {
+                    "file": "CV-JAVA-Fullstack-IA.docx",
+                    "page": null,
+                    "relevance": 0.016129032258064516,
+                    "type": "docx_text"
+                }, {
+                    "file": "CV-JAVA-Fullstack-IA.docx",
+                    "page": null,
+                    "relevance": 0.015873015873015872,
+                    "type": "docx_text"
+                }, {
+                    "file": "xlsx_to_pdf",
+                    "page": null,
+                    "relevance": 0.015873015873015872,
+                    "type": "pdf_page_chart"
+                }, {
+                    "file": "Astrakhan - Astrakhan -  Convention de forfait individuelle AYAH.docx",
+                    "page": null,
+                    "relevance": 0.015625,
+                    "type": "docx_text"
+                }, {
+                    "file": "xlsx_to_pdf",
+                    "page": null,
+                    "relevance": 0.015625,
+                    "type": "pdf_page_chart"
+                }, {
+                    "file": "CV-JAVA-Fullstack-IA.docx",
+                    "page": null,
+                    "relevance": 0.015384615384615385,
+                    "type": "docx_text"
+                }, {
+                    "file": "xlsx_to_pdf",
+                    "page": null,
+                    "relevance": 0.015384615384615385,
+                    "type": "pdf_page_chart"
+                }
+            ],
+            "citations": [{
+                    "index": 1,
+                    "content": "Il s'agit d'un CV appartenant à une personne nommée Abdlekader YAYA...",
+                    "sourceFile": null,
+                    "sourcePage": null
+                }, {
+                    "index": 2,
+                    "content": "YAHYAOUI  Abdelkader E-mail: yahyaouiabdelkader85@gmail.com...",
+                    "sourceFile": null,
+                    "sourcePage": null
+                }
+            ],
+            "metadata": {
+                "tokensGenerated": 398,
+                "chunksRetrieved": 37,
+                "chunksSelected": 10,
+                "retrievalDurationMs": 6889,
+                "generationDurationMs": 8634,
+                "totalDurationMs": 15523
+            }
+        },
+        "metadata": {
+            "generationDurationMs": 8634,
+            "totalDurationMs": 15701,
+            "retrievalDurationMs": 6889
+        }
+    },
+    "sessionId": "session_e3412f3aacb0433c",
+    "type": "complete",
+    "timestamp": "2026-02-05T10:56:16.262529500Z"
+}

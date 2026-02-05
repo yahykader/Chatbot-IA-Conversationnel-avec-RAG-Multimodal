@@ -5,51 +5,75 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import java.time.Duration;
 
+/**
+ * Métriques OpenAI
+ * 
+ * ✅ CORRECTION: Tags cohérents pour tous les counters
+ */
 @Slf4j
 @Component
 public class OpenAiMetrics {
 
     private final MeterRegistry registry;
     
-    private final Counter apiCalls;
-    private final Counter apiErrors;
-    private final Timer apiDuration;
-    
     public OpenAiMetrics(MeterRegistry registry) {
         this.registry = registry;
-        
-        this.apiCalls = Counter.builder("openai_api_calls_total")
-            .description("Total OpenAI API calls")
-            .tag("service", "openai")
-            .register(registry);
-        
-        this.apiErrors = Counter.builder("openai_api_errors_total")
-            .description("Total OpenAI API errors")
-            .tag("service", "openai")
-            .register(registry);
-        
-        this.apiDuration = Timer.builder("openai_api_duration_seconds")
-            .description("OpenAI API call duration")
-            .tag("service", "openai")
-            .register(registry);
-        
         log.info("✅ OpenAiMetrics initialisé");
     }
 
+    /**
+     * Enregistre un appel API OpenAI
+     * 
+     * @param operation Type d'opération (embed_text, completion, etc.)
+     * @param durationMs Durée en millisecondes
+     */
     public void recordCall(String operation, long durationMs) {
-        apiCalls.increment(); // global
-
-        registry.counter("openai_api_calls_total", "service", "openai", "operation", operation)
-                .increment();
-
-        apiDuration.record(java.time.Duration.ofMillis(durationMs));
+        // ✅ CORRECTION: Toujours inclure le tag "operation"
+        Counter.builder("openai_api_calls_total")
+            .description("Total OpenAI API calls")
+            .tag("service", "openai")
+            .tag("operation", operation != null ? operation : "unknown")  // ✅ Tag cohérent
+            .register(registry)
+            .increment();
+        
+        // Enregistrer durée
+        Timer.builder("openai_api_duration_seconds")
+            .description("OpenAI API call duration")
+            .tag("service", "openai")
+            .tag("operation", operation != null ? operation : "unknown")  // ✅ Tag cohérent
+            .register(registry)
+            .record(Duration.ofMillis(durationMs));
     }
     
+    /**
+     * Enregistre une erreur API OpenAI
+     * 
+     * @param operation Type d'opération qui a échoué
+     */
     public void recordError(String operation) {
-        apiErrors.increment(); // global
-
-        registry.counter("openai_api_errors_total", "service", "openai", "operation", operation)
-                .increment();
+        // ✅ CORRECTION: Tag cohérent
+        Counter.builder("openai_api_errors_total")
+            .description("Total OpenAI API errors")
+            .tag("service", "openai")
+            .tag("operation", operation != null ? operation : "unknown")  // ✅ Tag cohérent
+            .register(registry)
+            .increment();
+    }
+    
+    /**
+     * Enregistre un appel avec succès/échec
+     * 
+     * @param operation Type d'opération
+     * @param success true si succès, false si erreur
+     * @param durationMs Durée
+     */
+    public void recordCallWithStatus(String operation, boolean success, long durationMs) {
+        recordCall(operation, durationMs);
+        
+        if (!success) {
+            recordError(operation);
+        }
     }
 }
