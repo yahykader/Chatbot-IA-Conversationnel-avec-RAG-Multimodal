@@ -5,11 +5,21 @@ global:
     cluster: 'rag-system'
     environment: 'production'
 
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+rule_files:
+  - "/etc/prometheus/alerts.yml"
+
 scrape_configs:
   # ============================================================================
   # APPLICATION SPRING BOOT RAG
   # ============================================================================
-  - job_name: 'rag-application'
+  - job_name: 'spring-boot-rag'
     metrics_path: '/actuator/prometheus'
     scrape_interval: 10s
     static_configs:

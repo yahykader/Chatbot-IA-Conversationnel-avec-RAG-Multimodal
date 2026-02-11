@@ -39,14 +39,14 @@ src/main/java/
 
 #### Fichiers à Modifier (1)
 ```
-MultimodalIngestionService.java
+IngestionOrchestrator.java
 ├── Avant ingestion : appeler scanner
 └── 5 lignes ajoutées
 ```
 
 #### Code Ajouté
 ```java
-// Dans MultimodalIngestionService.ingestFileInternal()
+// Dans IngestionOrchestrator.ingestFileInternal()
 
 // AVANT (ligne 180 environ)
 // 1. SÉLECTION STRATEGY
@@ -348,7 +348,7 @@ src/test/java/
 └── service/ingestion/
     ├── ImageIngestionStrategyTest.java (NOUVEAU)
     ├── PdfIngestionStrategyTest.java (NOUVEAU)
-    ├── MultimodalIngestionServiceTest.java (NOUVEAU)
+    ├── IngestionOrchestratorTest.java (NOUVEAU)
     └── ... (autres tests)
 ```
 
@@ -502,7 +502,7 @@ src/test/java/
 
 
 ┌─────────────────────────────────────────────────────────┐
-│                  MultimodalIngestionService              │
+│                  IngestionOrchestrator              │
 │                                                          │
 │  ingestFileInternal(file) {                             │
 │    ┌──────────────────────────────────────────────┐    │
@@ -585,3 +585,52 @@ Documentation complète
 Exemples d'utilisation
 Metrics de performance
 
+
+🎉 Dashboard Complet avec Section LLM COSTS - Créé!
+
+📊 Panels Existants (37 panels)
+│
+├─ 📊 INGESTION OVERVIEW (7)
+├─ 🔍 QUERY PROCESSING (5)
+├─ 📥 RETRIEVAL & PROCESSING (5)
+├─ ✍️ GENERATION (4)
+├─ 💬 CONVERSATION (4)
+├─ 🖥️ INFRASTRUCTURE (2)
+│
+└─ 💰 LLM COSTS (9) ⭐ NOUVEAU
+   │
+   ├─ Panel 38: 💰 Total LLM Cost (Stat)
+   ├─ Panel 39: 💸 Cost Rate (Time Series - $/hour, $/day)
+   ├─ Panel 40: 💰 Cost by Model (Bar Gauge)
+   ├─ Panel 41: 🔢 Token Usage (Time Series - Input vs Output)
+   ├─ Panel 42: 💵 Avg Cost/Query (Stat)
+   ├─ Panel 43: 🔢 Total Tokens (Bar Gauge)
+   ├─ Panel 44: 📊 Token Ratio (Gauge)
+   ├─ Panel 45: 🥧 Cost Breakdown (Pie Chart)
+   └─ Panel 46: 📈 Cumulative Cost (Time Series)
+
+
+💰 LLM COSTS Section:
+─────────────────────
+   Total Cost:         $0.45
+   Cost Rate:          $2.70/hour ($64.80/day)
+   Cost by Model:
+      - gpt-4o-mini:   $0.38
+      - gpt-4o:        $0.07
+   
+   Token Usage:
+      - Input:         5,000 tokens/min
+      - Output:        1,500 tokens/min
+   
+   Avg Cost/Query:     $0.0045
+   Total Tokens:
+      - Input:         500,000
+      - Output:        150,000
+   
+   Token Ratio:        3.33 (Input/Output)
+   
+   Cost Breakdown:
+      - gpt-4o-mini:   84%
+      - gpt-4o:        16%
+   
+   Cumulative Cost:    $0.45 (croissant)

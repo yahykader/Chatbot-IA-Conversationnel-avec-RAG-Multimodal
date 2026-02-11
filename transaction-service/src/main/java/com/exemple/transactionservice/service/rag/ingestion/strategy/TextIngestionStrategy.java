@@ -1,6 +1,6 @@
 // ============================================================================
-// STRATEGY - TextIngestionStrategy.java (VERSION AVEC STREAMING + PROGRESS)
-// Stratégie d'ingestion pour fichiers texte avec streaming gros fichiers (>100MB)
+// STRATEGY - TextIngestionStrategy.java
+// Stratégie d'ingestion pour fichiers texte avec streaming + RAGMetrics unifié
 // ============================================================================
 package com.exemple.transactionservice.service.rag.ingestion.strategy;
 
@@ -8,7 +8,7 @@ import com.exemple.transactionservice.service.rag.ingestion.progress.ProgressNot
 import com.exemple.transactionservice.service.rag.ingestion.cache.EmbeddingCache;
 import com.exemple.transactionservice.service.rag.ingestion.deduplication.DeduplicationService;
 import com.exemple.transactionservice.service.rag.ingestion.deduplication.TextDeduplicationService;
-import com.exemple.transactionservice.service.rag.ingestion.metrics.IngestionMetrics;
+import com.exemple.transactionservice.service.rag.metrics.RAGMetrics;
 import com.exemple.transactionservice.service.rag.ingestion.model.IngestionResult;
 import com.exemple.transactionservice.service.rag.ingestion.tracker.IngestionTracker;
 import com.exemple.transactionservice.service.rag.ingestion.util.MetadataSanitizer;
@@ -35,7 +35,23 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Stratégie d'ingestion pour fichiers texte - VERSION AVEC STREAMING + PROGRESS.
+ * Stratégie d'ingestion pour fichiers texte
+ * 
+ * ✅ ADAPTÉ AVEC RAGMetrics unifié
+ * 
+ * Fonctionnalités:
+ * - Streaming pour gros fichiers (>100MB)
+ * - Support 40+ formats texte/code/data
+ * - Détection automatique d'encodage (UTF-8, ISO-8859-1)
+ * - Détection type de contenu
+ * - Chunking adaptatif selon le type
+ * - Progress temps réel via ProgressNotifier
+ * - Déduplication fichier + texte
+ * - Métriques Prometheus via RAGMetrics
+ * - Cache embeddings
+ * 
+ * @author RAG Team
+ * @version 3.0 - Adapté avec RAGMetrics unifié
  */
 @Slf4j
 @Component
@@ -45,13 +61,12 @@ public class TextIngestionStrategy implements IngestionStrategy {
     private final EmbeddingModel embeddingModel;
     private final IngestionTracker tracker;
     private final MetadataSanitizer sanitizer;
-    private final IngestionMetrics metrics;
+    private final RAGMetrics ragMetrics;  // ✅ Métriques unifiées
     private final DeduplicationService deduplicationService;
     private final TextDeduplicationService textDeduplicationService;
     private final FileSignatureValidator signatureValidator;
     private final EmbeddingCache embeddingCache;
     
-    // ✅ AJOUT : ProgressNotifier (injection optionnelle)
     @Autowired(required = false)
     private ProgressNotifier progressNotifier;
     
@@ -87,7 +102,7 @@ public class TextIngestionStrategy implements IngestionStrategy {
             EmbeddingModel embeddingModel,
             IngestionTracker tracker,
             MetadataSanitizer sanitizer,
-            IngestionMetrics metrics,
+            RAGMetrics ragMetrics,  // ✅ Injection RAGMetrics
             DeduplicationService deduplicationService,
             TextDeduplicationService textDeduplicationService,
             FileSignatureValidator signatureValidator,
@@ -97,13 +112,13 @@ public class TextIngestionStrategy implements IngestionStrategy {
         this.embeddingModel = embeddingModel;
         this.tracker = tracker;
         this.sanitizer = sanitizer;
-        this.metrics = metrics;
+        this.ragMetrics = ragMetrics;  // ✅ Utilisation metrics unifié
         this.deduplicationService = deduplicationService;
         this.textDeduplicationService = textDeduplicationService;
         this.signatureValidator = signatureValidator;
         this.embeddingCache = embeddingCache;
         
-        log.info("✅ [{}] Strategy initialisée avec streaming support (40+ formats)", 
+        log.info("✅ [{}] Strategy initialisée avec streaming + RAGMetrics (40+ formats)", 
             getName());
     }
     
@@ -119,50 +134,49 @@ public class TextIngestionStrategy implements IngestionStrategy {
         long fileSize = file.getSize();
         
         long startTime = System.currentTimeMillis();
-        metrics.startProcessing();
         
         try {
-            // ✅ AJOUT : Progress - Upload started
+            // Progress - Upload started
             if (progressNotifier != null) {
                 progressNotifier.uploadStarted(batchId, filename, fileSize);
             }
             
-            log.info("📄 [{}] Traitement fichier texte: {} ({} MB, ext: {})", 
+            log.info("📄 [{}] Processing text file: {} ({} MB, ext: {})", 
                 getName(), filename, fileSize / 1_000_000, extension.toUpperCase());
             
             if (file.isEmpty() || fileSize == 0) {
-                // ✅ AJOUT : Progress - Error
                 if (progressNotifier != null) {
-                    progressNotifier.error(batchId, filename, "Fichier vide");
+                    progressNotifier.error(batchId, filename, "Empty file");
                 }
-                throw new IOException("Fichier texte vide: " + filename);
+                throw new IOException("Empty text file: " + filename);
             }
             
-            // ✅ AJOUT : Progress - Déduplication
+            // Progress - Deduplication
             if (progressNotifier != null) {
                 progressNotifier.notifyProgress(batchId, filename, "DEDUPLICATION", 10, 
-                    "Vérification des duplicates...");
+                    "Checking duplicates...");
             }
             
             DeduplicationService.DuplicationInfo dupInfo = 
                 deduplicationService.checkDuplication(file);
             
             if (dupInfo.isDuplicate()) {
-                // ✅ AJOUT : Progress - Error
                 if (progressNotifier != null) {
                     progressNotifier.error(batchId, filename, 
-                        "Fichier déjà traité (batch: " + dupInfo.originalBatchId() + ")");
+                        "Already processed (batch: " + dupInfo.originalBatchId() + ")");
                 }
                 
-                metrics.recordDuplicate(getName());
+                // ✅ MÉTRIQUE: Duplicate
+                ragMetrics.recordDuplicate(getName());
+                
                 throw new DuplicateFileException(
-                    String.format("Fichier texte déjà traité (batch: %s)", 
+                    String.format("Text file already processed (batch: %s)", 
                         dupInfo.originalBatchId()),
                     dupInfo.originalBatchId()
                 );
             }
             
-            // ✅ AJOUT : Progress - Upload completed
+            // Progress - Upload completed
             if (progressNotifier != null) {
                 progressNotifier.uploadCompleted(batchId, filename);
             }
@@ -170,12 +184,11 @@ public class TextIngestionStrategy implements IngestionStrategy {
             IngestionResult result;
             
             if (StreamingFileReader.requiresStreaming(file)) {
-                log.info("📖 [{}] STREAMING activé: {} MB", 
+                log.info("📖 [{}] STREAMING enabled: {} MB", 
                     getName(), fileSize / 1_000_000);
                 result = ingestWithStreaming(file, filename, extension, batchId, fileSize);
-                
             } else {
-                log.debug("📄 [{}] Mode normal: {} MB", 
+                log.debug("📄 [{}] Normal mode: {} MB", 
                     getName(), fileSize / 1_000_000);
                 result = ingestNormal(file, filename, extension, batchId, fileSize);
             }
@@ -183,39 +196,36 @@ public class TextIngestionStrategy implements IngestionStrategy {
             deduplicationService.markAsIngested(file, batchId);
             
             long duration = System.currentTimeMillis() - startTime;
-            metrics.recordSuccess(getName(), duration, result.textEmbeddings(), 0);
-            metrics.recordFileSize(getName(), fileSize);
             
-            // ✅ AJOUT : Progress - Completed
+            // ✅ MÉTRIQUE: Strategy processing
+            ragMetrics.recordStrategyProcessing(
+                getName(),
+                duration,
+                result.textEmbeddings()
+            );
+            
+            // Progress - Completed
             if (progressNotifier != null) {
                 progressNotifier.completed(batchId, filename, result.textEmbeddings(), 0);
             }
             
-            log.info("✅ [{}] Fichier texte traité: {} - {} chunks, durée={}ms mode={}",
+            log.info("✅ [{}] Text file processed: {} - {} chunks, duration={}ms mode={}",
                 getName(), filename, result.textEmbeddings(), duration,
                 StreamingFileReader.requiresStreaming(file) ? "STREAMING" : "NORMAL");
             
             return result;
             
         } catch (DuplicateFileException e) {
-            metrics.endProcessing();
             throw e;
             
         } catch (Exception e) {
-            // ✅ AJOUT : Progress - Error
+            // Progress - Error
             if (progressNotifier != null) {
                 progressNotifier.error(batchId, filename, e.getMessage());
             }
             
-            long duration = System.currentTimeMillis() - startTime;
-            metrics.recordError(getName(), e.getClass().getSimpleName(), duration);
-            metrics.endProcessing();
-            
-            log.error("❌ [{}] Erreur traitement: {}", getName(), filename, e);
+            log.error("❌ [{}] Processing error: {}", getName(), filename, e);
             throw e;
-            
-        } finally {
-            metrics.endProcessing();
         }
     }
     
@@ -223,21 +233,21 @@ public class TextIngestionStrategy implements IngestionStrategy {
                                           String extension, String batchId,
                                           long fileSize) throws Exception {
         
-        // ✅ AJOUT : Progress - Processing
+        // Progress - Processing
         if (progressNotifier != null) {
             progressNotifier.processingStarted(batchId, filename);
         }
         
-        // ✅ AJOUT : Progress - Reading
+        // Progress - Reading
         if (progressNotifier != null) {
             progressNotifier.notifyProgress(batchId, filename, "READING", 20, 
-                "Lecture du contenu...");
+                "Reading content...");
         }
         
         String content = readTextWithEncodingDetection(file.getBytes(), filename);
         
         if (content == null || content.isBlank()) {
-            throw new IllegalArgumentException("Fichier sans contenu: " + filename);
+            throw new IllegalArgumentException("File without content: " + filename);
         }
         
         return processContent(content, filename, extension, batchId, fileSize);
@@ -250,40 +260,38 @@ public class TextIngestionStrategy implements IngestionStrategy {
         Path tempFile = null;
         
         try {
-            // ✅ AJOUT : Progress - Streaming
+            // Progress - Streaming
             if (progressNotifier != null) {
                 progressNotifier.notifyProgress(batchId, filename, "STREAMING", 15, 
-                    "Chargement en streaming...");
+                    "Loading in streaming...");
             }
             
-            log.debug("💾 [{}] Création fichier temporaire...", getName());
+            log.debug("💾 [{}] Creating temp file...", getName());
             tempFile = StreamingFileReader.saveToTempFileWithProgress(file, bytesWritten -> {
                 if (bytesWritten % (50 * 1024 * 1024) == 0) {
-                    log.info("📊 [{}] Sauvegarde: {} MB", 
-                        getName(), bytesWritten / 1_000_000);
+                    log.info("📊 [{}] Saved: {} MB", getName(), bytesWritten / 1_000_000);
                     
-                    // ✅ AJOUT : Progress streaming détaillé
                     if (progressNotifier != null) {
                         int percentage = 15 + (int)((bytesWritten / (double)fileSize) * 10);
                         progressNotifier.notifyProgress(batchId, filename, "STREAMING", percentage, 
-                            String.format("Chargement: %d MB", bytesWritten / 1_000_000));
+                            String.format("Loading: %d MB", bytesWritten / 1_000_000));
                     }
                 }
             });
             
-            log.info("✅ [{}] Fichier temporaire créé: {}", getName(), tempFile);
+            log.info("✅ [{}] Temp file created: {}", getName(), tempFile);
             
-            // ✅ AJOUT : Progress - Reading
+            // Progress - Reading
             if (progressNotifier != null) {
                 progressNotifier.notifyProgress(batchId, filename, "READING", 25, 
-                    "Lecture du contenu...");
+                    "Reading content...");
             }
             
             byte[] bytes = Files.readAllBytes(tempFile);
             String content = readTextWithEncodingDetection(bytes, filename);
             
             if (content == null || content.isBlank()) {
-                throw new IllegalArgumentException("Fichier sans contenu: " + filename);
+                throw new IllegalArgumentException("File without content: " + filename);
             }
             
             return processContent(content, filename, extension, batchId, fileSize);
@@ -292,10 +300,9 @@ public class TextIngestionStrategy implements IngestionStrategy {
             if (tempFile != null) {
                 try {
                     Files.deleteIfExists(tempFile);
-                    log.debug("🗑️ [{}] Fichier temporaire supprimé", getName());
+                    log.debug("🗑️ [{}] Temp file deleted", getName());
                 } catch (IOException e) {
-                    log.warn("⚠️ [{}] Impossible de supprimer temp: {}", 
-                        getName(), e.getMessage());
+                    log.warn("⚠️ [{}] Cannot delete temp file: {}", getName(), e.getMessage());
                 }
             }
         }
@@ -305,22 +312,22 @@ public class TextIngestionStrategy implements IngestionStrategy {
                                             String extension, String batchId,
                                             long fileSize) throws Exception {
         
-        log.debug("📝 [{}] Contenu extrait: {} caractères", getName(), content.length());
+        log.debug("📝 [{}] Content extracted: {} characters", getName(), content.length());
         
-        // ✅ AJOUT : Progress - Content analysis
+        // Progress - Content analysis
         if (progressNotifier != null) {
             progressNotifier.notifyProgress(batchId, filename, "ANALYSIS", 30, 
-                "Analyse du contenu...");
+                "Content analysis...");
         }
         
         String contentType = detectContentType(content, extension);
         
-        log.info("🔍 [{}] Type détecté: {}", getName(), contentType);
+        log.info("🔍 [{}] Detected type: {}", getName(), contentType);
         
-        // ✅ AJOUT : Progress - Chunking
+        // Progress - Chunking
         if (progressNotifier != null) {
             progressNotifier.notifyProgress(batchId, filename, "CHUNKING", 40, 
-                "Découpage du texte...");
+                "Text chunking...");
         }
 
         var chunkResult = chunkAndIndexText(content, filename, extension, contentType, batchId);
@@ -328,7 +335,7 @@ public class TextIngestionStrategy implements IngestionStrategy {
         int duplicates = chunkResult.duplicates();
         
         if (duplicates > 0) {
-            log.info("⏭️ [Dedup] {} duplicates skip, {} nouveaux indexés", 
+            log.info("⏭️ [Dedup] {} duplicates skipped, {} new indexed", 
                 duplicates, textEmbeddings);
         }
         
@@ -349,21 +356,21 @@ public class TextIngestionStrategy implements IngestionStrategy {
             String content = new String(bytes, StandardCharsets.UTF_8);
             
             if (!content.contains("\uFFFD")) {
-                log.debug("✓ [{}] Encodage détecté: UTF-8", getName());
+                log.debug("✓ [{}] Encoding detected: UTF-8", getName());
                 return content;
             }
             
         } catch (Exception e) {
-            log.debug("⚠️ [{}] Échec lecture UTF-8", getName());
+            log.debug("⚠️ [{}] UTF-8 read failed", getName());
         }
         
         try {
             String content = new String(bytes, "ISO-8859-1");
-            log.debug("✓ [{}] Encodage détecté: ISO-8859-1 (fallback)", getName());
+            log.debug("✓ [{}] Encoding detected: ISO-8859-1 (fallback)", getName());
             return content;
             
         } catch (Exception e) {
-            throw new IOException("Impossible de lire le fichier: " + filename, e);
+            throw new IOException("Cannot read file: " + filename, e);
         }
     }
     
@@ -411,18 +418,15 @@ public class TextIngestionStrategy implements IngestionStrategy {
 
     private ChunkResult chunkAndIndexText(String content, String filename, String extension,
                                     String contentType, String batchId) {
-        int chunkSize = 1000;
-        int overlap = 100;
         int indexed = 0;
         int duplicates = 0;
         int chunkIndex = 0;
         
         ChunkConfig config = getChunkConfig(contentType);
         
-        log.debug("📏 [{}] Config chunking: size={} overlap={} (type: {})",
+        log.debug("📏 [{}] Chunking config: size={} overlap={} (type: {})",
             getName(), config.size, config.overlap, contentType);
         
-        // ✅ Estimer nombre de chunks
         int estimatedChunks = content.length() <= config.size ? 1 : 
             (int) Math.ceil(content.length() / (double)(config.size - config.overlap));
     
@@ -438,10 +442,10 @@ public class TextIngestionStrategy implements IngestionStrategy {
             
             Metadata metadata = Metadata.from(sanitizer.sanitize(meta));
             
-            // ✅ AJOUT : Progress embedding
+            // Progress embedding
             if (progressNotifier != null) {
                 progressNotifier.notifyProgress(batchId, filename, "EMBEDDING", 50, 
-                    "Création embedding...");
+                    "Creating embedding...");
             }
 
             String embeddingId = indexText(content.trim(), metadata, batchId);
@@ -449,7 +453,7 @@ public class TextIngestionStrategy implements IngestionStrategy {
             if (embeddingId != null) {
                 tracker.addTextEmbeddingId(batchId, embeddingId);
                 
-                // ✅ AJOUT : Progress terminé
+                // Progress terminé
                 if (progressNotifier != null) {
                     progressNotifier.embeddingProgress(batchId, filename, 1, 1);
                 }
@@ -482,7 +486,7 @@ public class TextIngestionStrategy implements IngestionStrategy {
                     tracker.addTextEmbeddingId(batchId, embeddingId);
                     indexed++;
                     
-                    // ✅ AJOUT : Progress tous les 10 chunks
+                    // Progress tous les 10 chunks
                     if (indexed % 10 == 0 || indexed == estimatedChunks) {
                         if (progressNotifier != null) {
                             progressNotifier.embeddingProgress(batchId, filename, 
@@ -499,7 +503,7 @@ public class TextIngestionStrategy implements IngestionStrategy {
             start += Math.max(1, config.size - config.overlap);
         }
         
-        log.info("✅ [{}] {} chunks indexés ({} duplicates skip)", 
+        log.info("✅ [{}] {} chunks indexed ({} duplicates skipped)", 
             getName(), indexed, duplicates);
         
         return new ChunkResult(indexed, duplicates);
@@ -556,22 +560,36 @@ public class TextIngestionStrategy implements IngestionStrategy {
     private String indexText(String text, Metadata metadata, String batchId) {
         
         if (!textDeduplicationService.checkAndMark(text, batchId)) {
-            log.debug("⏭️ [Dedup] Texte dupliqué, skip insertion: {}", 
-                truncate(text, 50));
+            log.debug("⏭️ [Dedup] Duplicate text, skip: {}", truncate(text, 50));
             return null;
         }
         
-        log.debug("✅ [Dedup] Nouveau texte, indexation: {}", 
-            truncate(text, 50));
+        log.debug("✅ [Dedup] New text, indexing: {}", truncate(text, 50));
         
         TextSegment segment = TextSegment.from(text, metadata);
         
         Embedding embedding = embeddingCache.getOrCompute(
             text, 
-            () -> embeddingModel.embed(text).content()
+            () -> {
+                long apiStart = System.currentTimeMillis();
+                Embedding emb = embeddingModel.embed(text).content();
+                long apiDuration = System.currentTimeMillis() - apiStart;
+                
+                // ✅ MÉTRIQUE: Embedding API call
+                ragMetrics.recordApiCall("embed_text", apiDuration);
+                
+                return emb;
+            }
         );
         
-        return textStore.add(embedding, segment);
+        long storeStart = System.currentTimeMillis();
+        String embeddingId = textStore.add(embedding, segment);
+        long storeDuration = System.currentTimeMillis() - storeStart;
+        
+        // ✅ MÉTRIQUE: Vector store operation
+        ragMetrics.recordVectorStoreOperation("insert", storeDuration, 1);
+        
+        return embeddingId;
     }
     
     private String getExtension(String filename) {
@@ -614,18 +632,16 @@ public class TextIngestionStrategy implements IngestionStrategy {
         return SUPPORTED_EXTENSIONS.contains(extension.toLowerCase());
     }
 }
+
 /*
-
-    ## 🎯 Étapes du progress pour TEXT
-    ```
-    5% - Upload started
-    10% - Vérification des duplicates
-    12% - Upload completed
-    15-25% - Streaming (si >100MB)
-    20-25% - Lecture du contenu
-    30% - Analyse du contenu
-    40% - Découpage du texte
-    50-90% - Création embeddings (progress détaillé)
-    100% - Completed
-
-*/
+ * Progress Steps for TEXT:
+ * 5%   - Upload started
+ * 10%  - Duplicate check
+ * 12%  - Upload completed
+ * 15-25% - Streaming (if >100MB)
+ * 20-25% - Reading content
+ * 30%  - Content analysis
+ * 40%  - Text chunking
+ * 50-90% - Embedding creation (detailed progress)
+ * 100% - Completed
+ */

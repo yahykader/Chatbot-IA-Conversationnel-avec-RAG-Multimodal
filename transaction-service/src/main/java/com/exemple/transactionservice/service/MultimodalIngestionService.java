@@ -1,5 +1,5 @@
 // // ============================================================================
-// // SERVICE - MultimodalIngestionService.java (v2.1.0) - VERSION COMPLÈTE AVEC ROLLBACK
+// // SERVICE - IngestionOrchestrator.java (v2.1.0) - VERSION COMPLÈTE AVEC ROLLBACK
 // // ============================================================================
 // package com.exemple.transactionservice.service;
 
@@ -79,7 +79,7 @@
 //  */
 // @Slf4j
 // @Service
-// public class MultimodalIngestionService {
+// public class IngestionOrchestrator {
 
 //     private final EmbeddingStore<TextSegment> textStore;
 //     private final EmbeddingStore<TextSegment> imageStore;
@@ -172,7 +172,7 @@
 //         }
 //     }
 
-//     public MultimodalIngestionService(
+//     public IngestionOrchestrator(
 //             @Qualifier("textEmbeddingStore") EmbeddingStore<TextSegment> textStore,
 //             @Qualifier("imageEmbeddingStore") EmbeddingStore<TextSegment> imageStore,
 //             EmbeddingModel embeddingModel,

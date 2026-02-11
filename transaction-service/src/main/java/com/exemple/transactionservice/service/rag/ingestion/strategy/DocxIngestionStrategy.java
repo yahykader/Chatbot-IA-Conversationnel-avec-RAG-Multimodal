@@ -1,6 +1,6 @@
 // ============================================================================
-// STRATEGY - DocxIngestionStrategy.java (VERSION AVEC STREAMING + PROGRESS)
-// Stratégie d'ingestion pour DOCX avec streaming gros fichiers (>100MB)
+// STRATEGY - DocxIngestionStrategy.java
+// Stratégie d'ingestion pour DOCX avec streaming + RAGMetrics unifié
 // ============================================================================
 package com.exemple.transactionservice.service.rag.ingestion.strategy;
 
@@ -10,13 +10,13 @@ import com.exemple.transactionservice.service.rag.ingestion.analyzer.ImageSaver;
 import com.exemple.transactionservice.service.rag.ingestion.analyzer.VisionAnalyzer;
 import com.exemple.transactionservice.service.rag.ingestion.deduplication.DeduplicationService;
 import com.exemple.transactionservice.service.rag.ingestion.deduplication.TextDeduplicationService;
-import com.exemple.transactionservice.service.rag.ingestion.metrics.IngestionMetrics;
 import com.exemple.transactionservice.service.rag.ingestion.model.IngestionResult;
 import com.exemple.transactionservice.service.rag.ingestion.tracker.IngestionTracker;
 import com.exemple.transactionservice.service.rag.ingestion.util.FileUtils;
 import com.exemple.transactionservice.service.rag.ingestion.util.MetadataSanitizer;
 import com.exemple.transactionservice.service.rag.ingestion.util.StreamingFileReader;
 import com.exemple.transactionservice.service.rag.ingestion.validation.FileSignatureValidator;
+import com.exemple.transactionservice.service.rag.metrics.RAGMetrics;
 import com.exemple.transactionservice.exception.DuplicateFileException;
 import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.embedding.Embedding;
@@ -44,7 +44,21 @@ import java.util.Map;
 import java.util.concurrent.*;
 
 /**
- * Stratégie d'ingestion pour fichiers DOCX avec streaming automatique + progress temps réel.
+ * Stratégie d'ingestion pour fichiers DOCX
+ * 
+ * ✅ ADAPTÉ AVEC RAGMetrics unifié
+ * 
+ * Fonctionnalités:
+ * - Streaming pour gros fichiers (>100MB)
+ * - Progress temps réel via ProgressNotifier
+ * - Déduplication fichier + texte
+ * - Extraction images avec Vision API
+ * - Métriques Prometheus via RAGMetrics
+ * - Cache embeddings
+ * - Retry automatique
+ * 
+ * @author RAG Team
+ * @version 3.0 - Adapté avec RAGMetrics unifié
  */
 @Slf4j
 @Component
@@ -57,13 +71,12 @@ public class DocxIngestionStrategy implements IngestionStrategy {
     private final ImageSaver imageSaver;
     private final IngestionTracker tracker;
     private final MetadataSanitizer sanitizer;
-    private final IngestionMetrics metrics;
+    private final RAGMetrics ragMetrics;  // ✅ Métriques unifiées
     private final DeduplicationService deduplicationService;
     private final TextDeduplicationService textDeduplicationService;
     private final FileSignatureValidator signatureValidator;
     private final EmbeddingCache embeddingCache;
-
-    // ✅ AJOUT : ProgressNotifier (injection optionnelle)
+    
     @Autowired(required = false)
     private ProgressNotifier progressNotifier;
     
@@ -81,7 +94,7 @@ public class DocxIngestionStrategy implements IngestionStrategy {
             ImageSaver imageSaver,
             IngestionTracker tracker,
             MetadataSanitizer sanitizer,
-            IngestionMetrics metrics,
+            RAGMetrics ragMetrics,  // ✅ Injection RAGMetrics
             DeduplicationService deduplicationService,
             TextDeduplicationService textDeduplicationService,
             FileSignatureValidator signatureValidator,
@@ -94,13 +107,13 @@ public class DocxIngestionStrategy implements IngestionStrategy {
         this.imageSaver = imageSaver;
         this.tracker = tracker;
         this.sanitizer = sanitizer;
-        this.metrics = metrics;
+        this.ragMetrics = ragMetrics;  // ✅ Utilisation metrics unifié
         this.deduplicationService = deduplicationService;
         this.textDeduplicationService = textDeduplicationService;
         this.signatureValidator = signatureValidator;
         this.embeddingCache = embeddingCache;
         
-        log.info("✅ [{}] Strategy initialisée avec streaming", getName());
+        log.info("✅ [{}] Strategy initialisée avec streaming + RAGMetrics", getName());
     }
     
     @Override
@@ -113,64 +126,65 @@ public class DocxIngestionStrategy implements IngestionStrategy {
         String filename = file.getOriginalFilename();
         long fileSize = file.getSize();
         
-        long startTime = System.currentTimeMillis();
-        metrics.startProcessing();
-        
+        long startTime = System.currentTimeMillis();       
         try {
-            // ✅ Progress - Upload started
+            // Progress - Upload started
             if (progressNotifier != null) {
                 progressNotifier.uploadStarted(batchId, filename, fileSize);
             }
-
-            log.info("📘 [{}] Traitement DOCX: {} ({} MB)", 
+            
+            log.info("📘 [{}] Processing DOCX: {} ({} MB)", 
                 getName(), filename, fileSize / 1_000_000);
             
             if (file.isEmpty() || fileSize == 0) {
                 if (progressNotifier != null) {
-                    progressNotifier.error(batchId, filename, "Fichier vide");
+                    progressNotifier.error(batchId, filename, "Empty file");
                 }
-                throw new IOException("Fichier DOCX vide: " + filename);
+                throw new IOException("Empty DOCX: " + filename);
             }
             
-            // ✅ Progress - Validation
+            // Progress - Validation
             if (progressNotifier != null) {
-                progressNotifier.notifyProgress(batchId, filename, "VALIDATION", 8, "Validation du fichier...");
+                progressNotifier.notifyProgress(batchId, filename, "VALIDATION", 8, 
+                    "File validation...");
             }
-
+            
             signatureValidator.validate(file, "docx");
-
-            // ✅ Progress - Vérification déduplication
+            
+            // Progress - Deduplication check
             if (progressNotifier != null) {
-                progressNotifier.notifyProgress(batchId, filename, "DEDUPLICATION", 10, "Vérification des duplicates...");
+                progressNotifier.notifyProgress(batchId, filename, "DEDUPLICATION", 10, 
+                    "Checking duplicates...");
             }
-
+            
             DeduplicationService.DuplicationInfo dupInfo = 
                 deduplicationService.checkDuplication(file);
             
             if (dupInfo.isDuplicate()) {
-                metrics.recordDuplicate(getName());
-
+                // ✅ MÉTRIQUE: Duplicate détecté
+                ragMetrics.recordDuplicate(getName());
+                
                 if (progressNotifier != null) {
                     progressNotifier.error(batchId, filename, 
-                        "Fichier déjà traité (batch: " + dupInfo.originalBatchId() + ")");
+                        "Already processed (batch: " + dupInfo.originalBatchId() + ")");
                 }
-
+                
                 throw new DuplicateFileException(
-                    String.format("DOCX déjà traité (batch: %s)", 
+                    String.format("DOCX already processed (batch: %s)", 
                         dupInfo.originalBatchId()),
                     dupInfo.originalBatchId()
                 );
             }
- 
-            // ✅ Progress - Début traitement
+            
+            // Progress - Processing started
             if (progressNotifier != null) {
                 progressNotifier.processingStarted(batchId, filename);
             }
-
+            
             IngestionResult result;
             
             if (StreamingFileReader.requiresStreaming(file)) {
-                log.info("📖 [{}] STREAMING activé: {} MB", 
+                log.info("📖 [{}] STREAMING enabled: {} MB", 
                     getName(), fileSize / 1_000_000);
                 result = ingestWithStreaming(file, filename, batchId);
             } else {
@@ -180,36 +194,36 @@ public class DocxIngestionStrategy implements IngestionStrategy {
             deduplicationService.markAsIngested(file, batchId);
             
             long duration = System.currentTimeMillis() - startTime;
-            metrics.recordSuccess(getName(), duration,
-                result.textEmbeddings(), result.imageEmbeddings());
-            metrics.recordFileSize(getName(), fileSize);
- 
-            // ✅ Progress - Completed
+            int totalEmbeddings = result.textEmbeddings() + result.imageEmbeddings();
+            
+            // ✅ MÉTRIQUE: Strategy processing
+            ragMetrics.recordStrategyProcessing(
+                getName(),
+                duration,
+                totalEmbeddings
+            );
+            
+            // Progress - Completed
             if (progressNotifier != null) {
                 progressNotifier.completed(batchId, filename, 
                     result.textEmbeddings(), result.imageEmbeddings());
             }
-
-            log.info("✅ [{}] DOCX traité: text={} images={} durée={}ms",
+            
+            log.info("✅ [{}] DOCX processed: text={} images={} duration={}ms",
                 getName(), result.textEmbeddings(), 
                 result.imageEmbeddings(), duration);
             
             return result;
             
         } catch (DuplicateFileException e) {
-            metrics.endProcessing();
+            // Duplicate - pas d'erreur métrique, déjà enregistré
             throw e;
+            
         } catch (Exception e) {
             if (progressNotifier != null) {
                 progressNotifier.error(batchId, filename, e.getMessage());
-            }
-
-            long duration = System.currentTimeMillis() - startTime;
-            metrics.recordError(getName(), e.getClass().getSimpleName(), duration);
-            metrics.endProcessing();
+            }           
             throw e;
-        } finally {
-            metrics.endProcessing();
         }
     }
     
@@ -225,16 +239,16 @@ public class DocxIngestionStrategy implements IngestionStrategy {
                                                  String batchId) throws Exception {
         Path tempFile = null;
         try {
-            // ✅ AJOUT : Progress - Streaming
+            // Progress - Streaming
             if (progressNotifier != null) {
                 progressNotifier.notifyProgress(batchId, filename, "STREAMING", 18, 
-                    "Chargement DOCX en streaming...");
+                    "Loading DOCX in streaming...");
             }
             
-            log.debug("💾 [{}] Création fichier temporaire...", getName());
+            log.debug("💾 [{}] Creating temp file...", getName());
             tempFile = StreamingFileReader.saveToTempFileWithProgress(file, bytesWritten -> {
                 if (bytesWritten % (50 * 1024 * 1024) == 0) {
-                    log.info("📊 [{}] Sauvegarde: {} MB", 
+                    log.info("📊 [{}] Saved: {} MB", 
                         getName(), bytesWritten / 1_000_000);
                 }
             });
@@ -267,17 +281,17 @@ public class DocxIngestionStrategy implements IngestionStrategy {
                 return future.get(docxTimeoutSeconds, TimeUnit.SECONDS);
             } catch (TimeoutException e) {
                 future.cancel(true);
-                throw new TimeoutException("Timeout ouverture DOCX: " + filename);
+                throw new TimeoutException("DOCX open timeout: " + filename);
             } catch (ExecutionException e) {
                 Throwable cause = e.getCause();
                 if (cause instanceof IOException) {
                     throw (IOException) cause;
                 }
-                throw new IOException("Erreur ouverture DOCX", cause);
+                throw new IOException("DOCX open error", cause);
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new IOException("Interruption ouverture DOCX", e);
+            throw new IOException("DOCX open interrupted", e);
         } finally {
             executor.shutdownNow();
         }
@@ -297,7 +311,7 @@ public class DocxIngestionStrategy implements IngestionStrategy {
             try {
                 document.close();
             } catch (IOException e) {
-                log.warn("⚠️ Erreur fermeture document", e);
+                log.warn("⚠️ Document close error", e);
             }
         }
     }
@@ -329,12 +343,13 @@ public class DocxIngestionStrategy implements IngestionStrategy {
         StringBuilder fullText = new StringBuilder();
         String baseFilename = FileUtils.sanitizeFilename(FileUtils.removeExtension(filename));
         String batchShort = batchId.substring(0, Math.min(8, batchId.length()));
-
-        // ✅ AJOUT : Progress - Extraction
+        
+        // Progress - Extraction
         if (progressNotifier != null) {
-            progressNotifier.notifyProgress(batchId, filename, "EXTRACTION", 20, "Extraction du texte...");
+            progressNotifier.notifyProgress(batchId, filename, "EXTRACTION", 20, 
+                "Text extraction...");
         }
-
+        
         for (XWPFParagraph paragraph : document.getParagraphs()) {
             String text = paragraph.getText();
             if (text != null && !text.isBlank()) {
@@ -358,12 +373,13 @@ public class DocxIngestionStrategy implements IngestionStrategy {
                             if (image == null) continue;
                             
                             totalImages++;
-
-                            // ✅ AJOUT : Progress - Images
+                            
+                            // Progress - Images
                             if (progressNotifier != null) {
-                                progressNotifier.imageProgress(batchId, filename, totalImages, maxImagesPerFile);
+                                progressNotifier.imageProgress(batchId, filename, 
+                                    totalImages, maxImagesPerFile);
                             }
-
+                            
                             String imageName = String.format("%s_batch%s_img%d",
                                 baseFilename, batchShort, totalImages);
                             
@@ -382,20 +398,22 @@ public class DocxIngestionStrategy implements IngestionStrategy {
                             
                             tracker.addImageEmbeddingId(batchId, embeddingId);
                             imageEmbeddings++;
+                            
                         } catch (Exception e) {
-                            log.warn("⚠️ Erreur extraction image", e);
+                            log.warn("⚠️ Image extraction error", e);
                         }
                     }
                 }
             }
         }
         
-        // ✅ AJOUT : Progress - Chunking
+        // Progress - Chunking
         if (progressNotifier != null) {
-            progressNotifier.notifyProgress(batchId, filename, "CHUNKING", 30, "Découpage du texte...");
-        }       
-            
-        // INDEXER TEXTE
+            progressNotifier.notifyProgress(batchId, filename, "CHUNKING", 30, 
+                "Text chunking...");
+        }
+        
+        // Index text
         if (fullText.length() > 0) {
             var chunkResult = chunkAndIndexText(fullText.toString(), filename, batchId);
             textEmbeddings = chunkResult.indexed();
@@ -403,7 +421,7 @@ public class DocxIngestionStrategy implements IngestionStrategy {
         }
         
         if (duplicates > 0) {
-            log.info("⏭️ [Dedup] {} duplicates skip, {} nouveaux indexés", 
+            log.info("⏭️ [Dedup] {} duplicates skipped, {} new indexed", 
                 duplicates, textEmbeddings);
         }
         
@@ -440,7 +458,7 @@ public class DocxIngestionStrategy implements IngestionStrategy {
         }
         
         if (fullText.length() == 0) {
-            throw new IllegalArgumentException("DOCX vide: " + filename);
+            throw new IllegalArgumentException("Empty DOCX: " + filename);
         }
         
         var chunkResult = chunkAndIndexText(fullText.toString(), filename, batchId);
@@ -448,7 +466,7 @@ public class DocxIngestionStrategy implements IngestionStrategy {
         int duplicates = chunkResult.duplicates();
         
         if (duplicates > 0) {
-            log.info("⏭️ [Dedup] {} duplicates skip, {} nouveaux indexés", 
+            log.info("⏭️ [Dedup] {} duplicates skipped, {} new indexed", 
                 duplicates, textEmbeddings);
         }
         
@@ -468,6 +486,8 @@ public class DocxIngestionStrategy implements IngestionStrategy {
     private String analyzeAndIndexImageWithRetry(BufferedImage image, String imageName,
                                                   Map<String, Object> additionalMetadata) 
             throws IOException {
+        long start = System.currentTimeMillis();
+        
         try {
             String description = visionAnalyzer.analyzeImage(image);
             
@@ -488,8 +508,17 @@ public class DocxIngestionStrategy implements IngestionStrategy {
                 () -> embeddingModel.embed(description).content()
             );
             
+            long duration = System.currentTimeMillis() - start;
+            
+            // ✅ MÉTRIQUE: API call (Vision API)
+            ragMetrics.recordApiCall("vision_analyze", duration);
+            
             return imageStore.add(embedding, segment);
+            
         } catch (Exception e) {
+            // ✅ MÉTRIQUE: API error
+            ragMetrics.recordApiError("vision_analyze");
+            
             if (e instanceof IOException || e instanceof TimeoutException) {
                 throw e;
             }
@@ -502,7 +531,7 @@ public class DocxIngestionStrategy implements IngestionStrategy {
     // ========================================================================
     
     private record ChunkResult(int indexed, int duplicates) {}
-
+    
     private ChunkResult chunkAndIndexText(String text, String filename, String batchId) {
         int chunkSize = 1000;
         int overlap = 100;
@@ -510,11 +539,10 @@ public class DocxIngestionStrategy implements IngestionStrategy {
         int duplicates = 0;
         int chunkIndex = 0;
         
-        // ✅ Estimer le nombre total de chunks
         int estimatedChunks = text.length() <= chunkSize ? 1 : 
             (int) Math.ceil(text.length() / (double)(chunkSize - overlap));
         
-        // ✅ Si texte plus court que chunkSize, indexer tel quel
+        // Texte court - indexer tel quel
         if (text.length() <= chunkSize) {
             Map<String, Object> meta = new HashMap<>();
             meta.put("source", filename);
@@ -523,28 +551,29 @@ public class DocxIngestionStrategy implements IngestionStrategy {
             meta.put("batchId", batchId);
             
             Metadata metadata = Metadata.from(sanitizer.sanitize(meta));
-
-            // ✅ Progress - Début embedding
+            
+            // Progress - Embedding
             if (progressNotifier != null) {
-                progressNotifier.notifyProgress(batchId, filename, "EMBEDDING", 50, "Création embedding...");
+                progressNotifier.notifyProgress(batchId, filename, "EMBEDDING", 50, 
+                    "Creating embedding...");
             }
-
+            
             String embeddingId = indexText(text.trim(), metadata, batchId);
             
             if (embeddingId != null) {
                 tracker.addTextEmbeddingId(batchId, embeddingId);
-
-                // ✅ Progress - Embedding terminé
+                
+                // Progress - Embedding done
                 if (progressNotifier != null) {
                     progressNotifier.embeddingProgress(batchId, filename, 1, 1);
                 }
-
+                
                 return new ChunkResult(1, 0);
             }
             return new ChunkResult(0, 1);
         }
         
-        // ✅ Sinon, chunking avec overlap
+        // Chunking avec overlap
         int start = 0;
         
         while (start < text.length()) {
@@ -565,14 +594,14 @@ public class DocxIngestionStrategy implements IngestionStrategy {
                 if (embeddingId != null) {
                     tracker.addTextEmbeddingId(batchId, embeddingId);
                     indexed++;
-
-                    // ✅ Progress - Tous les 10 chunks OU au dernier chunk
+                    
+                    // Progress - Tous les 10 chunks OU dernier chunk
                     if (indexed % 10 == 0 || indexed == estimatedChunks) {
                         if (progressNotifier != null) {
-                            progressNotifier.embeddingProgress(batchId, filename, indexed, estimatedChunks);
+                            progressNotifier.embeddingProgress(batchId, filename, 
+                                indexed, estimatedChunks);
                         }
                     }
-
                 } else {
                     duplicates++;
                 }
@@ -580,16 +609,14 @@ public class DocxIngestionStrategy implements IngestionStrategy {
                 chunkIndex++;
             }
             
-            // ✅ Avancer de (chunkSize - overlap), minimum 1
             start += Math.max(1, chunkSize - overlap);
         }
         
-        // ✅ Log final avec stats
         if (duplicates > 0) {
-            log.info("✅ [{}] {} chunks indexés ({} duplicates skip)", 
+            log.info("✅ [{}] {} chunks indexed ({} duplicates skipped)", 
                 getName(), indexed, duplicates);
         } else {
-            log.info("✅ [{}] {} chunks indexés", getName(), indexed);
+            log.info("✅ [{}] {} chunks indexed", getName(), indexed);
         }
         
         return new ChunkResult(indexed, duplicates);
@@ -598,22 +625,40 @@ public class DocxIngestionStrategy implements IngestionStrategy {
     private String indexText(String text, Metadata metadata, String batchId) {
         
         if (!textDeduplicationService.checkAndMark(text, batchId)) {
-            log.debug("⏭️ [Dedup] Texte dupliqué, skip insertion: {}", 
+            log.debug("⏭️ [Dedup] Duplicate text, skip: {}", 
                 truncate(text, 50));
             return null;
         }
         
-        log.debug("✅ [Dedup] Nouveau texte, indexation: {}", 
+        log.debug("✅ [Dedup] New text, indexing: {}", 
             truncate(text, 50));
+        
+        long start = System.currentTimeMillis();
         
         TextSegment segment = TextSegment.from(text, metadata);
         
         Embedding embedding = embeddingCache.getOrCompute(
             text, 
-            () -> embeddingModel.embed(text).content()
+            () -> {
+                long embedStart = System.currentTimeMillis();
+                Embedding emb = embeddingModel.embed(text).content();
+                long embedDuration = System.currentTimeMillis() - embedStart;
+                
+                // ✅ MÉTRIQUE: API call embedding
+                ragMetrics.recordApiCall("embed_text", embedDuration);
+                
+                return emb;
+            }
         );
         
-        return textStore.add(embedding, segment);
+        String embeddingId = textStore.add(embedding, segment);
+        
+        long duration = System.currentTimeMillis() - start;
+        
+        // ✅ MÉTRIQUE: Vector store operation
+        ragMetrics.recordVectorStoreOperation("insert", duration, 1);
+        
+        return embeddingId;
     }
     
     private String truncate(String text, int maxLength) {
@@ -633,19 +678,17 @@ public class DocxIngestionStrategy implements IngestionStrategy {
         return 2;
     }
 }
+
 /*
-    ## 🎯 Étapes du progress pour DOCX
-    ```
-    5% - Upload started
-    8% - Validation du fichier
-    10% - Vérification des duplicates
-    15% - Processing started
-    18% - Streaming (si >100MB)
-    20% - Extraction du texte
-    25% - Analyse images (si présent)
-    30% - Chunking du texte
-    50-90% - Création embeddings (progress détaillé)
-    100% - Completed
-
-*/
-
+ * Progress Steps for DOCX:
+ * 5%   - Upload started
+ * 8%   - File validation
+ * 10%  - Duplicate check
+ * 15%  - Processing started
+ * 18%  - Streaming (if >100MB)
+ * 20%  - Text extraction
+ * 25%  - Image analysis (if present)
+ * 30%  - Text chunking
+ * 50-90% - Embedding creation (detailed progress)
+ * 100% - Completed
+ */

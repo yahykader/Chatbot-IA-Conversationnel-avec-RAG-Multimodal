@@ -4,6 +4,7 @@
 // ============================================================================
 package com.exemple.transactionservice.service.rag.ingestion.deduplication;
 
+import com.exemple.transactionservice.service.rag.metrics.RAGMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
@@ -43,12 +44,14 @@ import java.util.concurrent.TimeUnit;
 public class DeduplicationService {
     
     private final RedisTemplate<String, String> redisTemplate;
+    private final RAGMetrics ragMetrics;
     
     private static final String REDIS_KEY_PREFIX = "ingestion:hash:";
     private static final int DEFAULT_TTL_DAYS = 30;
     
-    public DeduplicationService(RedisTemplate<String, String> redisTemplate) {
+    public DeduplicationService(RedisTemplate<String, String> redisTemplate, RAGMetrics ragMetrics) {
         this.redisTemplate = redisTemplate;
+        this.ragMetrics = ragMetrics;
         log.info("✅ DeduplicationService initialisé - Redis activé");
     }
     
@@ -201,6 +204,46 @@ public class DeduplicationService {
             return null;
         }
     }
+
+
+
+
+    // ========================================================================
+    // ✅ NEW: DUPLICATE DETECTION + METRICS
+    // ========================================================================
+
+    /**
+     * ✅ NOUVEAU: Check duplication + enregistre la métrique rag_duplicates_total.
+     * Utilise un tag "strategy" pour Grafana (sinon "unknown").
+     *
+     * @param fileHash hash calculé
+     * @param strategyName nom stratégie (DOCX/PDF/IMAGE/TEXT...) ou null
+     * @return true si duplicate
+     */
+    public boolean isDuplicateAndRecord(String fileHash, String strategyName) {
+        boolean dup = isDuplicateByHash(fileHash);
+        if (dup) {
+            String strategy = (strategyName == null || strategyName.isBlank()) ? "unknown" : strategyName;
+            ragMetrics.recordDuplicate(strategy);
+        }
+        return dup;
+    }
+
+    /**
+     * ✅ NOUVEAU: checkDuplication avec metrics + batchId.
+     * Très utile pour l'orchestrator (retourne hash + batch existant).
+     */
+    public DuplicationInfo checkDuplicationAndRecord(MultipartFile file, String strategyName) throws IOException {
+        String hash = computeHash(file);
+
+        if (isDuplicateAndRecord(hash, strategyName)) {
+            String batchId = getDuplicateMetadata(hash);
+            return new DuplicationInfo(true, hash, batchId);
+        }
+
+        return new DuplicationInfo(false, hash, null);
+    }
+
     
     // ========================================================================
     // MARKING AS INGESTED

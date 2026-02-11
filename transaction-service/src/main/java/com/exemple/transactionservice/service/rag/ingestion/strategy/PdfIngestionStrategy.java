@@ -1,6 +1,6 @@
 // ============================================================================
-// STRATEGY - PdfIngestionStrategy.java (VERSION AVEC STREAMING + PROGRESS)
-// Stratégie d'ingestion pour PDF avec streaming gros fichiers (>100MB)
+// STRATEGY - PdfIngestionStrategy.java (VERSION COMPLÈTE)
+// Stratégie d'ingestion pour PDF avec streaming + RAGMetrics unifié
 // ============================================================================
 package com.exemple.transactionservice.service.rag.ingestion.strategy;
 
@@ -10,7 +10,7 @@ import com.exemple.transactionservice.service.rag.ingestion.analyzer.ImageSaver;
 import com.exemple.transactionservice.service.rag.ingestion.analyzer.VisionAnalyzer;
 import com.exemple.transactionservice.service.rag.ingestion.deduplication.DeduplicationService;
 import com.exemple.transactionservice.service.rag.ingestion.deduplication.TextDeduplicationService;
-import com.exemple.transactionservice.service.rag.ingestion.metrics.IngestionMetrics;
+import com.exemple.transactionservice.service.rag.metrics.RAGMetrics;
 import com.exemple.transactionservice.service.rag.ingestion.model.IngestionResult;
 import com.exemple.transactionservice.service.rag.ingestion.tracker.IngestionTracker;
 import com.exemple.transactionservice.service.rag.ingestion.util.FileUtils;
@@ -53,7 +53,22 @@ import java.util.Map;
 import java.util.concurrent.TimeoutException;
 
 /**
- * Stratégie d'ingestion pour fichiers PDF - VERSION AVEC STREAMING + PROGRESS.
+ * Stratégie d'ingestion pour fichiers PDF - VERSION COMPLÈTE
+ * 
+ * ✅ ADAPTÉ AVEC RAGMetrics unifié
+ * 
+ * Fonctionnalités:
+ * - Streaming pour gros PDFs (>100MB)
+ * - Progress temps réel via ProgressNotifier
+ * - Extraction texte + images embedded + rendu pages
+ * - Déduplication fichier + texte
+ * - Vision API pour images
+ * - Métriques Prometheus via RAGMetrics
+ * - Cache embeddings
+ * - Retry automatique
+ * 
+ * @author RAG Team
+ * @version 3.0 - Adapté avec RAGMetrics unifié
  */
 @Slf4j
 @Component
@@ -66,13 +81,12 @@ public class PdfIngestionStrategy implements IngestionStrategy {
     private final ImageSaver imageSaver;
     private final IngestionTracker tracker;
     private final MetadataSanitizer sanitizer;
-    private final IngestionMetrics metrics;
+    private final RAGMetrics ragMetrics; 
     private final DeduplicationService deduplicationService;
     private final TextDeduplicationService textDeduplicationService;
     private final FileSignatureValidator signatureValidator;
     private final EmbeddingCache embeddingCache;
     
-    // ✅ AJOUT : ProgressNotifier (injection optionnelle)
     @Autowired(required = false)
     private ProgressNotifier progressNotifier;
     
@@ -90,7 +104,7 @@ public class PdfIngestionStrategy implements IngestionStrategy {
             ImageSaver imageSaver,
             IngestionTracker tracker,
             MetadataSanitizer sanitizer,
-            IngestionMetrics metrics,
+            RAGMetrics ragMetrics,  // ✅ Injection RAGMetrics
             DeduplicationService deduplicationService,
             TextDeduplicationService textDeduplicationService,
             FileSignatureValidator signatureValidator,
@@ -103,13 +117,13 @@ public class PdfIngestionStrategy implements IngestionStrategy {
         this.imageSaver = imageSaver;
         this.tracker = tracker;
         this.sanitizer = sanitizer;
-        this.metrics = metrics;
+        this.ragMetrics = ragMetrics;  // ✅ Utilisation metrics unifié
         this.deduplicationService = deduplicationService;
         this.textDeduplicationService = textDeduplicationService;
         this.signatureValidator = signatureValidator;
         this.embeddingCache = embeddingCache;
         
-        log.info("✅ [{}] Strategy initialisée avec streaming support", getName());
+        log.info("✅ [{}] Strategy initialisée avec streaming + RAGMetrics", getName());
     }
     
     @Override
@@ -123,51 +137,52 @@ public class PdfIngestionStrategy implements IngestionStrategy {
         long fileSize = file.getSize();
         
         long startTime = System.currentTimeMillis();
-        metrics.startProcessing();
         
         try {
-            // ✅ AJOUT : Progress - Upload started
+            // Progress - Upload started
             if (progressNotifier != null) {
                 progressNotifier.uploadStarted(batchId, filename, fileSize);
             }
             
-            log.info("📕 [{}] Traitement PDF: {} ({} MB)", 
+            log.info("📕 [{}] Processing PDF: {} ({} MB)", 
                 getName(), filename, fileSize / 1_000_000);
             
-            // ✅ AJOUT : Progress - Validation
+            // Progress - Validation
             if (progressNotifier != null) {
                 progressNotifier.notifyProgress(batchId, filename, "VALIDATION", 8, 
-                    "Validation du PDF...");
+                    "PDF validation...");
             }
             
             signatureValidator.validate(file, "pdf");
             
-            // ✅ AJOUT : Progress - Déduplication
+            // Progress - Deduplication
             if (progressNotifier != null) {
                 progressNotifier.notifyProgress(batchId, filename, "DEDUPLICATION", 10, 
-                    "Vérification des duplicates...");
+                    "Checking duplicates...");
             }
             
             DeduplicationService.DuplicationInfo dupInfo = 
                 deduplicationService.checkDuplication(file);
             
             if (dupInfo.isDuplicate()) {
-                log.warn("⚠️ [{}] PDF doublon: {}", getName(), filename);
+                log.warn("⚠️ [{}] PDF duplicate: {}", getName(), filename);
                 
-                // ✅ AJOUT : Progress - Error
+                // Progress - Error
                 if (progressNotifier != null) {
                     progressNotifier.error(batchId, filename, 
-                        "Fichier déjà traité (batch: " + dupInfo.originalBatchId() + ")");
+                        "Already processed (batch: " + dupInfo.originalBatchId() + ")");
                 }
                 
-                metrics.recordDuplicate(getName());
+                // ✅ MÉTRIQUE: Duplicate
+                ragMetrics.recordDuplicate(getName());
+                
                 throw new DuplicateFileException(
-                    String.format("PDF déjà traité (batch: %s)", dupInfo.originalBatchId()),
+                    String.format("PDF already processed (batch: %s)", dupInfo.originalBatchId()),
                     dupInfo.originalBatchId()
                 );
             }
             
-            // ✅ AJOUT : Progress - Upload completed
+            // Progress - Upload completed
             if (progressNotifier != null) {
                 progressNotifier.uploadCompleted(batchId, filename);
             }
@@ -175,12 +190,11 @@ public class PdfIngestionStrategy implements IngestionStrategy {
             IngestionResult result;
             
             if (StreamingFileReader.requiresStreaming(file)) {
-                log.info("📖 [{}] STREAMING activé: {} MB > 100 MB", 
+                log.info("📖 [{}] STREAMING enabled: {} MB", 
                     getName(), fileSize / 1_000_000);
                 result = ingestWithStreaming(file, batchId);
-                
             } else {
-                log.debug("📄 [{}] Mode normal: {} MB < 100 MB", 
+                log.debug("📄 [{}] Normal mode: {} MB", 
                     getName(), fileSize / 1_000_000);
                 result = ingestNormal(file, batchId);
             }
@@ -188,21 +202,22 @@ public class PdfIngestionStrategy implements IngestionStrategy {
             deduplicationService.markAsIngested(file, batchId);
             
             long duration = System.currentTimeMillis() - startTime;
-            metrics.recordSuccess(
-                getName(), 
-                duration,
-                result.textEmbeddings(),
-                result.imageEmbeddings()
-            );
-            metrics.recordFileSize(getName(), fileSize);
+            int totalEmbeddings = result.textEmbeddings() + result.imageEmbeddings();
             
-            // ✅ AJOUT : Progress - Completed
+            // ✅ MÉTRIQUE: Strategy processing
+            ragMetrics.recordStrategyProcessing(
+                getName(),
+                duration,
+                totalEmbeddings
+            );
+            
+            // Progress - Completed
             if (progressNotifier != null) {
                 progressNotifier.completed(batchId, filename, 
                     result.textEmbeddings(), result.imageEmbeddings());
             }
             
-            log.info("✅ [{}] PDF traité: {} - text={} images={} durée={}ms mode={}",
+            log.info("✅ [{}] PDF processed: {} - text={} images={} duration={}ms mode={}",
                 getName(), filename, result.textEmbeddings(), 
                 result.imageEmbeddings(), duration,
                 StreamingFileReader.requiresStreaming(file) ? "STREAMING" : "NORMAL");
@@ -210,30 +225,22 @@ public class PdfIngestionStrategy implements IngestionStrategy {
             return result;
             
         } catch (DuplicateFileException e) {
-            metrics.endProcessing();
             throw e;
             
         } catch (Exception e) {
-            // ✅ AJOUT : Progress - Error
+            // Progress - Error
             if (progressNotifier != null) {
                 progressNotifier.error(batchId, filename, e.getMessage());
             }
             
-            long duration = System.currentTimeMillis() - startTime;
-            metrics.recordError(getName(), e.getClass().getSimpleName(), duration);
-            metrics.endProcessing();
-            
-            log.error("❌ [{}] Erreur traitement PDF: {}", getName(), filename, e);
+            log.error("❌ [{}] PDF processing error: {}", getName(), filename, e);
             throw e;
-            
-        } finally {
-            metrics.endProcessing();
         }
     }
     
     private IngestionResult ingestNormal(MultipartFile file, String batchId) throws Exception {
         
-        // ✅ AJOUT : Progress - Processing
+        // Progress - Processing
         if (progressNotifier != null) {
             progressNotifier.processingStarted(batchId, file.getOriginalFilename());
         }
@@ -254,30 +261,30 @@ public class PdfIngestionStrategy implements IngestionStrategy {
         Path tempFile = null;
         
         try {
-            // ✅ AJOUT : Progress - Streaming
+            // Progress - Streaming
             if (progressNotifier != null) {
                 progressNotifier.notifyProgress(batchId, filename, "STREAMING", 15, 
-                    "Chargement PDF en streaming...");
+                    "Loading PDF in streaming...");
             }
             
-            log.debug("💾 [{}] Création fichier temporaire...", getName());
+            log.debug("💾 [{}] Creating temp file...", getName());
             tempFile = StreamingFileReader.saveToTempFileWithProgress(file, bytesWritten -> {
                 if (bytesWritten % (50 * 1024 * 1024) == 0) {
-                    log.info("📊 [{}] Sauvegarde: {} MB", 
+                    log.info("📊 [{}] Saved: {} MB", 
                         getName(), bytesWritten / 1_000_000);
                     
-                    // ✅ AJOUT : Progress streaming détaillé
+                    // Progress streaming détaillé
                     if (progressNotifier != null) {
                         int percentage = 15 + (int)((bytesWritten / (double)file.getSize()) * 10);
                         progressNotifier.notifyProgress(batchId, filename, "STREAMING", percentage, 
-                            String.format("Chargement: %d MB", bytesWritten / 1_000_000));
+                            String.format("Loading: %d MB", bytesWritten / 1_000_000));
                     }
                 }
             });
             
-            log.info("✅ [{}] Fichier temporaire créé: {}", getName(), tempFile);
+            log.info("✅ [{}] Temp file created: {}", getName(), tempFile);
             
-            // ✅ AJOUT : Progress - Processing
+            // Progress - Processing
             if (progressNotifier != null) {
                 progressNotifier.processingStarted(batchId, filename);
             }
@@ -297,9 +304,9 @@ public class PdfIngestionStrategy implements IngestionStrategy {
             if (tempFile != null) {
                 try {
                     Files.deleteIfExists(tempFile);
-                    log.debug("🗑️ [{}] Fichier temporaire supprimé", getName());
+                    log.debug("🗑️ [{}] Temp file deleted", getName());
                 } catch (IOException e) {
-                    log.warn("⚠️ [{}] Impossible de supprimer temp file: {}", 
+                    log.warn("⚠️ [{}] Cannot delete temp file: {}", 
                         getName(), e.getMessage());
                 }
             }
@@ -314,7 +321,7 @@ public class PdfIngestionStrategy implements IngestionStrategy {
             return pdfHasImagesInternal(document);
             
         } catch (Exception e) {
-            log.warn("⚠️ [{}] Impossible de vérifier images: {}", getName(), e.getMessage());
+            log.warn("⚠️ [{}] Cannot check images: {}", getName(), e.getMessage());
             return false;
         }
     }
@@ -323,7 +330,7 @@ public class PdfIngestionStrategy implements IngestionStrategy {
         try (PDDocument document = Loader.loadPDF(file)) {
             return pdfHasImagesInternal(document);
         } catch (Exception e) {
-            log.warn("⚠️ [{}] Impossible de vérifier images: {}", getName(), e.getMessage());
+            log.warn("⚠️ [{}] Cannot check images: {}", getName(), e.getMessage());
             return false;
         }
     }
@@ -336,7 +343,7 @@ public class PdfIngestionStrategy implements IngestionStrategy {
             PDResources resources = page.getResources();
             
             if (resources.getXObjectNames().iterator().hasNext()) {
-                log.debug("✓ [{}] PDF contient des images (page {})", getName(), i + 1);
+                log.debug("✓ [{}] PDF contains images (page {})", getName(), i + 1);
                 return true;
             }
         }
@@ -348,7 +355,7 @@ public class PdfIngestionStrategy implements IngestionStrategy {
             throws Exception {
         
         String filename = file.getOriginalFilename();
-        log.info("📕🖼️ [{}] Traitement PDF avec images: {}", getName(), filename);
+        log.info("📕🖼️ [{}] Processing PDF with images: {}", getName(), filename);
         
         try (InputStream inputStream = file.getInputStream();
              RandomAccessReadBuffer rarBuffer = new RandomAccessReadBuffer(inputStream);
@@ -361,7 +368,7 @@ public class PdfIngestionStrategy implements IngestionStrategy {
     private IngestionResult ingestPdfWithImagesFromFile(File file, String filename, 
                                                          String batchId) throws Exception {
         
-        log.info("📕🖼️ [{}] Traitement PDF avec images (streaming): {}", 
+        log.info("📕🖼️ [{}] Processing PDF with images (streaming): {}", 
             getName(), filename);
         
         try (PDDocument document = Loader.loadPDF(file)) {
@@ -379,17 +386,17 @@ public class PdfIngestionStrategy implements IngestionStrategy {
         
         if (totalPages > maxPages) {
             throw new IllegalArgumentException(
-                String.format("PDF trop volumineux: %d pages (max: %d)", 
+                String.format("PDF too large: %d pages (max: %d)", 
                     totalPages, maxPages)
             );
         }
         
         log.info("📄 [{}] PDF: {} pages", getName(), totalPages);
         
-        // ✅ AJOUT : Progress - Extraction
+        // Progress - Extraction
         if (progressNotifier != null) {
             progressNotifier.notifyProgress(batchId, filename, "EXTRACTION", 30, 
-                "Extraction du contenu...");
+                "Content extraction...");
         }
         
         PDFTextStripper stripper = new PDFTextStripper();
@@ -403,23 +410,23 @@ public class PdfIngestionStrategy implements IngestionStrategy {
         for (int pageIndex = 0; pageIndex < totalPages; pageIndex++) {
             
             if (totalImagesExtracted >= maxImagesPerFile) {
-                log.warn("⚠️ [{}] Limite images atteinte: {}", 
+                log.warn("⚠️ [{}] Image limit reached: {}", 
                     getName(), maxImagesPerFile);
                 break;
             }
             
             int pageNum = pageIndex + 1;
             
-            // ✅ AJOUT : Progress par page
+            // Progress par page
             if (pageIndex % 5 == 0) {
                 if (progressNotifier != null) {
                     int percentage = 30 + (int)((pageIndex / (double)totalPages) * 30);
                     progressNotifier.notifyProgress(batchId, filename, "PROCESSING", percentage, 
-                        String.format("Traitement page %d/%d", pageNum, totalPages));
+                        String.format("Processing page %d/%d", pageNum, totalPages));
                 }
             }
             
-            // 1. EXTRACTION TEXTE
+            // 1. TEXT EXTRACTION
             stripper.setStartPage(pageNum);
             stripper.setEndPage(pageNum);
             String pageText = stripper.getText(document);
@@ -441,7 +448,7 @@ public class PdfIngestionStrategy implements IngestionStrategy {
                 }
             }
             
-            // 2. EXTRACTION IMAGES EMBEDDED
+            // 2. EMBEDDED IMAGES EXTRACTION
             try {
                 PDPage page = document.getPage(pageIndex);
                 PDResources resources = page.getResources();
@@ -461,7 +468,7 @@ public class PdfIngestionStrategy implements IngestionStrategy {
                                 totalImagesExtracted++;
                                 imageIndexOnPage++;
                                 
-                                // ✅ AJOUT : Progress images
+                                // Progress images
                                 if (progressNotifier != null && totalImagesExtracted % 5 == 0) {
                                     progressNotifier.imageProgress(batchId, filename, 
                                         totalImagesExtracted, maxImagesPerFile);
@@ -493,24 +500,24 @@ public class PdfIngestionStrategy implements IngestionStrategy {
                                 imageEmbeddings++;
                                 
                                 if (totalImagesExtracted % 10 == 0) {
-                                    log.info("📊 [{}] Progression: {} images", 
+                                    log.info("📊 [{}] Progress: {} images", 
                                         getName(), totalImagesExtracted);
                                 }
                             }
                             
                         } catch (Exception e) {
-                            log.warn("⚠️ [{}] Erreur extraction image page {}: {}", 
+                            log.warn("⚠️ [{}] Image extraction error page {}: {}", 
                                 getName(), pageNum, e.getMessage());
                         }
                     }
                 }
                 
             } catch (Exception e) {
-                log.warn("⚠️ [{}] Erreur extraction images page {}: {}", 
+                log.warn("⚠️ [{}] Images extraction error page {}: {}", 
                     getName(), pageNum, e.getMessage());
             }
             
-            // 3. RENDU PAGE COMPLÈTE
+            // 3. FULL PAGE RENDERING
             if (totalImagesExtracted < maxImagesPerFile) {
                 try {
                     BufferedImage pageImage = renderer.renderImageWithDPI(pageIndex, 150);
@@ -540,7 +547,7 @@ public class PdfIngestionStrategy implements IngestionStrategy {
                     totalImagesExtracted++;
                     
                 } catch (Exception e) {
-                    log.warn("⚠️ [{}] Erreur rendu page {}: {}", 
+                    log.warn("⚠️ [{}] Page rendering error {}: {}", 
                         getName(), pageNum, e.getMessage());
                 }
             }
@@ -551,13 +558,13 @@ public class PdfIngestionStrategy implements IngestionStrategy {
             }
         }
         
-        // ✅ AJOUT : Progress - Indexing
+        // Progress - Indexing
         if (progressNotifier != null) {
             progressNotifier.notifyProgress(batchId, filename, "INDEXING", 90, 
-                "Finalisation de l'indexation...");
+                "Finalizing indexing...");
         }
         
-        log.info("✅ [{}] PDF traité: {} pages, {} textes, {} images", 
+        log.info("✅ [{}] PDF processed: {} pages, {} texts, {} images", 
             getName(), totalPages, textEmbeddings, imageEmbeddings);
         
         Map<String, Object> resultMetadata = new HashMap<>();
@@ -592,27 +599,27 @@ public class PdfIngestionStrategy implements IngestionStrategy {
     private IngestionResult processPdfTextOnly(PDDocument document, String filename, 
                                                 String batchId) throws Exception {
         
-        log.info("📕 [{}] Traitement PDF texte: {}", getName(), filename);
+        log.info("📕 [{}] Processing PDF text: {}", getName(), filename);
         
-        // ✅ AJOUT : Progress - Extraction
+        // Progress - Extraction
         if (progressNotifier != null) {
             progressNotifier.notifyProgress(batchId, filename, "EXTRACTION", 30, 
-                "Extraction du texte...");
+                "Text extraction...");
         }
         
         PDFTextStripper stripper = new PDFTextStripper();
         String fullText = stripper.getText(document);
         
         if (fullText == null || fullText.isBlank()) {
-            throw new IllegalArgumentException("PDF ne contient pas de texte");
+            throw new IllegalArgumentException("PDF contains no text");
         }
         
-        log.debug("📝 [{}] Texte: {} caractères", getName(), fullText.length());
+        log.debug("📝 [{}] Text: {} characters", getName(), fullText.length());
         
-        // ✅ AJOUT : Progress - Chunking
+        // Progress - Chunking
         if (progressNotifier != null) {
             progressNotifier.notifyProgress(batchId, filename, "CHUNKING", 40, 
-                "Découpage du texte...");
+                "Text chunking...");
         }
         
         var chunkResult = chunkAndIndexText(fullText, filename, batchId);
@@ -620,7 +627,7 @@ public class PdfIngestionStrategy implements IngestionStrategy {
         int duplicates = chunkResult.duplicates();
         
         if (duplicates > 0) {
-            log.info("⏭️ [Dedup] {} duplicates skip, {} nouveaux indexés", 
+            log.info("⏭️ [Dedup] {} duplicates skipped, {} new indexed", 
                 duplicates, textEmbeddings);
         }
         
@@ -642,8 +649,14 @@ public class PdfIngestionStrategy implements IngestionStrategy {
             String imageName,
             Map<String, Object> additionalMetadata) throws IOException {
         
+        long visionStart = System.currentTimeMillis();
+        
         try {
             String description = visionAnalyzer.analyzeImage(image);
+            long visionDuration = System.currentTimeMillis() - visionStart;
+            
+            // ✅ MÉTRIQUE: Vision API call
+            ragMetrics.recordApiCall("vision_analyze", visionDuration);
             
             Map<String, Object> metadata = new HashMap<>(sanitizer.sanitize(additionalMetadata));
             metadata.put("imageName", imageName);
@@ -658,13 +671,32 @@ public class PdfIngestionStrategy implements IngestionStrategy {
             
             Embedding embedding = embeddingCache.getOrCompute(
                 description, 
-                () -> embeddingModel.embed(description).content()
+                () -> {
+                    long apiStart = System.currentTimeMillis();
+                    Embedding emb = embeddingModel.embed(description).content();
+                    long apiDuration = System.currentTimeMillis() - apiStart;
+                    
+                    // ✅ MÉTRIQUE: Embedding API call
+                    ragMetrics.recordApiCall("embed_text", apiDuration);
+                    
+                    return emb;
+                }
             );
             
-            return imageStore.add(embedding, segment);
+            long storeStart = System.currentTimeMillis();
+            String embeddingId = imageStore.add(embedding, segment);
+            long storeDuration = System.currentTimeMillis() - storeStart;
+            
+            // ✅ MÉTRIQUE: Vector store operation
+            ragMetrics.recordVectorStoreOperation("insert", storeDuration, 1);
+            
+            return embeddingId;
             
         } catch (Exception e) {
-            log.warn("⚠️ [{}] Erreur Vision AI: {}", getName(), e.getMessage());
+            log.warn("⚠️ [{}] Vision AI error: {}", getName(), e.getMessage());
+            
+            // ✅ MÉTRIQUE: Vision API error
+            ragMetrics.recordApiError("vision_analyze");
             
             if (e instanceof IOException || e instanceof TimeoutException) {
                 throw (IOException) e;
@@ -675,18 +707,17 @@ public class PdfIngestionStrategy implements IngestionStrategy {
     }
     
     private record ChunkResult(int indexed, int duplicates) {}
-  
+    
     private ChunkResult chunkAndIndexText(String text, String filename, String batchId) {
         int chunkSize = 1000;
         int overlap = 100;
         int indexed = 0;
         int duplicates = 0;
         int chunkIndex = 0;
-
-        // ✅ Estimer nombre de chunks
+        
         int estimatedChunks = text.length() <= chunkSize ? 1 : 
             (int) Math.ceil(text.length() / (double)(chunkSize - overlap));
-
+        
         if (text.length() <= chunkSize) {
             Map<String, Object> meta = new HashMap<>();
             meta.put("source", filename);
@@ -696,10 +727,10 @@ public class PdfIngestionStrategy implements IngestionStrategy {
             
             Metadata metadata = Metadata.from(sanitizer.sanitize(meta));
             
-            // ✅ AJOUT : Progress embedding
+            // Progress embedding
             if (progressNotifier != null) {
                 progressNotifier.notifyProgress(batchId, filename, "EMBEDDING", 50, 
-                    "Création embedding...");
+                    "Creating embedding...");
             }
             
             String embeddingId = indexText(text.trim(), metadata, batchId);
@@ -707,7 +738,7 @@ public class PdfIngestionStrategy implements IngestionStrategy {
             if (embeddingId != null) {
                 tracker.addTextEmbeddingId(batchId, embeddingId);
                 
-                // ✅ AJOUT : Progress terminé
+                // Progress terminé
                 if (progressNotifier != null) {
                     progressNotifier.embeddingProgress(batchId, filename, 1, 1);
                 }
@@ -730,14 +761,14 @@ public class PdfIngestionStrategy implements IngestionStrategy {
                 meta.put("batchId", batchId);
                 
                 Metadata metadata = Metadata.from(sanitizer.sanitize(meta));
-
+                
                 String embeddingId = indexText(chunk, metadata, batchId);
                 
                 if (embeddingId != null) {
                     tracker.addTextEmbeddingId(batchId, embeddingId);
                     indexed++;
                     
-                    // ✅ AJOUT : Progress tous les 10 chunks
+                    // Progress tous les 10 chunks
                     if (indexed % 10 == 0 || indexed == estimatedChunks) {
                         if (progressNotifier != null) {
                             progressNotifier.embeddingProgress(batchId, filename, 
@@ -747,38 +778,54 @@ public class PdfIngestionStrategy implements IngestionStrategy {
                 } else {
                     duplicates++;
                 }
-
+                
                 chunkIndex++;
             }
             
             start += Math.max(1, chunkSize - overlap);
         }
         
-        log.info("✅ [{}] {} chunks indexés ({} duplicates skip)", 
+        log.info("✅ [{}] {} chunks indexed ({} duplicates skipped)", 
             getName(), indexed, duplicates);
         
         return new ChunkResult(indexed, duplicates);
     }
-
+    
     private String indexText(String text, Metadata metadata, String batchId) {
         
         if (!textDeduplicationService.checkAndMark(text, batchId)) {
-            log.debug("⏭️ [Dedup] Texte dupliqué, skip insertion: {}", 
+            log.debug("⏭️ [Dedup] Duplicate text, skip: {}", 
                 truncate(text, 50));
             return null;
         }
         
-        log.debug("✅ [Dedup] Nouveau texte, indexation: {}", 
+        log.debug("✅ [Dedup] New text, indexing: {}", 
             truncate(text, 50));
         
         TextSegment segment = TextSegment.from(text, metadata);
         
         Embedding embedding = embeddingCache.getOrCompute(
             text, 
-            () -> embeddingModel.embed(text).content()
+            () -> {
+                long apiStart = System.currentTimeMillis();
+                Embedding emb = embeddingModel.embed(text).content();
+                long apiDuration = System.currentTimeMillis() - apiStart;
+                
+                // ✅ MÉTRIQUE: Embedding API call
+                ragMetrics.recordApiCall("embed_text", apiDuration);
+                
+                return emb;
+            }
         );
         
-        return textStore.add(embedding, segment);
+        long storeStart = System.currentTimeMillis();
+        String embeddingId = textStore.add(embedding, segment);
+        long storeDuration = System.currentTimeMillis() - storeStart;
+        
+        // ✅ MÉTRIQUE: Vector store operation
+        ragMetrics.recordVectorStoreOperation("insert", storeDuration, 1);
+        
+        return embeddingId;
     }
     
     private String truncate(String text, int maxLength) {
@@ -787,7 +834,7 @@ public class PdfIngestionStrategy implements IngestionStrategy {
         }
         return text.substring(0, maxLength) + "...";
     }
-
+    
     @Override
     public String getName() {
         return "PDF";
@@ -798,19 +845,18 @@ public class PdfIngestionStrategy implements IngestionStrategy {
         return 1;
     }
 }
-/*
-    ## 🎯 Étapes du progress pour PDF
-    ```
-    5% - Upload started
-    8% - Validation du PDF
-    10% - Vérification des duplicates
-    12% - Upload completed
-    15-25% - Streaming (si >100MB)
-    30% - Extraction du contenu
-    30-60% - Processing pages (progress tous les 5 pages)
-    60-80% - Analyse images (progress tous les 5 images)
-    40-90% - Création embeddings (texte seul)
-    90% - Indexing final
-    100% - Completed
-*/
 
+/*
+ * Progress Steps for PDF:
+ * 5%   - Upload started
+ * 8%   - PDF validation
+ * 10%  - Duplicate check
+ * 12%  - Upload completed
+ * 15-25% - Streaming (if >100MB)
+ * 30%  - Content extraction
+ * 30-60% - Processing pages (every 5 pages)
+ * 60-80% - Image analysis (every 5 images)
+ * 40-90% - Embedding creation (text only)
+ * 90%  - Final indexing
+ * 100% - Completed
+ */

@@ -2,6 +2,7 @@ package com.exemple.transactionservice.service.rag.retrieval.reranker;
 
 import com.exemple.transactionservice.service.rag.retrieval.reranker.Reranker;
 import com.exemple.transactionservice.config.RetrievalConfig;
+import com.exemple.transactionservice.service.rag.metrics.RAGMetrics;
 import com.exemple.transactionservice.service.rag.retrieval.model.AggregatedContext.SelectedChunk;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -27,9 +28,11 @@ import java.util.stream.Collectors;
 public class CrossEncoderReranker implements Reranker {
     
     private final RetrievalConfig config;
+    private final RAGMetrics ragMetrics;
     
-    public CrossEncoderReranker(RetrievalConfig config) {
+    public CrossEncoderReranker(RetrievalConfig config, RAGMetrics ragMetrics) {
         this.config = config;
+        this.ragMetrics = ragMetrics;
         log.info("✅ CrossEncoderReranker initialisé (model: {})", 
             config.getReranker().getModel());
     }
@@ -75,6 +78,9 @@ public class CrossEncoderReranker implements Reranker {
         
         log.debug("✅ Reranking complete: {} chunks, {}ms", 
             reranked.size(), duration);
+        
+        // ⬅️ MÉTRIQUE AJOUTÉE
+        ragMetrics.recordReranking(duration, reranked.size());
         
         return reranked;
     }

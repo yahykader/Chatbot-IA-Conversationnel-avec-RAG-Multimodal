@@ -1,6 +1,6 @@
 package com.exemple.transactionservice.service.rag.controller;
 
-import com.exemple.transactionservice.service.rag.ingestion.MultimodalIngestionService;
+import com.exemple.transactionservice.service.rag.ingestion.IngestionOrchestrator;
 import com.exemple.transactionservice.service.rag.ingestion.repository.EmbeddingRepository;
 import com.exemple.transactionservice.service.rag.ingestion.model.IngestionResult;
 import io.swagger.v3.oas.annotations.Operation;
@@ -25,12 +25,12 @@ import java.util.stream.Collectors;
 public class MultimodalCrudController {
 
     private final EmbeddingRepository embeddingRepository;
-    private final MultimodalIngestionService ingestionService;
+    private final IngestionOrchestrator ingestionService;
     
 
     public MultimodalCrudController(
             EmbeddingRepository embeddingRepository,  
-            MultimodalIngestionService ingestionService) {
+            IngestionOrchestrator ingestionService) {
 
         this.embeddingRepository = embeddingRepository;  
         this.ingestionService = ingestionService;

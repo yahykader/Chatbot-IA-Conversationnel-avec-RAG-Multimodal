@@ -4,7 +4,7 @@
 // ============================================================================
 package com.exemple.transactionservice.service.rag.controller;
 
-import com.exemple.transactionservice.service.rag.ingestion.MultimodalIngestionService;
+import com.exemple.transactionservice.service.rag.ingestion.IngestionOrchestrator;
 import com.exemple.transactionservice.service.rag.ingestion.model.IngestionResult;
 import com.exemple.transactionservice.service.rag.ingestion.tracker.IngestionTracker;
 import com.exemple.transactionservice.exception.DuplicateFileException;
@@ -46,11 +46,11 @@ import java.util.stream.Collectors;
 @Tag(name = "Ingestion", description = "API d'ingestion multimodale avec monitoring")
 public class MultimodalIngestionController {
     
-    private final MultimodalIngestionService ingestionService;
+    private final IngestionOrchestrator ingestionService;
     private final IngestionTracker tracker;
     
     public MultimodalIngestionController(
-            MultimodalIngestionService ingestionService,
+            IngestionOrchestrator ingestionService,
             IngestionTracker tracker) {
         this.ingestionService = ingestionService;
         this.tracker = tracker;

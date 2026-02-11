@@ -26,7 +26,7 @@ app:
 
   pdf:
     save-generated: true
-    generated-pdf-dir: "${IMAGES_STORAGE_PATH:D:/extracted-images}"
+    generated-pdf-dir: "${IMAGES_STORAGE_PATH:D:/Formation-DATA-2024/extracted-images}"
     analyze-with-vision: true
     render-dpi: 300
 
@@ -480,6 +480,13 @@ management:
       endpoint: http://localhost:9411/api/v2/spans
 
   metrics:
+        # ✅ AJOUT CRITIQUE : active la collecte automatique des métriques HTTP
+    web:
+      server:
+        request:
+          autotime:
+            enabled: true
+            
     enable:
       cache: true
       jvm: true
@@ -487,6 +494,7 @@ management:
     export:
       prometheus:
         enabled: true
+        step: 10s
     tags:
       application: ${spring.application.name}
       environment: ${SPRING_PROFILES_ACTIVE:dev}
@@ -496,15 +504,21 @@ management:
       percentiles-histogram:
         http.server.requests: true
         ingestion.duration: true
+        rag.query.duration: true
+        rag.retrieval.duration: true
+        rag.generation.duration: true
+        rag.generation.ttft: true
   
   health:
     defaults:
       enabled: true
     clamav:
-      enabled: ${security.antivirus.enabled:false}
+      enabled: ${security.antivirus.enabled:true}
+
+
 
 # ============================================================================
-# LOGGING ✨ AMÉLIORÉ
+# LOGGING AMÉLIORÉ
 # ============================================================================
 logging:
   charset:
@@ -522,7 +536,7 @@ logging:
     com.exemple.transactionservice.service.rag.ingestion: DEBUG
     com.exemple.transactionservice.controller: DEBUG
     com.exemple.transactionservice.service.MultimodalRAGService: INFO
-    com.exemple.transactionservice.service.MultimodalIngestionService: INFO
+    com.exemple.transactionservice.service.IngestionOrchestrator: INFO
     com.example.rag.service.rag.ingestion.security: INFO
     
     # LangChain4j
@@ -627,7 +641,7 @@ retrieval:
   
   # Reranker
   reranker:
-    enabled: false
+    enabled: true
     model: cross-encoder/ms-marco-MiniLM-L-6-v2
     top-k: 10
     batch-size: 32

@@ -10,7 +10,7 @@ import com.exemple.transactionservice.service.rag.ingestion.analyzer.ImageSaver;
 import com.exemple.transactionservice.service.rag.ingestion.analyzer.VisionAnalyzer;
 import com.exemple.transactionservice.service.rag.ingestion.deduplication.DeduplicationService;
 import com.exemple.transactionservice.service.rag.ingestion.deduplication.TextDeduplicationService;
-import com.exemple.transactionservice.service.rag.ingestion.metrics.IngestionMetrics;
+import com.exemple.transactionservice.service.rag.metrics.RAGMetrics;
 import com.exemple.transactionservice.service.rag.ingestion.model.IngestionResult;
 import com.exemple.transactionservice.service.rag.ingestion.tracker.IngestionTracker;
 import com.exemple.transactionservice.service.rag.ingestion.util.FileUtils;
@@ -100,7 +100,7 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
     private final IngestionTracker tracker;
     private final MetadataSanitizer sanitizer;
     private final PdfIngestionStrategy pdfIngestionStrategy;
-    private final IngestionMetrics metrics;
+    private final RAGMetrics ragMetrics;
     private final DeduplicationService deduplicationService;
     private final TextDeduplicationService textDeduplicationService;
     private final FileSignatureValidator signatureValidator;
@@ -154,7 +154,7 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
             IngestionTracker tracker,
             MetadataSanitizer sanitizer,
             PdfIngestionStrategy pdfIngestionStrategy,
-            IngestionMetrics metrics,
+            RAGMetrics ragMetrics,
             DeduplicationService deduplicationService,
             TextDeduplicationService textDeduplicationService,
             FileSignatureValidator signatureValidator,
@@ -168,7 +168,7 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
         this.tracker = tracker;
         this.sanitizer = sanitizer;
         this.pdfIngestionStrategy = pdfIngestionStrategy;
-        this.metrics = metrics;
+        this.ragMetrics = ragMetrics;
         this.deduplicationService = deduplicationService;
         this.textDeduplicationService = textDeduplicationService;
         this.signatureValidator = signatureValidator;
@@ -192,7 +192,6 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
         long fileSize = file.getSize();
         
         long startTime = System.currentTimeMillis();
-        metrics.startProcessing();
         
         try {
             // ✅ AJOUT : Progress - Upload started
@@ -237,7 +236,7 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
                         "Fichier déjà traité (batch: " + dupInfo.originalBatchId() + ")");
                 }
                 
-                metrics.recordDuplicate(getName());
+                ragMetrics.recordDuplicate(getName());
                 log.warn("⚠️ [{}] XLSX doublon: {}", getName(), filename);
                 throw new DuplicateFileException(
                     String.format("XLSX déjà traité (batch: %s)", dupInfo.originalBatchId()),
@@ -274,13 +273,13 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
                 dedupStats.totalIndexed(), dedupStats.localCacheSize());
             
             long duration = System.currentTimeMillis() - startTime;
-            metrics.recordSuccess(
-                getName(), 
+            int totalEmbeddings = result.textEmbeddings() + result.imageEmbeddings();
+            
+            ragMetrics.recordStrategyProcessing(
+                getName(),
                 duration,
-                result.textEmbeddings(),
-                result.imageEmbeddings()
+                totalEmbeddings
             );
-            metrics.recordFileSize(getName(), fileSize);
             
             // ✅ AJOUT : Progress - Completed
             if (progressNotifier != null) {
@@ -296,24 +295,18 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
             return result;
             
         } catch (DuplicateFileException e) {
-            metrics.endProcessing();
             throw e;
             
         } catch (Exception e) {
             // ✅ AJOUT : Progress - Error
             if (progressNotifier != null) {
                 progressNotifier.error(batchId, filename, e.getMessage());
-            }
-            
-            long duration = System.currentTimeMillis() - startTime;
-            metrics.recordError(getName(), e.getClass().getSimpleName(), duration);
-            metrics.endProcessing();
-            
+            }           
             log.error("❌ [{}] Erreur traitement XLSX: {}", getName(), filename, e);
             throw e;
             
         } finally {
-            metrics.endProcessing();
+           
         }
     }
     
@@ -613,6 +606,9 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
                 "--outdir", outDir.toAbsolutePath().toString(),
                 inputXlsx.toAbsolutePath().toString()
             );
+
+            // ✅ AJOUTER après lancement processus LibreOffice:
+            long libreofficeStart = System.currentTimeMillis();
             
             Process process;
             try {
@@ -627,9 +623,18 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
             
             String output = readAll(process.getInputStream());
             boolean finished = process.waitFor(libreofficeTimeoutSeconds, TimeUnit.SECONDS);
+
+            long librefficeDuration = System.currentTimeMillis() - libreofficeStart;
+    
+            // ✅ MÉTRIQUE: LibreOffice conversion
+            ragMetrics.recordApiCall("libreoffice_convert", librefficeDuration);
             
             if (!finished) {
                 process.destroyForcibly();
+
+                // ✅ MÉTRIQUE: LibreOffice error
+                ragMetrics.recordApiError("libreoffice_convert");
+
                 throw new IOException(
                     "Timeout conversion LibreOffice (" + libreofficeTimeoutSeconds + "s). " +
                     "Output=" + output);
@@ -637,6 +642,9 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
             
             int exitCode = process.exitValue();
             if (exitCode != 0) {
+
+                // ✅ MÉTRIQUE: LibreOffice error  
+                ragMetrics.recordApiError("libreoffice_convert");
                 throw new IOException(
                     "Échec conversion LibreOffice (exit=" + exitCode + "). Output=" + output);
             }
@@ -1159,8 +1167,15 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
             String imageName,
             Map<String, Object> additionalMetadata) throws IOException {
         
+        // ✅ Tracking Vision API
+        long visionStart = System.currentTimeMillis();
+        
         try {
             String description = visionAnalyzer.analyzeImage(image);
+            long visionDuration = System.currentTimeMillis() - visionStart;
+            
+            // ✅ MÉTRIQUE: Vision API call
+            ragMetrics.recordApiCall("vision_analyze", visionDuration);
             
             Map<String, Object> metadata = new HashMap<>(sanitizer.sanitize(additionalMetadata));
             metadata.put("imageName", imageName);
@@ -1173,16 +1188,37 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
                 Metadata.from(metadata)
             );
             
+            // ✅ Tracking Embedding avec callback
             Embedding embedding = embeddingCache.getOrCompute(
                 description, 
-                () -> embeddingModel.embed(description).content()
+                () -> {
+                    long apiStart = System.currentTimeMillis();
+                    Embedding emb = embeddingModel.embed(description).content();
+                    long apiDuration = System.currentTimeMillis() - apiStart;
+                    
+                    // ✅ MÉTRIQUE: Embedding API call
+                    ragMetrics.recordApiCall("embed_text", apiDuration);
+                    
+                    return emb;
+                }
             );
             
-            return imageStore.add(embedding, segment);
+            // ✅ Tracking Vector Store
+            long storeStart = System.currentTimeMillis();
+            String embeddingId = imageStore.add(embedding, segment);
+            long storeDuration = System.currentTimeMillis() - storeStart;
+            
+            // ✅ MÉTRIQUE: Vector store operation
+            ragMetrics.recordVectorStoreOperation("insert", storeDuration, 1);
+            
+            return embeddingId;
             
         } catch (Exception e) {
+            // ✅ MÉTRIQUE: Vision API error
+            ragMetrics.recordApiError("vision_analyze");
+            
             if (e instanceof IOException || e instanceof TimeoutException) {
-                throw e;
+                throw (IOException) e;
             }
             throw new IOException("Vision API error", e);
         }
@@ -1280,24 +1316,39 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
     private String indexText(String text, Metadata metadata, String batchId) {
         
         if (!textDeduplicationService.checkAndMark(text, batchId)) {
-            log.debug("⏭️ [Dedup] Texte dupliqué, skip insertion: {}", 
-                truncate(text, 50));
+            log.debug("⏭️ [Dedup] Duplicate text, skip: {}", truncate(text, 50));
             return null;
         }
         
-        log.debug("✅ [Dedup] Nouveau texte, indexation: {}", 
-            truncate(text, 50));
+        log.debug("✅ [Dedup] New text, indexing: {}", truncate(text, 50));
         
         TextSegment segment = TextSegment.from(text, metadata);
         
+        // ✅ MODIFIER: Ajouter tracking embedding
         Embedding embedding = embeddingCache.getOrCompute(
             text, 
-            () -> embeddingModel.embed(text).content()
+            () -> {
+                long apiStart = System.currentTimeMillis();
+                Embedding emb = embeddingModel.embed(text).content();
+                long apiDuration = System.currentTimeMillis() - apiStart;
+                
+                // ✅ MÉTRIQUE: Embedding API call
+                ragMetrics.recordApiCall("embed_text", apiDuration);
+                
+                return emb;
+            }
         );
         
-        return textStore.add(embedding, segment);
+        // ✅ AJOUTER: Tracking vector store
+        long storeStart = System.currentTimeMillis();
+        String embeddingId = textStore.add(embedding, segment);
+        long storeDuration = System.currentTimeMillis() - storeStart;
+        
+        // ✅ MÉTRIQUE: Vector store operation
+        ragMetrics.recordVectorStoreOperation("insert", storeDuration, 1);
+        
+        return embeddingId;
     }
-    
     // ========================================================================
     // UTILITAIRES
     // ========================================================================

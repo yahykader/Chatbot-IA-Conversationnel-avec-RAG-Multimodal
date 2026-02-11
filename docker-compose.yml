@@ -131,7 +131,8 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -166,6 +167,7 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
     depends_on:
       - prometheus
     networks:
@@ -177,6 +179,23 @@ services:
       timeout: 5s
       retries: 3
 
+  # ========================================================================
+  # ALERTMANAGER - Alerts (optional)
+  # ========================================================================
+  alertmanager:
+    image: prom/alertmanager:v0.26.0
+    container_name: rag-alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      -  ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - alertmanager_data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    networks:
+      - agentic-chatbot-net
+    restart: unless-stopped
   # ============================================================================
   # REDIS EXPORTER - Métriques Redis pour Prometheus
   # ============================================================================
@@ -281,6 +300,8 @@ volumes:
   prometheus_data:
     driver: local
   grafana_data:
+    driver: local
+  alertmanager_data:
     driver: local
 
 # ==============================================================================

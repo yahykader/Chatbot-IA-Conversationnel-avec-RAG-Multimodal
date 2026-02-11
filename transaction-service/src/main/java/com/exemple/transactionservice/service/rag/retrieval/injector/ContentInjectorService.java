@@ -1,4 +1,4 @@
-package com.exemple.transactionservice.service.rag.retrieval;
+package com.exemple.transactionservice.service.rag.retrieval.injector;
 
 import com.exemple.transactionservice.config.RetrievalConfig;
 import com.exemple.transactionservice.service.rag.retrieval.model.AggregatedContext;

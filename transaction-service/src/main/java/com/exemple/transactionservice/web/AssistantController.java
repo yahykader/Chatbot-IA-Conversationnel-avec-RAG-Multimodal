@@ -9,7 +9,7 @@
 // import com.exemple.transactionservice.dto.UploadStatusResponse;
 // import com.exemple.transactionservice.dto.UploadStatus;
 // import com.exemple.transactionservice.service.ConversationalAssistant;
-// import com.exemple.transactionservice.service.MultimodalIngestionService;
+// import com.exemple.transactionservice.service.IngestionOrchestrator;
 // import com.exemple.transactionservice.service.UploadRateLimiter;
 // import com.exemple.transactionservice.util.InMemoryMultipartFile;
 // import io.micrometer.core.instrument.MeterRegistry;
@@ -51,7 +51,7 @@
 // @RequestMapping("/api/assistant")
 // public class AssistantController {
 
-//     private final MultimodalIngestionService ingestionService;
+//     private final IngestionOrchestrator ingestionService;
 //     private final ConversationalAssistant assistant;
 //     private final UploadRateLimiter uploadRateLimiter;
 //     private final MeterRegistry meterRegistry;
@@ -82,7 +82,7 @@
 //     private final ConcurrentHashMap<String, DuplicateInfo> uploadFingerprints = new ConcurrentHashMap<>();
 
 //     public AssistantController(
-//             MultimodalIngestionService ingestionService,
+//             IngestionOrchestrator ingestionService,
 //             ConversationalAssistant assistant,
 //             UploadRateLimiter uploadRateLimiter,
 //             MeterRegistry meterRegistry) {

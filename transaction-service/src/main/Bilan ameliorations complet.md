@@ -10,8 +10,8 @@
 
 | Amélioration | Status | Fichier | Notes |
 |--------------|--------|---------|-------|
-| **Traitement Asynchrone** | ✅ COMPLET | `MultimodalIngestionService.java` | `@Async` + `CompletableFuture` |
-| **Batch Processing** | ✅ COMPLET | `MultimodalIngestionService.java` | `ingestBatchAsync()` parallèle |
+| **Traitement Asynchrone** | ✅ COMPLET | `IngestionOrchestrator.java` | `@Async` + `CompletableFuture` |
+| **Batch Processing** | ✅ COMPLET | `IngestionOrchestrator.java` | `ingestBatchAsync()` parallèle |
 | **ThreadPool Configuré** | ✅ COMPLET | `AsyncConfig.java` | Core: 4, Max: 8, Queue: 50 |
 
 ### ❌ **MANQUE (33%)**
@@ -169,7 +169,7 @@ security:
 | Amélioration | Status | Fichier | Notes |
 |--------------|--------|---------|-------|
 | **Pattern Strategy** | ✅ COMPLET | `IngestionStrategy.java` | Interface + 6 implémentations |
-| **Auto-découverte** | ✅ COMPLET | `MultimodalIngestionService.java` | Spring auto-injection |
+| **Auto-découverte** | ✅ COMPLET | `IngestionOrchestrator.java` | Spring auto-injection |
 | **Priorités** | ✅ COMPLET | `IngestionStrategy.java` | Tri automatique 1-10 |
 
 ### ❌ **MANQUE (0%)**
