@@ -1,47 +1,78 @@
-import { 
-  ApplicationConfig, 
-  provideZoneChangeDetection,
-  provideBrowserGlobalErrorListeners, 
-  importProvidersFrom
-} from '@angular/core'
+// app.config.ts
+import { ApplicationConfig, provideZoneChangeDetection, importProvidersFrom } from '@angular/core';
 import { provideRouter } from '@angular/router';
-import { provideToastr } from 'ngx-toastr';
-import { routes } from './app.routes';
+import {   
+  provideHttpClient,
+  withInterceptors,
+  withInterceptorsFromDi  } from '@angular/common/http';
 import { provideAnimations } from '@angular/platform-browser/animations';
-import { provideHttpClient } from '@angular/common/http';
-import { MarkdownModule } from 'ngx-markdown';
 import { provideStore } from '@ngrx/store';
 import { provideEffects } from '@ngrx/effects';
 import { provideStoreDevtools } from '@ngrx/store-devtools';
-import { assistantReducer } from './assistant/store/assistant.reducer';
-import { AssistantEffects } from './assistant/store/assistant.effects';
 
+import { routes } from './app.routes';
+
+// Import Interceptor
+import { duplicateInterceptor } from './core/interceptors/duplicate-interceptor';
+
+// Reducers
+import { ingestionReducer } from './features/ingestion/store/ingestion.reducer';
+import { progressReducer } from './features/ingestion/store/progress.reducer';
+
+// Effects
+import { IngestionEffects } from './features/ingestion/store/ingestion.effects';
+import { ProgressEffects } from './features/ingestion/store/progress.effects';
 import { MaterialModule } from './material/material.module';
+import { environment } from '../../environements/environement';
+import { CrudApiService } from './core/services/crud-api.service';
+import { StreamingApiService } from './core/services/streaming-api.service';
+import { WebSocketProgressService } from './core/services/websocket-progress.service';
+import { IngestionApiService } from './core/services/ingestion-api.service';
+
 export const appConfig: ApplicationConfig = {
   providers: [
-    provideZoneChangeDetection({ eventCoalescing: true }),
-    provideBrowserGlobalErrorListeners(),
-    provideRouter(routes),
+
     importProvidersFrom(MaterialModule),
-    provideHttpClient(), 
+    // Zone.js optimization
+    provideZoneChangeDetection({ eventCoalescing: true }),
+    
+    // Router
+    provideRouter(routes),
+    
+    // HTTP avec Interceptor
+    provideHttpClient(
+      withInterceptors([duplicateInterceptor])
+    ),
+    
+    // Animations
     provideAnimations(),
+
+        // ✅ Services globaux
+    IngestionApiService,
+    WebSocketProgressService,
+    StreamingApiService,
+    CrudApiService,
+    
+    // NgRx Store
     provideStore({
-      assistant: assistantReducer
+      ingestion: ingestionReducer,
+      progress: progressReducer
     }),
-    provideEffects(AssistantEffects),
+    
+    // NgRx Effects
+    provideEffects([
+      IngestionEffects,
+      ProgressEffects
+    ]),
+    
+    // NgRx DevTools
     provideStoreDevtools({
       maxAge: 25,
-      logOnly: false,
-      trace: true,
+      logOnly: environment.production,
+      autoPause: true,
+      trace: false,
       traceLimit: 75
-    }),
-        // ✅ Configurer Markdown
-    importProvidersFrom(MarkdownModule.forRoot()),
-        provideToastr({
-      timeOut: 3000,
-      positionClass: 'toast-top-right',
-      preventDuplicates: true,
     })
   ]
-  
 };
+

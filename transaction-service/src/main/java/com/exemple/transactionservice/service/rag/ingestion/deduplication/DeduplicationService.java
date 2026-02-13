@@ -1,6 +1,6 @@
 // ============================================================================
-// SERVICE - DeduplicationService.java (VERSION COMPLÈTE MODIFIÉE)
-// Service de détection de doublons avec Redis + nouvelles méthodes
+// SERVICE - DeduplicationService.java (VERSION UUID COMPLÈTE)
+// Service de détection de doublons avec Redis + support UUID
 // ============================================================================
 package com.exemple.transactionservice.service.rag.ingestion.deduplication;
 
@@ -20,24 +20,18 @@ import java.util.concurrent.TimeUnit;
  * Service de déduplication de fichiers basé sur le hash SHA-256.
  * Utilise Redis pour stocker les hash des fichiers déjà ingérés.
  * 
+ * ✅ VERSION AVEC SUPPORT UUID STRING
+ * 
  * Fonctionnalités:
  * - Calcul hash SHA-256 du contenu
  * - Détection doublons via Redis
  * - TTL configurable (30 jours par défaut)
  * - Support metadata associées
- * - ✅ Récupération du batchId existant (NOUVEAU)
- * - ✅ Health check Redis (NOUVEAU)
+ * - Support UUID String ET Long pour batchId
+ * - Health check Redis
  * 
- * Cas d'usage:
- * - Éviter ingestion multiple du même fichier
- * - Économie ressources (CPU, API calls, stockage)
- * - Cohérence base de données
- * 
- * Exemple:
- * if (dedup.isDuplicate(file)) {
- *     throw new DuplicateFileException("Fichier déjà traité");
- * }
- * dedup.markAsIngested(file, batchId);
+ * @author RAG Team
+ * @version 2.0 (UUID Support)
  */
 @Slf4j
 @Service
@@ -49,10 +43,12 @@ public class DeduplicationService {
     private static final String REDIS_KEY_PREFIX = "ingestion:hash:";
     private static final int DEFAULT_TTL_DAYS = 30;
     
-    public DeduplicationService(RedisTemplate<String, String> redisTemplate, RAGMetrics ragMetrics) {
+    public DeduplicationService(
+            RedisTemplate<String, String> redisTemplate, 
+            RAGMetrics ragMetrics) {
         this.redisTemplate = redisTemplate;
         this.ragMetrics = ragMetrics;
-        log.info("✅ DeduplicationService initialisé - Redis activé");
+        log.info("✅ DeduplicationService initialisé - Redis activé (UUID support)");
     }
     
     // ========================================================================
@@ -61,10 +57,6 @@ public class DeduplicationService {
     
     /**
      * Calcule le hash SHA-256 d'un fichier
-     * 
-     * @param file Fichier à hasher
-     * @return Hash SHA-256 encodé en Base64
-     * @throws IOException Si erreur lecture fichier
      */
     public String computeHash(MultipartFile file) throws IOException {
         try {
@@ -72,7 +64,6 @@ public class DeduplicationService {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] hashBytes = digest.digest(fileBytes);
             
-            // Encoder en Base64 pour clé Redis lisible
             String hash = Base64.getEncoder().encodeToString(hashBytes);
             
             log.debug("🔐 [Dedup] Hash calculé: {} (file: {}, size: {} KB)", 
@@ -83,7 +74,6 @@ public class DeduplicationService {
             return hash;
             
         } catch (NoSuchAlgorithmException e) {
-            // Ne devrait jamais arriver (SHA-256 toujours disponible)
             throw new RuntimeException("SHA-256 algorithm not available", e);
         }
     }
@@ -101,13 +91,8 @@ public class DeduplicationService {
         }
     }
     
-    // ✅ NOUVELLE MÉTHODE AJOUTÉE : Alias pour compatibilité avec les strategies
     /**
-     * Calcule le hash SHA-256 d'un tableau de bytes.
-     * Alias de computeHash(byte[]) pour compatibilité avec PdfIngestionStrategy.
-     * 
-     * @param fileBytes Bytes du fichier
-     * @return Hash SHA-256 encodé en Base64
+     * Alias pour compatibilité
      */
     public String calculateHash(byte[] fileBytes) {
         return computeHash(fileBytes);
@@ -119,9 +104,6 @@ public class DeduplicationService {
     
     /**
      * Vérifie si un fichier a déjà été ingéré
-     * 
-     * @param file Fichier à vérifier
-     * @return true si le fichier est un doublon
      */
     public boolean isDuplicate(MultipartFile file) throws IOException {
         String hash = computeHash(file);
@@ -130,9 +112,6 @@ public class DeduplicationService {
     
     /**
      * Vérifie si un hash existe déjà dans Redis
-     * 
-     * @param hash Hash à vérifier
-     * @return true si le hash existe (= fichier déjà ingéré)
      */
     public boolean isDuplicateByHash(String hash) {
         String key = REDIS_KEY_PREFIX + hash;
@@ -146,54 +125,36 @@ public class DeduplicationService {
         return false;
     }
     
-    // ✅ NOUVELLE MÉTHODE AJOUTÉE : Alias pour compatibilité avec les strategies
     /**
-     * Vérifie si un hash existe déjà (doublon).
-     * Alias de isDuplicateByHash() pour compatibilité avec PdfIngestionStrategy.
-     * 
-     * @param fileHash Hash du fichier à vérifier
-     * @return true si le hash existe déjà
+     * Alias pour compatibilité
      */
     public boolean isDuplicate(String fileHash) {
         return isDuplicateByHash(fileHash);
     }
     
     /**
-     * Vérifie et retourne les metadata du fichier déjà ingéré
-     * 
-     * @param hash Hash du fichier
-     * @return Metadata (batchId) ou null si pas de doublon
+     * ✅ MISE À JOUR: Retourne le batchId en String (UUID ou numérique)
      */
     public String getDuplicateMetadata(String hash) {
         String key = REDIS_KEY_PREFIX + hash;
         return redisTemplate.opsForValue().get(key);
     }
     
-    // ✅ NOUVELLE MÉTHODE AJOUTÉE : Récupérer le batchId existant
     /**
-     * Récupère le batchId du fichier déjà ingéré.
-     * Cette méthode est utilisée par le Service et Controller pour informer l'utilisateur
-     * du batch existant lors d'un doublon.
+     * ✅ MISE À JOUR: Récupère le batchId existant (String)
      * 
      * @param fileHash Hash du fichier
-     * @return batchId du fichier existant, ou null si pas trouvé
+     * @return batchId du fichier existant (UUID String), ou null si pas trouvé
      */
-    public Long getExistingBatchId(String fileHash) {
+    public String getExistingBatchId(String fileHash) {
         try {
             String key = REDIS_KEY_PREFIX + fileHash;
-            String batchIdStr = redisTemplate.opsForValue().get(key);
+            String batchId = redisTemplate.opsForValue().get(key);
             
-            if (batchIdStr != null && !batchIdStr.isBlank()) {
-                try {
-                    Long batchId = Long.parseLong(batchIdStr);
-                    log.debug("🔍 [Dedup] BatchId récupéré: {} pour hash: {}...", 
-                        batchId, fileHash.substring(0, 16));
-                    return batchId;
-                } catch (NumberFormatException e) {
-                    // Si ce n'est pas un Long, retourner null
-                    log.warn("⚠️ [Dedup] BatchId non numérique: {}", batchIdStr);
-                    return null;
-                }
+            if (batchId != null && !batchId.isBlank()) {
+                log.debug("🔍 [Dedup] BatchId récupéré: {} pour hash: {}...", 
+                    batchId, fileHash.substring(0, 16));
+                return batchId;
             }
             
             return null;
@@ -204,56 +165,76 @@ public class DeduplicationService {
             return null;
         }
     }
-
-
-
-
-    // ========================================================================
-    // ✅ NEW: DUPLICATE DETECTION + METRICS
-    // ========================================================================
-
+    
     /**
-     * ✅ NOUVEAU: Check duplication + enregistre la métrique rag_duplicates_total.
-     * Utilise un tag "strategy" pour Grafana (sinon "unknown").
-     *
-     * @param fileHash hash calculé
-     * @param strategyName nom stratégie (DOCX/PDF/IMAGE/TEXT...) ou null
-     * @return true si duplicate
+     * ✅ OBSOLÈTE: Gardé pour compatibilité mais déprécié
+     * Utilisez getExistingBatchId() qui retourne String
+     * 
+     * @deprecated Utilisez getExistingBatchId() à la place
+     */
+    @Deprecated
+    public Long getExistingBatchIdAsLong(String fileHash) {
+        try {
+            String batchIdStr = getExistingBatchId(fileHash);
+            
+            if (batchIdStr != null) {
+                try {
+                    return Long.parseLong(batchIdStr);
+                } catch (NumberFormatException e) {
+                    log.warn("⚠️ [Dedup] BatchId non numérique: {}", batchIdStr);
+                    return null;
+                }
+            }
+            
+            return null;
+            
+        } catch (Exception e) {
+            log.error("❌ [Dedup] Erreur récupération batchId Long", e);
+            return null;
+        }
+    }
+    
+    // ========================================================================
+    // DUPLICATE DETECTION + METRICS
+    // ========================================================================
+    
+    /**
+     * ✅ Check duplication + enregistre la métrique
      */
     public boolean isDuplicateAndRecord(String fileHash, String strategyName) {
         boolean dup = isDuplicateByHash(fileHash);
         if (dup) {
-            String strategy = (strategyName == null || strategyName.isBlank()) ? "unknown" : strategyName;
+            String strategy = (strategyName == null || strategyName.isBlank()) 
+                ? "unknown" 
+                : strategyName;
             ragMetrics.recordDuplicate(strategy);
         }
         return dup;
     }
-
+    
     /**
-     * ✅ NOUVEAU: checkDuplication avec metrics + batchId.
-     * Très utile pour l'orchestrator (retourne hash + batch existant).
+     * ✅ MISE À JOUR: Retourne String batchId dans DuplicationInfo
      */
-    public DuplicationInfo checkDuplicationAndRecord(MultipartFile file, String strategyName) throws IOException {
+    public DuplicationInfo checkDuplicationAndRecord(
+            MultipartFile file, 
+            String strategyName) throws IOException {
+        
         String hash = computeHash(file);
-
+        
         if (isDuplicateAndRecord(hash, strategyName)) {
             String batchId = getDuplicateMetadata(hash);
             return new DuplicationInfo(true, hash, batchId);
         }
-
+        
         return new DuplicationInfo(false, hash, null);
     }
-
     
     // ========================================================================
     // MARKING AS INGESTED
     // ========================================================================
     
     /**
-     * Marque un fichier comme ingéré
-     * 
-     * @param file Fichier ingéré
-     * @param batchId ID du batch d'ingestion
+     * ✅ MISE À JOUR: Accepte batchId String (UUID)
      */
     public void markAsIngested(MultipartFile file, String batchId) throws IOException {
         String hash = computeHash(file);
@@ -261,22 +242,14 @@ public class DeduplicationService {
     }
     
     /**
-     * Marque un hash comme ingéré avec TTL par défaut (30 jours)
-     * 
-     * @param hash Hash du fichier
-     * @param batchId ID du batch d'ingestion
+     * ✅ MISE À JOUR: batchId en String
      */
     public void markAsIngestedByHash(String hash, String batchId) {
         markAsIngestedByHash(hash, batchId, DEFAULT_TTL_DAYS, TimeUnit.DAYS);
     }
     
     /**
-     * Marque un hash comme ingéré avec TTL custom
-     * 
-     * @param hash Hash du fichier
-     * @param batchId ID du batch d'ingestion
-     * @param ttl Durée de vie
-     * @param timeUnit Unité de temps
+     * ✅ MISE À JOUR: batchId en String avec TTL custom
      */
     public void markAsIngestedByHash(
             String hash, 
@@ -286,7 +259,7 @@ public class DeduplicationService {
         
         String key = REDIS_KEY_PREFIX + hash;
         
-        // Stocker batchId comme valeur (utile pour traçabilité)
+        // Stocker batchId comme valeur (String: UUID ou numérique)
         redisTemplate.opsForValue().set(key, batchId, ttl, timeUnit);
         
         log.debug("✅ [Dedup] Fichier marqué comme ingéré: hash={} batchId={} ttl={}{}",
@@ -296,17 +269,21 @@ public class DeduplicationService {
             timeUnit.toString().toLowerCase());
     }
     
-    // ✅ NOUVELLE MÉTHODE AJOUTÉE : Alias pour compatibilité avec les strategies
     /**
-     * Enregistre un fichier comme traité.
-     * Alias de markAsIngestedByHash() pour compatibilité avec PdfIngestionStrategy.
-     * 
-     * @param fileHash Hash du fichier
-     * @param batchId ID du batch
-     * @param filename Nom du fichier (pour logs, optionnel)
+     * ✅ SURCHARGE: Accepte Long batchId (convertit en String)
+     * Pour compatibilité avec ancien code
      */
     public void registerFile(String fileHash, Long batchId, String filename) {
         markAsIngestedByHash(fileHash, String.valueOf(batchId));
+        log.debug("✅ [Dedup] Fichier enregistré: {} -> batch {}", 
+            filename != null ? filename : "unknown", batchId);
+    }
+    
+    /**
+     * ✅ NOUVEAU: Accepte String batchId directement
+     */
+    public void registerFile(String fileHash, String batchId, String filename) {
+        markAsIngestedByHash(fileHash, batchId);
         log.debug("✅ [Dedup] Fichier enregistré: {} -> batch {}", 
             filename != null ? filename : "unknown", batchId);
     }
@@ -316,10 +293,7 @@ public class DeduplicationService {
     // ========================================================================
     
     /**
-     * Supprime un hash de Redis (annule marquage "ingéré")
-     * Utile en cas d'échec d'ingestion après marquage
-     * 
-     * @param hash Hash à supprimer
+     * Supprime un hash de Redis
      */
     public void removeHash(String hash) {
         String key = REDIS_KEY_PREFIX + hash;
@@ -343,14 +317,10 @@ public class DeduplicationService {
     // ========================================================================
     
     /**
-     * Compte le nombre de hash stockés (approximatif)
-     * Attention: scan complet peut être lent sur gros volumes
-     * 
-     * @return Nombre approximatif de fichiers trackés
+     * Compte le nombre de hash stockés
      */
     public long countTrackedFiles() {
         try {
-            // Scan avec pattern (limité aux 1000 premiers)
             var keys = redisTemplate.keys(REDIS_KEY_PREFIX + "*");
             return keys != null ? keys.size() : 0;
         } catch (Exception e) {
@@ -372,25 +342,16 @@ public class DeduplicationService {
         }
     }
     
-    // ✅ NOUVELLE MÉTHODE AJOUTÉE : Health check détaillé
     /**
-     * Effectue un health check complet de Redis.
-     * Teste l'écriture et la lecture pour vérifier que Redis fonctionne correctement.
-     * 
-     * @return true si Redis est accessible et fonctionnel
+     * Health check complet
      */
     public boolean performHealthCheck() {
         try {
             String testKey = "health:check:" + System.currentTimeMillis();
             String testValue = "OK";
             
-            // Test écriture
             redisTemplate.opsForValue().set(testKey, testValue, 5, TimeUnit.SECONDS);
-            
-            // Test lecture
             String result = redisTemplate.opsForValue().get(testKey);
-            
-            // Nettoyage
             redisTemplate.delete(testKey);
             
             boolean healthy = testValue.equals(result);
@@ -398,7 +359,7 @@ public class DeduplicationService {
             if (healthy) {
                 log.debug("✅ [Dedup] Health check OK");
             } else {
-                log.warn("⚠️ [Dedup] Health check FAILED - valeur incorrecte");
+                log.warn("⚠️ [Dedup] Health check FAILED");
             }
             
             return healthy;
@@ -414,7 +375,7 @@ public class DeduplicationService {
     // ========================================================================
     
     /**
-     * Vérifie si un fichier est un doublon ET retourne les infos
+     * Vérifie duplication et retourne infos complètes
      */
     public DuplicationInfo checkDuplication(MultipartFile file) throws IOException {
         String hash = computeHash(file);
@@ -428,12 +389,12 @@ public class DeduplicationService {
     }
     
     /**
-     * Record pour les informations de duplication
+     * ✅ MISE À JOUR: batchId en String
      */
     public record DuplicationInfo(
         boolean isDuplicate,
         String hash,
-        String originalBatchId
+        String originalBatchId  // ✅ String (UUID ou numérique)
     ) {
         public String getShortHash() {
             return hash != null && hash.length() >= 16 
@@ -442,23 +403,17 @@ public class DeduplicationService {
         }
     }
     
-    // ✅ NOUVELLE SECTION AJOUTÉE : Méthodes utilitaires supplémentaires
-    // ========================================================================
-    // UTILITY METHODS (NOUVEAUX)
-    // ========================================================================
-    
     /**
-     * ✅ NOUVEAU : Récupère les informations complètes d'un fichier dupliqué.
-     * Utile pour fournir des détails à l'utilisateur lors d'un doublon.
-     * 
-     * @param fileHash Hash du fichier
-     * @return Informations du fichier ou null si pas trouvé
+     * Récupère infos complètes d'un fichier dupliqué
      */
     public FileInfo getFileInfo(String fileHash) {
         try {
             if (isDuplicateByHash(fileHash)) {
                 String batchId = getDuplicateMetadata(fileHash);
-                Long ttl = redisTemplate.getExpire(REDIS_KEY_PREFIX + fileHash, TimeUnit.SECONDS);
+                Long ttl = redisTemplate.getExpire(
+                    REDIS_KEY_PREFIX + fileHash, 
+                    TimeUnit.SECONDS
+                );
                 
                 return new FileInfo(
                     fileHash,
@@ -476,11 +431,11 @@ public class DeduplicationService {
     }
     
     /**
-     * ✅ NOUVEAU : Record pour les informations d'un fichier.
+     * ✅ MISE À JOUR: batchId en String
      */
     public record FileInfo(
         String hash,
-        String batchId,
+        String batchId,  // ✅ String (UUID ou numérique)
         long ttlSeconds
     ) {
         public String getShortHash() {
@@ -495,13 +450,7 @@ public class DeduplicationService {
     }
     
     /**
-     * ✅ NOUVEAU : Rafraîchit le TTL d'un hash existant.
-     * Utile si on veut prolonger la durée de vie d'un fichier déjà traité.
-     * 
-     * @param fileHash Hash du fichier
-     * @param ttl Nouvelle durée de vie
-     * @param timeUnit Unité de temps
-     * @return true si le TTL a été rafraîchi, false si le hash n'existe pas
+     * Rafraîchit le TTL d'un hash
      */
     public boolean refreshTTL(String fileHash, long ttl, TimeUnit timeUnit) {
         try {
@@ -512,7 +461,8 @@ public class DeduplicationService {
                 
                 if (Boolean.TRUE.equals(result)) {
                     log.debug("🔄 [Dedup] TTL rafraîchi: {}... -> {}{}",
-                        fileHash.substring(0, 16), ttl, timeUnit.toString().toLowerCase());
+                        fileHash.substring(0, 16), ttl, 
+                        timeUnit.toString().toLowerCase());
                     return true;
                 }
             }
@@ -526,9 +476,7 @@ public class DeduplicationService {
     }
     
     /**
-     * ✅ NOUVEAU : Obtient des statistiques détaillées sur le service.
-     * 
-     * @return Statistiques du service de déduplication
+     * Statistiques du service
      */
     public DeduplicationStats getStats() {
         try {
@@ -544,12 +492,17 @@ public class DeduplicationService {
             
         } catch (Exception e) {
             log.error("❌ [Dedup] Erreur récupération stats", e);
-            return new DeduplicationStats(0, false, REDIS_KEY_PREFIX, DEFAULT_TTL_DAYS);
+            return new DeduplicationStats(
+                0, 
+                false, 
+                REDIS_KEY_PREFIX, 
+                DEFAULT_TTL_DAYS
+            );
         }
     }
     
     /**
-     * ✅ NOUVEAU : Record pour les statistiques du service.
+     * Record pour statistiques
      */
     public record DeduplicationStats(
         long trackedFiles,

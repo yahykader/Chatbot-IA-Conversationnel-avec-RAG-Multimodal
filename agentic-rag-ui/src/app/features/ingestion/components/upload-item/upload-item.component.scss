@@ -1,0 +1,67 @@
+// upload-item.component.scss
+.upload-item {
+  transition: all 0.3s ease;
+  
+  &.border-warning {
+    border-width: 2px !important;
+  }
+  
+  .alert {
+    font-size: 0.9rem;
+    
+    code {
+      background: rgba(0, 0, 0, 0.1);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.85rem;
+    }
+  }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+
+.upload-item {
+  .card-body {
+    padding: 0.75rem; // ✅ Réduit de 1rem
+  }
+  
+  h6 {
+    font-size: 0.9rem; // ✅ Réduit
+    margin-bottom: 0.25rem;
+  }
+  
+  small {
+    font-size: 0.75rem; // ✅ Réduit
+  }
+  
+  .badge {
+    font-size: 0.7rem; // ✅ Réduit
+    padding: 0.3em 0.6em;
+  }
+  
+  .btn-sm {
+    font-size: 0.75rem; // ✅ Réduit
+    padding: 0.25rem 0.5rem;
+  }
+  
+  .alert {
+    font-size: 0.8rem; // ✅ Réduit
+    padding: 0.5rem;
+    
+    strong {
+      font-size: 0.85rem;
+    }
+  }
+  
+  .progress {
+    height: 20px !important; // ✅ Réduit de 25px
+  }
+}

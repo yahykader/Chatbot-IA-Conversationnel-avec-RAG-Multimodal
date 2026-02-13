@@ -1,26 +1,25 @@
 package com.exemple.transactionservice.exception;
 
+import lombok.Getter;
+
 /**
- * Exception levée quand un fichier a déjà été ingéré
+ * ✅ MISE À JOUR: Support UUID String pour batchId
  */
-public class DuplicateFileException extends Exception {
+@Getter
+public class DuplicateFileException extends RuntimeException {
     
+    /**
+     * BatchId du fichier existant (UUID String ou numérique)
+     */
     private final String existingBatchId;
     
-    // Constructeur original (pour compatibilité)
-    public DuplicateFileException(String message) {
-        super(message);
-        this.existingBatchId = null;
-    }
-    
-    // ✅ Nouveau constructeur avec batchId
     public DuplicateFileException(String message, String existingBatchId) {
         super(message);
         this.existingBatchId = existingBatchId;
     }
     
-    // ✅ Getter pour batchId
-    public String getExistingBatchId() {
-        return existingBatchId;
+    public DuplicateFileException(String message) {
+        super(message);
+        this.existingBatchId = null;
     }
 }

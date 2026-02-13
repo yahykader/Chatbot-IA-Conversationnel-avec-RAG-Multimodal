@@ -1,22 +1,24 @@
 package com.exemple.transactionservice.config;
 
 import com.exemple.transactionservice.websocket.WebSocketAssistantController;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.messaging.simp.config.MessageBrokerRegistry;
-import org.springframework.web.socket.config.annotation.EnableWebSocket;
-import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
-import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
-import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
-import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
-import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry;
+import org.springframework.web.socket.config.annotation.*;
 
 /**
- * Configuration WebSocket
+ * Configuration WebSocket Complète
  * 
- * Supporte 2 modes:
- * 1. STOMP over WebSocket (/ws/upload-progress) - pour upload tracking
+ * Support 2 modes:
+ * 1. STOMP over WebSocket (/ws) - pour upload progress tracking
  * 2. Raw WebSocket (/ws/assistant) - pour RAG streaming
+ * 
+ * Supporte:
+ * - WebSocket natif (recommandé)
+ * - SockJS fallback (navigateurs anciens)
+ * - CORS configuré
  */
+@Slf4j
 @Configuration
 @EnableWebSocket
 @EnableWebSocketMessageBroker
@@ -26,33 +28,102 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer, WebSoc
 
     public WebSocketConfig(WebSocketAssistantController handler) {
         this.handler = handler;
+        log.info("🔌 WebSocket Configuration initialized");
     }
 
     // ========================================================================
-    // STOMP CONFIGURATION (pour upload progress)
+    // STOMP CONFIGURATION (Upload Progress Tracking)
     // ========================================================================
     
+    /**
+     * Configure message broker
+     * 
+     * /topic - broadcast messages (1-to-many)
+     * /queue - point-to-point messages (1-to-1)
+     * /app - application destination prefix
+     */
     @Override
     public void configureMessageBroker(MessageBrokerRegistry config) {
-        config.enableSimpleBroker("/topic");
+        // Enable simple in-memory broker
+        config.enableSimpleBroker("/topic", "/queue");
+        
+        // Application destination prefix
         config.setApplicationDestinationPrefixes("/app");
+        
+        // User destination prefix (pour messages privés)
+        config.setUserDestinationPrefix("/user");
+        
+        log.info("✅ Message broker configured: /topic, /queue, /app");
     }
 
+    /**
+     * Register STOMP endpoints
+     * 
+     * Endpoint principal: /ws
+     * Topics disponibles:
+     * - /topic/upload-progress/{batchId}
+     * - /topic/ingestion-status
+     */
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
-        registry.addEndpoint("/ws/upload-progress")
+        
+        // ========================================================================
+        // ENDPOINT 1: WebSocket natif (RECOMMANDÉ)
+        // ========================================================================
+        registry.addEndpoint("/ws")
+            .setAllowedOriginPatterns(
+                "http://localhost:4200",      // Angular dev
+                "http://localhost:3000",      // React dev (optionnel)
+                "https://yourdomain.com"      // Production
+            );
+        
+        log.info("✅ STOMP endpoint registered: /ws (native WebSocket)");
+        
+        // ========================================================================
+        // ENDPOINT 2: SockJS fallback (OPTIONNEL)
+        // ========================================================================
+        registry.addEndpoint("/ws")
             .setAllowedOriginPatterns("*")
-            .withSockJS();
+            .withSockJS()
+            .setSessionCookieNeeded(false)
+            .setClientLibraryUrl("https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js");
+        
+        log.info("✅ STOMP endpoint registered: /ws (with SockJS fallback)");
     }
 
     // ========================================================================
-    // RAW WEBSOCKET CONFIGURATION (pour RAG assistant)
+    // RAW WEBSOCKET CONFIGURATION (RAG Assistant Streaming)
     // ========================================================================
     
+    /**
+     * Register raw WebSocket handlers
+     * 
+     * Endpoint: /ws/assistant
+     * Usage: Streaming RAG responses
+     */
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
+        
+        // ========================================================================
+        // RAW WEBSOCKET: Native
+        // ========================================================================
         registry.addHandler(handler, "/ws/assistant")
-            .setAllowedOrigins("*") // Configure properly in production
-            .withSockJS(); // Fallback pour anciens navigateurs
+            .setAllowedOrigins(
+                "http://localhost:4200",      // Angular dev
+                "http://localhost:3000",      // React dev
+                "https://yourdomain.com"      // Production
+            );
+        
+        log.info("✅ Raw WebSocket handler registered: /ws/assistant (native)");
+        
+        // ========================================================================
+        // RAW WEBSOCKET: SockJS fallback
+        // ========================================================================
+        registry.addHandler(handler, "/ws/assistant")
+            .setAllowedOrigins("*")
+            .withSockJS()
+            .setSessionCookieNeeded(false);
+        
+        log.info("✅ Raw WebSocket handler registered: /ws/assistant (with SockJS)");
     }
 }

@@ -53,8 +53,22 @@ import java.util.concurrent.TimeoutException;
  * - Cache embeddings
  * - Retry automatique
  * 
- * @author RAG Team
- * @version 3.0 - Adapté avec RAGMetrics unifié
+    Upload Fichier
+        ↓
+    IngestionOrchestrator.ingestFileInternal()
+        ├── Antivirus scan ✅
+        ├── Select strategy ✅
+        ├── Calculate hash ✅
+        ├── isDuplicateAndRecord() ✅ ← UNIQUE vérification
+        │   └── Si doublon: throw DuplicateFileException
+        ├── registerFile() ✅
+        └── Call strategy.ingest() ✅
+            ↓
+            Strategy (PDF/DOCX/IMAGE/TEXT/TIKA)
+            ├── Validate ✅
+            ├── Process ✅ (pas de vérification doublon)
+            ├── Metrics ✅
+            └── Return result ✅
  */
 @Slf4j
 @Component
@@ -112,7 +126,9 @@ public class TikaIngestionStrategy implements IngestionStrategy {
         long startTime = System.currentTimeMillis();
         
         try {
-            // Progress - Upload started
+            // ========================================================================
+            // PROGRESS - Upload started
+            // ========================================================================
             if (progressNotifier != null) {
                 progressNotifier.uploadStarted(batchId, filename, fileSize);
             }
@@ -120,6 +136,9 @@ public class TikaIngestionStrategy implements IngestionStrategy {
             log.info("🔧 [{}] Processing TIKA (universal fallback): {} ({} MB, ext: {})", 
                 getName(), filename, fileSize / 1_000_000, extension.toUpperCase());
             
+            // ========================================================================
+            // VALIDATION - Empty file check
+            // ========================================================================
             if (file.isEmpty() || fileSize == 0) {
                 if (progressNotifier != null) {
                     progressNotifier.error(batchId, filename, "Empty file");
@@ -127,7 +146,11 @@ public class TikaIngestionStrategy implements IngestionStrategy {
                 throw new IOException("Empty file: " + filename);
             }
             
-            // Progress - Deduplication
+            // ========================================================================
+            // ✅ SUPPRESSION: Vérification doublon (déjà faite par orchestrator)
+            // ========================================================================
+            // ❌ ANCIEN CODE SUPPRIMÉ:
+            /*
             if (progressNotifier != null) {
                 progressNotifier.notifyProgress(batchId, filename, "DEDUPLICATION", 10, 
                     "Checking duplicates...");
@@ -142,7 +165,6 @@ public class TikaIngestionStrategy implements IngestionStrategy {
                         "Already processed (batch: " + dupInfo.originalBatchId() + ")");
                 }
                 
-                // ✅ MÉTRIQUE: Duplicate
                 ragMetrics.recordDuplicate(getName());
                 
                 throw new DuplicateFileException(
@@ -151,10 +173,21 @@ public class TikaIngestionStrategy implements IngestionStrategy {
                     dupInfo.originalBatchId()
                 );
             }
+            */
+            // ✅ FIN SUPPRESSION
             
-            // Progress - Upload completed
+            // ========================================================================
+            // PROGRESS - Upload completed
+            // ========================================================================
             if (progressNotifier != null) {
                 progressNotifier.uploadCompleted(batchId, filename);
+            }
+            
+            // ========================================================================
+            // PROCESSING - Apache Tika Extraction
+            // ========================================================================
+            if (progressNotifier != null) {
+                progressNotifier.processingStarted(batchId, filename);
             }
             
             log.info("🔄 [{}] Extracting with Apache Tika...", getName());
@@ -171,18 +204,27 @@ public class TikaIngestionStrategy implements IngestionStrategy {
                 result = ingestNormal(file, filename, extension, batchId, fileSize);
             }
             
-            deduplicationService.markAsIngested(file, batchId);
+            // ========================================================================
+            // ✅ OPTIONNEL: Enregistrement (déjà fait par orchestrator)
+            // ========================================================================
+            // Note: L'orchestrator enregistre déjà le fichier AVANT l'appel strategy
+            // Cette ligne est redondante mais sans danger
+            // deduplicationService.markAsIngested(file, batchId);
             
+            // ========================================================================
+            // METRICS
+            // ========================================================================
             long duration = System.currentTimeMillis() - startTime;
             
-            // ✅ MÉTRIQUE: Strategy processing
             ragMetrics.recordStrategyProcessing(
                 getName(),
                 duration,
                 result.textEmbeddings()
             );
             
-            // Progress - Completed
+            // ========================================================================
+            // PROGRESS - Completed
+            // ========================================================================
             if (progressNotifier != null) {
                 progressNotifier.completed(batchId, filename, result.textEmbeddings(), 0);
             }
@@ -193,20 +235,23 @@ public class TikaIngestionStrategy implements IngestionStrategy {
             
             return result;
             
-        } catch (DuplicateFileException e) {
-            throw e;
-            
         } catch (Exception e) {
+            // ========================================================================
+            // ERROR HANDLING
+            // ========================================================================
+            
             // Progress - Error
             if (progressNotifier != null) {
                 progressNotifier.error(batchId, filename, e.getMessage());
             }
             
             log.error("❌ [{}] Tika processing error: {}", getName(), filename, e);
+            
+            // Re-throw exception
             throw e;
         }
     }
-    
+
     private IngestionResult ingestNormal(MultipartFile file, String filename,
                                           String extension, String batchId,
                                           long fileSize) throws Exception {

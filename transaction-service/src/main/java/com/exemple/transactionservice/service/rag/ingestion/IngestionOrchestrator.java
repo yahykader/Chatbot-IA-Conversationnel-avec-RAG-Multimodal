@@ -254,7 +254,6 @@ public class IngestionOrchestrator {
     // ========================================================================
     // LOGIQUE INGESTION INTERNE
     // ========================================================================
-    
     private IngestionResult ingestFileInternal(
             MultipartFile file,
             String batchId) throws Exception {
@@ -276,7 +275,9 @@ public class IngestionOrchestrator {
         String strategyName = "unknown";
         
         try {
+            // ========================================================================
             // 0. SCAN ANTIVIRUS
+            // ========================================================================
             if (antivirusEnabled) {
                 log.debug("🦠 Antivirus scan: {}", filename);
                 
@@ -302,7 +303,9 @@ public class IngestionOrchestrator {
                 log.debug("✅ File clean");
             }
             
+            // ========================================================================
             // 1. SÉLECTION STRATEGY
+            // ========================================================================
             IngestionStrategy strategy = selectStrategy(file, extension);
             
             if (strategy == null) {
@@ -317,27 +320,47 @@ public class IngestionOrchestrator {
             log.info("🎯 Strategy: {} (priority: {})",
                 strategyName, strategy.getPriority());
             
+            // ========================================================================
+            // 2. VÉRIFICATION DOUBLON
+            // ========================================================================
             byte[] fileBytes = file.getBytes();
             String fileHash = deduplicationService.calculateHash(fileBytes);
 
+            // ✅ CORRECTION 1: isDuplicateAndRecord() enregistre déjà la métrique
+            // Pas besoin de recordDuplicate() après
             if (deduplicationService.isDuplicateAndRecord(fileHash, strategyName)) {
-                ragMetrics.recordDuplicate(strategyName); // ✅ MÉTRIQUE: Duplicate détecté pour cette strategy
-                Long existing = deduplicationService.getExistingBatchId(fileHash);
-                throw new DuplicateFileException("Duplicate file", existing != null ? String.valueOf(existing) : null);
+                
+                // ✅ CORRECTION 2: getExistingBatchId() retourne String directement
+                String existingBatchId = deduplicationService.getExistingBatchId(fileHash);
+                ragMetrics.recordDuplicate(strategyName); // Enregistre le doublon dans les métriques
+                
+                log.warn("⚠️ Duplicate: {} (existing batch: {})", 
+                    filename, existingBatchId);
+                
+                // ✅ CORRECTION 3: Passer String directement (pas de conversion Long)
+                throw new DuplicateFileException(
+                    "Duplicate file: " + filename, 
+                    existingBatchId
+                );
             }
+            
+            // ✅ AJOUT: Enregistrer le fichier si pas de doublon
+            deduplicationService.registerFile(fileHash, batchId, filename);
 
-            // 2. INGESTION
+            // ========================================================================
+            // 3. INGESTION
+            // ========================================================================
             IngestionResult result = strategy.ingest(file, batchId);
             
-            // 3. SUCCÈS
+            // ========================================================================
+            // 4. SUCCÈS - MÉTRIQUES
+            // ========================================================================
             long duration = System.currentTimeMillis() - startTime;
             status.complete(true, duration);
             
             int totalEmbeddings = result.textEmbeddings() + result.imageEmbeddings();
 
-            // ✅ AJOUT IMPORTANT:
-            // On alimente "rag_strategy_chunks_total" pour que le panel "Chunks per File (avg)" ait des données.
-            // On utilise textEmbeddings() comme proxy de "chunks".
+            // ✅ MÉTRIQUE: Chunks per file (utilise textEmbeddings comme proxy)
             int chunks = Math.max(result.textEmbeddings(), 0);
             ragMetrics.recordStrategyProcessing(strategyName, duration, chunks);
             
@@ -355,20 +378,29 @@ public class IngestionOrchestrator {
             return result;
             
         } catch (Exception e) {
+            
+            // ========================================================================
+            // GESTION ERREURS
+            // ========================================================================
             boolean isDuplicate = e instanceof DuplicateFileException;
             
             if (isDuplicate) {
-                // DOUBLON - Pas de rollback
+                // ========================================================================
+                // CAS 1: DOUBLON - Pas de rollback
+                // ========================================================================
                 DuplicateFileException dupEx = (DuplicateFileException) e;
                 
                 log.warn("⚠️ Duplicate: {} (existing batch: {})", 
                     filename, dupEx.getExistingBatchId());
                 
-                // ✅ MÉTRIQUE: Duplicate détecté
-                ragMetrics.recordDuplicate(strategyName);
+                // ✅ CORRECTION 4: Ne PAS enregistrer la métrique ici
+                // Elle a déjà été enregistrée par isDuplicateAndRecord()
+                // ragMetrics.recordDuplicate(strategyName); // ❌ SUPPRIMÉ (doublon)
                 
             } else {
-                // ERREUR RÉELLE - Rollback
+                // ========================================================================
+                // CAS 2: ERREUR RÉELLE - Rollback
+                // ========================================================================
                 log.error("❌ Failure: {} - Rolling back...", filename, e);
                 
                 try {
@@ -388,6 +420,7 @@ public class IngestionOrchestrator {
             long duration = System.currentTimeMillis() - startTime;
             status.complete(false, duration);
             
+            // Re-throw exception pour le controller
             throw e;
             
         } finally {
@@ -486,14 +519,21 @@ public class IngestionOrchestrator {
         }
     }
     
+    /**
+     * Récupère le batchId existant d'un fichier (si doublon détecté)
+     * 
+     * @param file Fichier à vérifier
+     * @return batchId du fichier existant, ou null si pas de doublon
+     */
     public String getExistingBatchId(MultipartFile file) {
         try {
             byte[] fileBytes = file.getBytes();
             String fileHash = deduplicationService.calculateHash(fileBytes);
             
             if (deduplicationService.isDuplicate(fileHash)) {
-                Long batchId = deduplicationService.getExistingBatchId(fileHash);
-                return batchId != null ? String.valueOf(batchId) : null;
+        
+                String batchId = deduplicationService.getExistingBatchId(fileHash);
+                return batchId; // Retourne le batchId existant directement
             }
             
             return null;

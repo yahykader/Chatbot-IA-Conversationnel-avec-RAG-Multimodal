@@ -120,15 +120,18 @@ public class DocxIngestionStrategy implements IngestionStrategy {
     public boolean canHandle(MultipartFile file, String extension) {
         return "docx".equals(extension);
     }
-    
+
     @Override
     public IngestionResult ingest(MultipartFile file, String batchId) throws Exception {
         String filename = file.getOriginalFilename();
         long fileSize = file.getSize();
         
-        long startTime = System.currentTimeMillis();       
+        long startTime = System.currentTimeMillis();
+        
         try {
-            // Progress - Upload started
+            // ========================================================================
+            // PROGRESS - Upload started
+            // ========================================================================
             if (progressNotifier != null) {
                 progressNotifier.uploadStarted(batchId, filename, fileSize);
             }
@@ -136,6 +139,9 @@ public class DocxIngestionStrategy implements IngestionStrategy {
             log.info("📘 [{}] Processing DOCX: {} ({} MB)", 
                 getName(), filename, fileSize / 1_000_000);
             
+            // ========================================================================
+            // VALIDATION - Empty file check
+            // ========================================================================
             if (file.isEmpty() || fileSize == 0) {
                 if (progressNotifier != null) {
                     progressNotifier.error(batchId, filename, "Empty file");
@@ -143,7 +149,9 @@ public class DocxIngestionStrategy implements IngestionStrategy {
                 throw new IOException("Empty DOCX: " + filename);
             }
             
-            // Progress - Validation
+            // ========================================================================
+            // VALIDATION - Signature
+            // ========================================================================
             if (progressNotifier != null) {
                 progressNotifier.notifyProgress(batchId, filename, "VALIDATION", 8, 
                     "File validation...");
@@ -151,36 +159,16 @@ public class DocxIngestionStrategy implements IngestionStrategy {
             
             signatureValidator.validate(file, "docx");
             
-            // Progress - Deduplication check
-            if (progressNotifier != null) {
-                progressNotifier.notifyProgress(batchId, filename, "DEDUPLICATION", 10, 
-                    "Checking duplicates...");
-            }
-            
-            DeduplicationService.DuplicationInfo dupInfo = 
-                deduplicationService.checkDuplication(file);
-            
-            if (dupInfo.isDuplicate()) {
-                // ✅ MÉTRIQUE: Duplicate détecté
-                ragMetrics.recordDuplicate(getName());
-                
-                if (progressNotifier != null) {
-                    progressNotifier.error(batchId, filename, 
-                        "Already processed (batch: " + dupInfo.originalBatchId() + ")");
-                }
-                
-                throw new DuplicateFileException(
-                    String.format("DOCX already processed (batch: %s)", 
-                        dupInfo.originalBatchId()),
-                    dupInfo.originalBatchId()
-                );
-            }
-            
-            // Progress - Processing started
+            // ========================================================================
+            // PROGRESS - Processing started
+            // ========================================================================
             if (progressNotifier != null) {
                 progressNotifier.processingStarted(batchId, filename);
             }
             
+            // ========================================================================
+            // PROCESSING - Streaming ou Normal
+            // ========================================================================
             IngestionResult result;
             
             if (StreamingFileReader.requiresStreaming(file)) {
@@ -188,41 +176,51 @@ public class DocxIngestionStrategy implements IngestionStrategy {
                     getName(), fileSize / 1_000_000);
                 result = ingestWithStreaming(file, filename, batchId);
             } else {
+                log.debug("📄 [{}] Normal mode: {} MB", 
+                    getName(), fileSize / 1_000_000);
                 result = ingestNormal(file, filename, batchId);
             }
             
-            deduplicationService.markAsIngested(file, batchId);
-            
+            // ========================================================================
+            // METRICS
+            // ========================================================================
             long duration = System.currentTimeMillis() - startTime;
             int totalEmbeddings = result.textEmbeddings() + result.imageEmbeddings();
             
-            // ✅ MÉTRIQUE: Strategy processing
             ragMetrics.recordStrategyProcessing(
                 getName(),
                 duration,
                 totalEmbeddings
             );
             
-            // Progress - Completed
+            // ========================================================================
+            // PROGRESS - Completed
+            // ========================================================================
             if (progressNotifier != null) {
                 progressNotifier.completed(batchId, filename, 
                     result.textEmbeddings(), result.imageEmbeddings());
             }
             
-            log.info("✅ [{}] DOCX processed: text={} images={} duration={}ms",
-                getName(), result.textEmbeddings(), 
-                result.imageEmbeddings(), duration);
+            log.info("✅ [{}] DOCX processed: {} - text={} images={} duration={}ms mode={}",
+                getName(), filename, result.textEmbeddings(), 
+                result.imageEmbeddings(), duration,
+                StreamingFileReader.requiresStreaming(file) ? "STREAMING" : "NORMAL");
             
             return result;
             
-        } catch (DuplicateFileException e) {
-            // Duplicate - pas d'erreur métrique, déjà enregistré
-            throw e;
-            
         } catch (Exception e) {
+            // ========================================================================
+            // ERROR HANDLING
+            // ========================================================================
+            
+            // Progress - Error
             if (progressNotifier != null) {
                 progressNotifier.error(batchId, filename, e.getMessage());
-            }           
+            }
+            
+            log.error("❌ [{}] DOCX processing error: {}", getName(), filename, e);
+            
+            // Re-throw exception
             throw e;
         }
     }

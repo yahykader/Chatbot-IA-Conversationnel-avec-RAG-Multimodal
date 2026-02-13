@@ -57,8 +57,18 @@ import java.util.concurrent.TimeoutException;
  * - Retry automatique
  * - Validation dimensions
  * 
- * @author RAG Team
- * @version 3.0 - Adapté avec RAGMetrics unifié
+    Upload Image
+        ↓
+    IngestionOrchestrator
+        ├── isDuplicateAndRecord() ✅ (vérification unique)
+        ├── Si doublon: throw DuplicateFileException
+        └── Si OK: Call ImageIngestionStrategy.ingest()
+            ↓
+            ImageIngestionStrategy
+            ├── validateSecurity() ✅
+            ├── validateBasic() ✅
+            ├── ingestWithStreaming() ou ingestNormal() ✅
+            └── Return result ✅
  */
 @Slf4j
 @Component
@@ -133,7 +143,9 @@ public class ImageIngestionStrategy implements IngestionStrategy {
         long startTime = System.currentTimeMillis();
         
         try {
-            // Progress - Upload started
+            // ========================================================================
+            // PROGRESS - Upload started
+            // ========================================================================
             if (progressNotifier != null) {
                 progressNotifier.uploadStarted(batchId, filename, file.getSize());
             }
@@ -143,70 +155,81 @@ public class ImageIngestionStrategy implements IngestionStrategy {
                 String.format("%.2f", file.getSize() / 1024.0),
                 extension.toUpperCase());
             
-            // Progress - Validation
+            // ========================================================================
+            // VALIDATION - Security & Basic
+            // ========================================================================
             if (progressNotifier != null) {
                 progressNotifier.notifyProgress(batchId, filename, "VALIDATION", 10, 
                     "Image validation...");
             }
             
             validateSecurity(file, extension);
-            checkDuplication(file, filename);
             validateBasic(file, filename);
             
-            // Progress - Upload completed
+            // ========================================================================
+            // PROGRESS - Upload completed
+            // ========================================================================
             if (progressNotifier != null) {
                 progressNotifier.uploadCompleted(batchId, filename);
             }
             
-            // Streaming detection
+            // ========================================================================
+            // PROCESSING - Streaming ou Normal
+            // ========================================================================
+            if (progressNotifier != null) {
+                progressNotifier.processingStarted(batchId, filename);
+            }
+            
             IngestionResult result;
+            
             if (StreamingFileReader.requiresStreaming(file)) {
                 log.info("📖 [{}] STREAMING enabled: {} MB", 
                     getName(), file.getSize() / 1_000_000);
                 result = ingestWithStreaming(file, batchId);
             } else {
+                log.debug("🖼️ [{}] Normal mode: {} KB", 
+                    getName(), file.getSize() / 1024);
                 result = ingestNormal(file, batchId);
             }
             
-            deduplicationService.markAsIngested(file, batchId);
-            
+            // ========================================================================
+            // METRICS
+            // ========================================================================
             long duration = System.currentTimeMillis() - startTime;
             
-            // ✅ MÉTRIQUE: Strategy processing (1 image = 1 embedding)
+            // 1 image = 1 embedding
             ragMetrics.recordStrategyProcessing(
                 getName(),
                 duration,
                 1  // 1 image embedding
             );
             
-            // Progress - Completed
+            // ========================================================================
+            // PROGRESS - Completed
+            // ========================================================================
             if (progressNotifier != null) {
                 progressNotifier.completed(batchId, filename, 0, 1);
             }
             
-            log.info("✅ [{}] Image indexed: duration={}ms mode={}",
-                getName(), duration,
+            log.info("✅ [{}] Image indexed: {} - duration={}ms mode={}",
+                getName(), filename, duration,
                 StreamingFileReader.requiresStreaming(file) ? "STREAMING" : "NORMAL");
             
             return result;
             
-        } catch (DuplicateFileException e) {
-            // Progress - Error
-            if (progressNotifier != null) {
-                progressNotifier.error(batchId, filename, "Already processed");
-            }
-            
-            // ✅ MÉTRIQUE: Duplicate
-            ragMetrics.recordDuplicate(getName());
-            
-            throw e;
-            
         } catch (Exception e) {
+            // ========================================================================
+            // ERROR HANDLING
+            // ========================================================================
+            
             // Progress - Error
             if (progressNotifier != null) {
                 progressNotifier.error(batchId, filename, e.getMessage());
             }
             
+            log.error("❌ [{}] Image processing error: {}", getName(), filename, e);
+            
+            // Re-throw exception
             throw e;
         }
     }

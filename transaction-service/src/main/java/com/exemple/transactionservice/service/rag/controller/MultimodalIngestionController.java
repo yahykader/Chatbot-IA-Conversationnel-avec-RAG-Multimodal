@@ -1,12 +1,14 @@
 // ============================================================================
-// CONTROLLER - MultimodalIngestionController.java (VERSION COMPLÈTE MODIFIÉE)
-// API REST pour ingestion multimodale avec gestion des doublons
+// CONTROLLER - MultimodalIngestionController.java (VERSION COMPLÈTE OPTIMISÉE)
+// API REST pour ingestion multimodale avec gestion avancée des doublons
 // ============================================================================
 package com.exemple.transactionservice.service.rag.controller;
 
 import com.exemple.transactionservice.service.rag.ingestion.IngestionOrchestrator;
 import com.exemple.transactionservice.service.rag.ingestion.model.IngestionResult;
 import com.exemple.transactionservice.service.rag.ingestion.tracker.IngestionTracker;
+import com.exemple.transactionservice.service.rag.ingestion.deduplication.DeduplicationService;
+import com.exemple.transactionservice.service.rag.ingestion.progress.ProgressService;
 import com.exemple.transactionservice.exception.DuplicateFileException;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -21,11 +23,10 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * Contrôleur REST pour l'ingestion multimodale de documents.
- * VERSION COMPLÈTE avec monitoring avancé + gestion des doublons.
+ * VERSION COMPLÈTE OPTIMISÉE avec gestion avancée des doublons.
  * 
  * ✅ Support 1000+ formats de fichiers
  * ✅ Streaming automatique pour fichiers >100MB
@@ -35,26 +36,36 @@ import java.util.stream.Collectors;
  * ✅ Monitoring temps réel
  * ✅ Health checks détaillés
  * ✅ Statistiques complètes
- * ✅ Détection automatique des doublons // ✅ AJOUTÉ
+ * ✅ Détection doublons AVANT traitement async
+ * ✅ Notifications WebSocket pour erreurs
+ * ✅ Info batch existant dans réponses 409
  * 
  * @author RAG Team
- * @version 2.1 (avec gestion doublons)
+ * @version 3.0 (Gestion doublons optimisée)
  */
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/ingestion")
-@Tag(name = "Ingestion", description = "API d'ingestion multimodale avec monitoring")
+@Tag(name = "Ingestion", description = "API d'ingestion multimodale avec monitoring avancé")
 public class MultimodalIngestionController {
     
     private final IngestionOrchestrator ingestionService;
     private final IngestionTracker tracker;
+    private final DeduplicationService deduplicationService;
+    private final ProgressService progressService;
     
     public MultimodalIngestionController(
             IngestionOrchestrator ingestionService,
-            IngestionTracker tracker) {
+            IngestionTracker tracker,
+            DeduplicationService deduplicationService,
+            ProgressService progressService) {
+        
         this.ingestionService = ingestionService;
         this.tracker = tracker;
-        log.info("✅ Controller initialisé (avec monitoring avancé + gestion doublons)"); // ✅ MODIFIÉ
+        this.deduplicationService = deduplicationService;
+        this.progressService = progressService;
+        
+        log.info("✅ Controller initialisé (monitoring + gestion doublons optimisée)");
     }
     
     // ========================================================================
@@ -63,7 +74,7 @@ public class MultimodalIngestionController {
     
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @Operation(summary = "Upload fichier (synchrone)", 
-               description = "Streaming automatique >100MB, détection doublons automatique") // ✅ MODIFIÉ
+               description = "Streaming automatique >100MB, détection doublons automatique")
     public ResponseEntity<IngestionResponse> uploadFile(
             @Parameter(description = "Fichier à ingérer")
             @RequestParam("file") MultipartFile file,
@@ -103,7 +114,7 @@ public class MultimodalIngestionController {
                 .durationMs(duration)
                 .streamingUsed(file.getSize() > 100_000_000)
                 .message("Ingestion réussie")
-                .duplicate(false) // ✅ AJOUTÉ
+                .duplicate(false)
                 .build();
             
             return ResponseEntity.ok(response);
@@ -116,7 +127,6 @@ public class MultimodalIngestionController {
                     .message(e.getMessage())
                     .build());
         
-        // ✅ NOUVEAU CATCH AJOUTÉ ICI:
         } catch (DuplicateFileException e) {
             log.warn("⚠️ Doublon détecté: {} (batch existant: {})", 
                 file.getOriginalFilename(), e.getExistingBatchId());
@@ -127,10 +137,10 @@ public class MultimodalIngestionController {
                     .filename(file.getOriginalFilename())
                     .fileSize(file.getSize())
                     .message("⚠️ Ce fichier a déjà été uploadé et traité")
-                    .batchId(String.valueOf(e.getExistingBatchId()))
+                    .batchId(e.getExistingBatchId())
                     .duplicate(true)
+                    .existingBatchId(e.getExistingBatchId())
                     .build());
-        // FIN DU NOUVEAU CATCH
                     
         } catch (Exception e) {
             log.error("❌ Erreur ingestion: {}", file.getOriginalFilename(), e);
@@ -143,12 +153,12 @@ public class MultimodalIngestionController {
     }
     
     // ========================================================================
-    // UPLOAD ASYNCHRONE
+    // UPLOAD ASYNCHRONE OPTIMISÉ
     // ========================================================================
     
     @PostMapping(value = "/upload/async", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @Operation(summary = "Upload asynchrone", 
-               description = "Retourne immédiatement avec batchId")
+               description = "Retourne immédiatement avec batchId, détection doublons avant traitement")
     public ResponseEntity<AsyncResponse> uploadFileAsync(
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "batchId", required = false) String batchId) {
@@ -163,7 +173,41 @@ public class MultimodalIngestionController {
             log.info("📥 Upload async: {} - batch: {}",
                 file.getOriginalFilename(), batchId);
             
+            // ========================================================================
+            // AMÉLIORATION 1: Vérifier doublon AVANT le traitement async
+            // ========================================================================
+            try {
+                byte[] fileContent = file.getBytes();
+                String hash = deduplicationService.computeHash(fileContent);
+                
+                if (deduplicationService.isDuplicateByHash(hash)) {
+                    String existingBatchId = deduplicationService.getExistingBatchId(hash);
+                    
+                    log.warn("⚠️ Async - Doublon détecté AVANT traitement: {} (batch existant: {})", 
+                        file.getOriginalFilename(), existingBatchId);
+                    
+                    // ✅ Retourner immédiatement une erreur 409
+                    return ResponseEntity.status(HttpStatus.CONFLICT)
+                        .body(AsyncResponse.builder()
+                            .accepted(false)
+                            .batchId(existingBatchId)
+                            .filename(file.getOriginalFilename())
+                            .message("⚠️ Ce fichier a déjà été uploadé")
+                            .statusUrl("/api/v1/ingestion/status/" + existingBatchId)
+                            .duplicate(true)
+                            .existingBatchId(existingBatchId)
+                            .build());
+                }
+            } catch (Exception e) {
+                log.warn("⚠️ Erreur vérification doublon (traitement continue): {}", e.getMessage());
+                // Continue l'upload si erreur dedup (ne pas bloquer)
+            }
+            
+            // ========================================================================
+            // AMÉLIORATION 2: Gérer les erreurs dans le CompletableFuture
+            // ========================================================================
             final String finalBatchId = batchId;
+            
             ingestionService.ingestFileAsync(file, batchId)
                 .thenAccept(result -> 
                     log.info("✅ Async OK: {} - text={} images={}",
@@ -171,23 +215,49 @@ public class MultimodalIngestionController {
                         result.textEmbeddings(),
                         result.imageEmbeddings()))
                 .exceptionally(ex -> {
-                    // ✅ VÉRIFICATION DOUBLON AJOUTÉE:
+                    // Gestion doublon (si pas détecté avant)
                     if (ex.getCause() instanceof DuplicateFileException) {
                         DuplicateFileException dupEx = (DuplicateFileException) ex.getCause();
-                        log.warn("⚠️ Async - Doublon détecté: {} (batch: {})", 
+                        
+                        log.warn("⚠️ Async - Doublon détecté PENDANT traitement: {} (batch: {})", 
                             file.getOriginalFilename(), dupEx.getExistingBatchId());
+                        
+                        // ✅ AMÉLIORATION: Envoyer notification WebSocket
+                        try {
+                            progressService.error(
+                                finalBatchId, 
+                                file.getOriginalFilename(), 
+                                "⚠️ Fichier déjà uploadé (batch: " + dupEx.getExistingBatchId() + ")"
+                            );
+                        } catch (Exception e) {
+                            log.debug("Impossible d'envoyer notification WebSocket", e);
+                        }
+                        
                     } else {
                         log.error("❌ Async erreur: {}", file.getOriginalFilename(), ex);
+                        
+                        // ✅ AMÉLIORATION: Envoyer notification WebSocket erreur
+                        try {
+                            progressService.error(
+                                finalBatchId, 
+                                file.getOriginalFilename(), 
+                                "❌ Erreur: " + ex.getMessage()
+                            );
+                        } catch (Exception e) {
+                            log.debug("Impossible d'envoyer notification WebSocket", e);
+                        }
                     }
                     return null;
                 });
             
+            // Retour immédiat ACCEPTED (car pas de doublon détecté)
             AsyncResponse response = AsyncResponse.builder()
                 .accepted(true)
                 .batchId(batchId)
                 .filename(file.getOriginalFilename())
                 .message("Traitement démarré")
                 .statusUrl("/api/v1/ingestion/status/" + batchId)
+                .duplicate(false)
                 .build();
             
             return ResponseEntity.status(HttpStatus.ACCEPTED).body(response);
@@ -198,17 +268,18 @@ public class MultimodalIngestionController {
                 .body(AsyncResponse.builder()
                     .accepted(false)
                     .message(e.getMessage())
+                    .duplicate(false)
                     .build());
         }
     }
     
     // ========================================================================
-    // UPLOAD BATCH
+    // UPLOAD BATCH OPTIMISÉ
     // ========================================================================
     
     @PostMapping(value = "/upload/batch", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @Operation(summary = "Upload multiple fichiers", 
-               description = "Traitement batch asynchrone")
+               description = "Traitement batch asynchrone avec détection doublons pré-traitement")
     public ResponseEntity<BatchResponse> uploadBatch(
             @RequestParam("files") List<MultipartFile> files,
             @RequestParam(value = "batchId", required = false) String batchId) {
@@ -233,18 +304,64 @@ public class MultimodalIngestionController {
             log.info("📥 Batch: {} fichiers ({} MB) - batch: {}",
                 files.size(), totalSize / 1_000_000, batchId);
             
+            // ========================================================================
+            // ✅ AMÉLIORATION: Pré-vérifier les doublons avant le traitement
+            // ========================================================================
+            List<String> duplicates = new ArrayList<>();
+            Map<String, String> duplicateInfo = new HashMap<>();
+            
+            for (MultipartFile file : files) {
+                try {
+                    byte[] content = file.getBytes();
+                    String hash = deduplicationService.computeHash(content);
+                    
+                    if (deduplicationService.isDuplicateByHash(hash)) {
+                        String existingBatchId = deduplicationService.getExistingBatchId(hash);
+                        duplicates.add(file.getOriginalFilename());
+                        duplicateInfo.put(file.getOriginalFilename(), existingBatchId);
+                        
+                        log.warn("⚠️ Doublon détecté dans batch: {} (batch existant: {})", 
+                            file.getOriginalFilename(), existingBatchId);
+                    }
+                } catch (Exception e) {
+                    log.warn("⚠️ Erreur vérification doublon pour: {}", 
+                        file.getOriginalFilename(), e);
+                }
+            }
+            
+            // ========================================================================
+            // ✅ AMÉLIORATION: Informer le client si des doublons sont détectés
+            // ========================================================================
+            if (!duplicates.isEmpty()) {
+                log.warn("⚠️ Batch contient {} doublon(s) sur {} fichiers", 
+                    duplicates.size(), files.size());
+            }
+            
             final String finalBatchId = batchId;
+            final int duplicateCount = duplicates.size();
+            
             ingestionService.ingestBatch(files, batchId)
                 .thenAccept(results -> 
-                    log.info("✅ Batch OK: {}/{} fichiers",
-                        results.size(), files.size()))
+                    log.info("✅ Batch OK: {}/{} fichiers traités ({} doublons skippés)",
+                        results.size(), files.size(), duplicateCount))
                 .exceptionally(ex -> {
-                    // ✅ VÉRIFICATION DOUBLON AJOUTÉE:
                     if (ex.getCause() instanceof DuplicateFileException) {
-                        log.warn("⚠️ Batch - Doublon(s) détecté(s)");
+                        log.warn("⚠️ Batch - Doublon(s) détecté(s) pendant traitement");
                     } else {
                         log.error("❌ Batch erreur", ex);
                     }
+                    
+                    // ✅ Envoyer notification WebSocket
+                    try {
+                        progressService.error(
+                            finalBatchId, 
+                            "batch", 
+                            "Erreur traitement batch: " + ex.getMessage()
+                        );
+                    } catch (Exception e) {
+                        log.debug("Impossible d'envoyer notification WebSocket", e);
+                    }
+                    
                     return null;
                 });
             
@@ -258,8 +375,13 @@ public class MultimodalIngestionController {
                 .fileCount(files.size())
                 .filenames(filenames)
                 .totalSize(totalSize)
-                .message("Batch en cours")
+                .message(duplicates.isEmpty() 
+                    ? "Batch en cours" 
+                    : String.format("Batch en cours (%d doublon(s) seront skippés)", duplicateCount))
                 .statusUrl("/api/v1/ingestion/status/" + batchId)
+                .duplicateCount(duplicateCount)
+                .duplicateFiles(duplicates)
+                .duplicateInfo(duplicateInfo)
                 .build();
             
             return ResponseEntity.status(HttpStatus.ACCEPTED).body(response);
@@ -275,12 +397,9 @@ public class MultimodalIngestionController {
     }
 
     // ========================================================================
-    // ✨ UPLOAD BATCH DÉTAILLÉ
+    // UPLOAD BATCH DÉTAILLÉ OPTIMISÉ
     // ========================================================================
 
-    /**
-     * ✨ NOUVEAU : Upload batch avec résultat détaillé par fichier
-     */
     @PostMapping(value = "/upload/batch/detailed", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @Operation(summary = "Upload batch avec détails par fichier", 
             description = "Retourne le résultat détaillé pour chaque fichier du batch")
@@ -308,34 +427,76 @@ public class MultimodalIngestionController {
             log.info("📥 Batch détaillé: {} fichiers ({} MB) - batch: {}",
                 files.size(), totalSize / 1_000_000, batchId);
             
+            // ========================================================================
+            // ✅ AMÉLIORATION: Pré-vérifier les doublons
+            // ========================================================================
+            List<String> duplicates = new ArrayList<>();
+            Map<String, String> duplicateInfo = new HashMap<>();
+            
+            for (MultipartFile file : files) {
+                try {
+                    byte[] content = file.getBytes();
+                    String hash = deduplicationService.computeHash(content);
+                    
+                    if (deduplicationService.isDuplicateByHash(hash)) {
+                        String existingBatchId = deduplicationService.getExistingBatchId(hash);
+                        duplicates.add(file.getOriginalFilename());
+                        duplicateInfo.put(file.getOriginalFilename(), existingBatchId);
+                        
+                        log.warn("⚠️ Doublon batch détaillé: {} (batch: {})", 
+                            file.getOriginalFilename(), existingBatchId);
+                    }
+                } catch (Exception e) {
+                    log.warn("⚠️ Erreur vérif doublon: {}", file.getOriginalFilename(), e);
+                }
+            }
+            
             final String finalBatchId = batchId;
+            final int duplicateCount = duplicates.size();
             
             // Appel à la méthode détaillée du service
             ingestionService.ingestBatchDetailed(files, batchId)
                 .thenAccept(batchResult -> 
-                    log.info("✅ Batch détaillé OK: {}/{} succès, {} doublons, durée={}ms", // ✅ MODIFIÉ
+                    log.info("✅ Batch détaillé OK: {}/{} succès, {} doublons, durée={}ms",
                         batchResult.successCount(),
                         files.size(),
-                        batchResult.duplicateCount(), // ✅ AJOUTÉ
+                        batchResult.duplicateCount(),
                         batchResult.durationMs()))
                 .exceptionally(ex -> {
-                    // ✅ VÉRIFICATION DOUBLON AJOUTÉE:
                     if (ex.getCause() instanceof DuplicateFileException) {
                         log.warn("⚠️ Batch détaillé - Doublon(s) détecté(s)");
                     } else {
                         log.error("❌ Batch détaillé erreur", ex);
                     }
+                    
+                    // ✅ WebSocket notification
+                    try {
+                        progressService.error(
+                            finalBatchId, 
+                            "batch-detailed", 
+                            "Erreur: " + ex.getMessage()
+                        );
+                    } catch (Exception e) {
+                        log.debug("Impossible d'envoyer notification WebSocket", e);
+                    }
+                    
                     return null;
                 });
             
             BatchDetailedResponse response = BatchDetailedResponse.builder()
                 .accepted(true)
+                .success(true)
                 .batchId(batchId)
                 .fileCount(files.size())
                 .totalSize(totalSize)
-                .message("Batch détaillé en cours de traitement")
+                .message(duplicates.isEmpty()
+                    ? "Batch détaillé en cours de traitement"
+                    : String.format("Batch en cours (%d doublon(s) détectés)", duplicateCount))
                 .statusUrl("/api/v1/ingestion/status/" + batchId)
                 .resultUrl("/api/v1/ingestion/batch/result/" + batchId)
+                .duplicateCount(duplicateCount)
+                .duplicateFiles(duplicates)
+                .duplicateInfo(duplicateInfo)
                 .build();
             
             return ResponseEntity.status(HttpStatus.ACCEPTED).body(response);
@@ -345,6 +506,7 @@ public class MultimodalIngestionController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(BatchDetailedResponse.builder()
                     .accepted(false)
+                    .success(false)
                     .message("Erreur: " + e.getMessage())
                     .build());
         }
@@ -427,15 +589,11 @@ public class MultimodalIngestionController {
     }
     
     // ========================================================================
-    // ✨ NOUVEAUX ENDPOINTS - MONITORING AVANCÉ
+    // MONITORING AVANCÉ
     // ========================================================================
     
-    /**
-     * ✨ NOUVEAU : Ingestions actives en temps réel
-     */
     @GetMapping("/active")
-    @Operation(summary = "Liste des ingestions en cours",
-               description = "Monitoring temps réel des ingestions actives")
+    @Operation(summary = "Liste des ingestions en cours")
     public ResponseEntity<ActiveIngestionsResponse> getActiveIngestions() {
         try {
             var activeList = ingestionService.getActiveIngestions();
@@ -467,12 +625,8 @@ public class MultimodalIngestionController {
         }
     }
     
-    /**
-     * ✨ NOUVEAU : Statistiques globales du service
-     */
     @GetMapping("/stats")
-    @Operation(summary = "Statistiques globales",
-               description = "Stats détaillées sur le service d'ingestion")
+    @Operation(summary = "Statistiques globales")
     public ResponseEntity<StatsResponse> getStats() {
         try {
             var stats = ingestionService.getStats();
@@ -493,12 +647,8 @@ public class MultimodalIngestionController {
         }
     }
     
-    /**
-     * ✨ NOUVEAU : Health check détaillé
-     */
     @GetMapping("/health/detailed")
-    @Operation(summary = "Health check détaillé",
-               description = "État détaillé du service avec tous les composants")
+    @Operation(summary = "Health check détaillé")
     public ResponseEntity<DetailedHealthResponse> healthDetailed() {
         try {
             var healthReport = ingestionService.getHealthReport();
@@ -531,12 +681,8 @@ public class MultimodalIngestionController {
         }
     }
     
-    /**
-     * ✨ NOUVEAU : Liste des strategies disponibles
-     */
     @GetMapping("/strategies")
-    @Operation(summary = "Liste des strategies",
-               description = "Toutes les strategies d'ingestion disponibles")
+    @Operation(summary = "Liste des strategies")
     public ResponseEntity<StrategiesResponse> getStrategies() {
         try {
             var strategiesInfo = ingestionService.getStrategiesInfo();
@@ -564,10 +710,6 @@ public class MultimodalIngestionController {
         }
     }
     
-    // ========================================================================
-    // HEALTH BASIQUE (conservé pour compatibilité)
-    // ========================================================================
-    
     @GetMapping("/health")
     @Operation(summary = "Health check basique")
     public ResponseEntity<Map<String, Object>> health() {
@@ -577,7 +719,8 @@ public class MultimodalIngestionController {
         health.put("timestamp", new Date());
         health.put("streaming", true);
         health.put("maxFileSize", "5GB");
-        health.put("duplicateDetection", true); // ✅ AJOUTÉ
+        health.put("duplicateDetection", true);
+        health.put("websocketProgress", true);
         
         return ResponseEntity.ok(health);
     }
@@ -604,7 +747,7 @@ public class MultimodalIngestionController {
     }
     
     // ========================================================================
-    // DTOs EXISTANTS
+    // DTOs OPTIMISÉS
     // ========================================================================
     
     @Data
@@ -619,7 +762,8 @@ public class MultimodalIngestionController {
         private Long durationMs;
         private Boolean streamingUsed;
         private String message;
-        private Boolean duplicate; // ✅ AJOUTÉ
+        private Boolean duplicate;
+        private String existingBatchId;  // ✅ NOUVEAU
     }
     
     @Data
@@ -630,6 +774,8 @@ public class MultimodalIngestionController {
         private String filename;
         private String message;
         private String statusUrl;
+        private Boolean duplicate;        // ✅ NOUVEAU
+        private String existingBatchId;   // ✅ NOUVEAU
     }
     
     @Data
@@ -642,6 +788,25 @@ public class MultimodalIngestionController {
         private Long totalSize;
         private String message;
         private String statusUrl;
+        private Integer duplicateCount;           // ✅ NOUVEAU
+        private List<String> duplicateFiles;      // ✅ NOUVEAU
+        private Map<String, String> duplicateInfo; // ✅ NOUVEAU: filename → existingBatchId
+    }
+    
+    @Data
+    @Builder
+    public static class BatchDetailedResponse {
+        private Boolean accepted;
+        private Boolean success;
+        private String batchId;
+        private Integer fileCount;
+        private Long totalSize;
+        private String message;
+        private String statusUrl;
+        private String resultUrl;
+        private Integer duplicateCount;           // ✅ NOUVEAU
+        private List<String> duplicateFiles;      // ✅ NOUVEAU
+        private Map<String, String> duplicateInfo; // ✅ NOUVEAU
     }
     
     @Data
@@ -663,10 +828,6 @@ public class MultimodalIngestionController {
         private Integer deletedCount;
         private String message;
     }
-    
-    // ========================================================================
-    // ✨ NOUVEAUX DTOs - MONITORING
-    // ========================================================================
     
     @Data
     @Builder
@@ -704,21 +865,5 @@ public class MultimodalIngestionController {
     public static class StrategiesResponse {
         private Integer count;
         private List<Map<String, Object>> strategies;
-    }
-
-    /**
-     * ✨ NOUVEAU DTO : Réponse batch détaillé
-     */
-    @Data
-    @Builder
-    public static class BatchDetailedResponse {
-        private Boolean accepted;
-        private Boolean success;
-        private String batchId;
-        private Integer fileCount;
-        private Long totalSize;
-        private String message;
-        private String statusUrl;
-        private String resultUrl;
     }
 }

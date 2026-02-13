@@ -1198,3 +1198,135 @@ Objectifs du Cache Redis
   ✅Réduire les coûts : Éviter appels LLM redondants (économie 70-90%)
   ✅Améliorer performances : Réponse < 100ms vs 2-5s
   ✅Optimiser UX : Expérience instantanée
+
+
+✅ CHECKLIST IMPLÉMENTATION
+Phase 1: Core Retrieval Augmentor (Semaine 1-2)
+
+ Query Transformer (LLM-based)
+ Query Router (rule-based)
+ Parallel Retrievers (text + image + BM25)
+ RRF Aggregator
+ Content Injector
+
+Phase 2: Streaming API (Semaine 3-4)
+
+ SSE endpoint
+ Event emission system
+ WebSocket support (optional)
+ Conversation Manager (Redis)
+
+Phase 3: Integration (Semaine 5)
+
+ Connect Augmentor → Streaming
+ Event pipeline complete
+ Error handling
+ Monitoring & metrics
+
+Phase 4: Frontend (Semaine 6)
+
+ React components
+ Real-time UI updates
+ Source panel
+ Citation highlighting
+
+
+
+
+
+
+
+## 📋 9. Project Structure (Angular 21 Standalone)
+```
+src/
+├── app/
+│   ├── app.component.ts (standalone)
+│   ├── app.config.ts ⭐ (NEW)
+│   ├── app.routes.ts ⭐ (NEW)
+│   │
+│   ├── core/
+│   │   ├── services/
+│   │   │   ├── ingestion-api.service.ts
+│   │   │   ├── streaming-api.service.ts
+│   │   │   ├── websocket-progress.service.ts
+│   │   │   └── crud-api.service.ts
+│   │   └── models/
+│   │
+│   ├── features/
+│   │   ├── ingestion/
+│   │   │   ├── store/
+│   │   │   │   ├── ingestion.state.ts
+│   │   │   │   ├── ingestion.actions.ts
+│   │   │   │   ├── ingestion.reducer.ts
+│   │   │   │   ├── ingestion.effects.ts
+│   │   │   │   ├── ingestion.selectors.ts
+│   │   │   │   ├── progress.state.ts
+│   │   │   │   ├── progress.actions.ts
+│   │   │   │   ├── progress.reducer.ts
+│   │   │   │   ├── progress.effects.ts
+│   │   │   │   └── progress.selectors.ts
+│   │   │   │
+│   │   │   ├── components/ (all standalone)
+│   │   │   │   ├── upload-item/
+│   │   │   │   └── progress-panel/
+│   │   │   │
+│   │   │   └── pages/ (all standalone)
+│   │   │       └── upload-page/
+│   │   │
+│   │   ├── chat/ (similar structure)
+│   │   └── management/ (similar structure)
+│   │
+│   └── shared/
+│       └── components/ (all standalone)
+│
+├── main.ts ⭐ (bootstrapApplication)
+├── styles.scss
+└── index.html
+
+
+
+
+## 📚 Documentation Finale
+
+### Architecture Summary
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     RAG MULTIMODAL SYSTEM                    │
+│                    With Deduplication                        │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Frontend (Angular 21 + NgRx)                               │
+│  ├── Upload Components                                       │
+│  ├── WebSocket Progress                                      │
+│  ├── Duplicate Detection (409 handling)                     │
+│  └── Real-time Notifications                                │
+│                                                              │
+│  Backend (Spring Boot)                                       │
+│  ├── IngestionOrchestrator (Central Logic)                  │
+│  │   ├── Antivirus Scan                                     │
+│  │   ├── Strategy Selection                                 │
+│  │   ├── Hash Calculation                                   │
+│  │   ├── 🔑 Duplicate Check (UNIQUE)                        │
+│  │   ├── File Registration                                  │
+│  │   └── Error Handling                                     │
+│  │                                                           │
+│  ├── Strategies (6 Strategies)                              │
+│  │   ├── PdfIngestionStrategy                               │
+│  │   ├── DocxIngestionStrategy                              │
+│  │   ├── XlsxIngestionStrategy                              │
+│  │   ├── ImageIngestionStrategy                             │
+│  │   ├── TextIngestionStrategy                              │
+│  │   └── TikaIngestionStrategy (Universal Fallback)         │
+│  │                                                           │
+│  ├── DeduplicationService (Redis)                           │
+│  ├── ProgressService (WebSocket)                            │
+│  ├── RAGMetrics (Prometheus)                                │
+│  └── MultimodalIngestionController (REST API)               │
+│                                                              │
+│  Infrastructure                                              │
+│  ├── Redis (Deduplication Cache)                            │
+│  ├── Qdrant (Vector Database)                               │
+│  ├── Grafana (Monitoring)                                   │
+│  └── ClamAV (Antivirus - Optional)                          │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘

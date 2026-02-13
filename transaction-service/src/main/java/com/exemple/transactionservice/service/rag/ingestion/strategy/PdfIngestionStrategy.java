@@ -55,8 +55,6 @@ import java.util.concurrent.TimeoutException;
 /**
  * Stratégie d'ingestion pour fichiers PDF - VERSION COMPLÈTE
  * 
- * ✅ ADAPTÉ AVEC RAGMetrics unifié
- * 
  * Fonctionnalités:
  * - Streaming pour gros PDFs (>100MB)
  * - Progress temps réel via ProgressNotifier
@@ -66,9 +64,26 @@ import java.util.concurrent.TimeoutException;
  * - Métriques Prometheus via RAGMetrics
  * - Cache embeddings
  * - Retry automatique
- * 
- * @author RAG Team
- * @version 3.0 - Adapté avec RAGMetrics unifié
+*  ✅ Nouveau Flow (Clean)
+        Upload PDF
+            ↓
+        IngestionOrchestrator.ingestFileInternal()
+            ├── Antivirus scan ✅
+            ├── Select strategy ✅
+            ├── Calculate hash ✅
+            ├── isDuplicateAndRecord() ✅ (vérification unique)
+            │   └── Si doublon: throw DuplicateFileException
+            ├── registerFile() ✅ (enregistrement unique)
+            └── Call strategy.ingest() ✅
+                ↓
+                PdfIngestionStrategy.ingest()
+                ├── Progress: uploadStarted ✅
+                ├── Validate signature ✅
+                ├── Progress: uploadCompleted ✅
+                ├── ingestWithStreaming() ou ingestNormal() ✅
+                ├── Record metrics ✅
+                ├── Progress: completed ✅
+                └── Return result ✅
  */
 @Slf4j
 @Component
@@ -139,7 +154,9 @@ public class PdfIngestionStrategy implements IngestionStrategy {
         long startTime = System.currentTimeMillis();
         
         try {
-            // Progress - Upload started
+            // ========================================================================
+            // PROGRESS - Upload started
+            // ========================================================================
             if (progressNotifier != null) {
                 progressNotifier.uploadStarted(batchId, filename, fileSize);
             }
@@ -147,7 +164,9 @@ public class PdfIngestionStrategy implements IngestionStrategy {
             log.info("📕 [{}] Processing PDF: {} ({} MB)", 
                 getName(), filename, fileSize / 1_000_000);
             
-            // Progress - Validation
+            // ========================================================================
+            // VALIDATION SIGNATURE
+            // ========================================================================
             if (progressNotifier != null) {
                 progressNotifier.notifyProgress(batchId, filename, "VALIDATION", 8, 
                     "PDF validation...");
@@ -155,63 +174,54 @@ public class PdfIngestionStrategy implements IngestionStrategy {
             
             signatureValidator.validate(file, "pdf");
             
-            // Progress - Deduplication
-            if (progressNotifier != null) {
-                progressNotifier.notifyProgress(batchId, filename, "DEDUPLICATION", 10, 
-                    "Checking duplicates...");
-            }
-            
-            DeduplicationService.DuplicationInfo dupInfo = 
-                deduplicationService.checkDuplication(file);
-            
-            if (dupInfo.isDuplicate()) {
-                log.warn("⚠️ [{}] PDF duplicate: {}", getName(), filename);
-                
-                // Progress - Error
-                if (progressNotifier != null) {
-                    progressNotifier.error(batchId, filename, 
-                        "Already processed (batch: " + dupInfo.originalBatchId() + ")");
-                }
-                
-                // ✅ MÉTRIQUE: Duplicate
-                ragMetrics.recordDuplicate(getName());
-                
-                throw new DuplicateFileException(
-                    String.format("PDF already processed (batch: %s)", dupInfo.originalBatchId()),
-                    dupInfo.originalBatchId()
-                );
-            }
-            
-            // Progress - Upload completed
+            // ========================================================================
+            // PROGRESS - Upload completed
+            // ========================================================================
             if (progressNotifier != null) {
                 progressNotifier.uploadCompleted(batchId, filename);
             }
             
+            // ========================================================================
+            // PROCESSING - Streaming ou Normal
+            // ========================================================================
             IngestionResult result;
             
             if (StreamingFileReader.requiresStreaming(file)) {
                 log.info("📖 [{}] STREAMING enabled: {} MB", 
                     getName(), fileSize / 1_000_000);
+                
+                if (progressNotifier != null) {
+                    progressNotifier.processingStarted(batchId, filename);
+                }
+                
                 result = ingestWithStreaming(file, batchId);
+                
             } else {
                 log.debug("📄 [{}] Normal mode: {} MB", 
                     getName(), fileSize / 1_000_000);
+                
+                if (progressNotifier != null) {
+                    progressNotifier.processingStarted(batchId, filename);
+                }
+                
                 result = ingestNormal(file, batchId);
             }
             
-            deduplicationService.markAsIngested(file, batchId);
-            
+            // ========================================================================
+            // METRICS
+            // ========================================================================
             long duration = System.currentTimeMillis() - startTime;
             int totalEmbeddings = result.textEmbeddings() + result.imageEmbeddings();
             
-            // ✅ MÉTRIQUE: Strategy processing
             ragMetrics.recordStrategyProcessing(
                 getName(),
                 duration,
                 totalEmbeddings
             );
             
-            // Progress - Completed
+            // ========================================================================
+            // PROGRESS - Completed
+            // ========================================================================
             if (progressNotifier != null) {
                 progressNotifier.completed(batchId, filename, 
                     result.textEmbeddings(), result.imageEmbeddings());
@@ -224,16 +234,19 @@ public class PdfIngestionStrategy implements IngestionStrategy {
             
             return result;
             
-        } catch (DuplicateFileException e) {
-            throw e;
-            
         } catch (Exception e) {
+            // ========================================================================
+            // ERROR HANDLING
+            // ========================================================================
+            
             // Progress - Error
             if (progressNotifier != null) {
                 progressNotifier.error(batchId, filename, e.getMessage());
             }
             
             log.error("❌ [{}] PDF processing error: {}", getName(), filename, e);
+            
+            // Re-throw exception
             throw e;
         }
     }

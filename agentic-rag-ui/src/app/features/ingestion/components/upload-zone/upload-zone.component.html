@@ -1,0 +1,67 @@
+<!-- Version avec état disabled -->
+<div 
+  class="upload-zone"
+  [class.dragging]="isDragging"
+  [class.disabled]="disabled"
+  (dragover)="onDragOver($event)"
+  (dragleave)="onDragLeave($event)"
+  (drop)="onDrop($event)"
+  (click)="triggerFileInput()">
+  
+  <div class="upload-zone-content">
+    
+    <!-- Icon avec animation -->
+    <div class="upload-icon mb-3">
+      <i 
+        class="bi display-1"
+        [class.bi-cloud-arrow-up]="!disabled"
+        [class.bi-lock]="disabled"
+        [class.text-primary]="!disabled"
+        [class.text-muted]="disabled"></i>
+    </div>
+    
+    <!-- Main Text -->
+    <h5 class="mb-2" [class.text-muted]="disabled">
+      {{ disabled ? 'Upload désactivé' : 'Glissez-déposez vos fichiers ici' }}
+    </h5>
+    
+    <!-- Secondary Text -->
+    <p class="text-muted mb-3" *ngIf="!disabled">
+      ou cliquez pour sélectionner
+    </p>
+    
+    <!-- Supported Formats Badge -->
+    <div class="supported-formats" *ngIf="!disabled">
+      <small class="text-muted">
+        <i class="bi bi-check-circle text-success me-1"></i>
+        PDF, DOCX, XLSX, Images, Texte et 1000+ formats
+      </small>
+    </div>
+    
+    <!-- File Size Info -->
+    <div class="file-size-info mt-2" *ngIf="!disabled">
+      <small class="text-muted">
+        <i class="bi bi-info-circle me-1"></i>
+        Taille max: {{ formatMaxSize() }}
+      </small>
+    </div>
+    
+    <!-- Multiple Files Info -->
+    <div class="multiple-info mt-2" *ngIf="!disabled && multiple">
+      <small class="badge bg-info">
+        <i class="bi bi-files me-1"></i>
+        Sélection multiple
+      </small>
+    </div>
+  </div>
+  
+  <!-- Hidden File Input -->
+  <input
+    type="file"
+    id="fileInput"
+    class="d-none"
+    [multiple]="multiple"
+    [accept]="acceptedFormats"
+    [disabled]="disabled"
+    (change)="onFileSelected($event)">
+</div>

@@ -194,7 +194,9 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
         long startTime = System.currentTimeMillis();
         
         try {
-            // ✅ AJOUT : Progress - Upload started
+            // ========================================================================
+            // PROGRESS - Upload started
+            // ========================================================================
             if (progressNotifier != null) {
                 progressNotifier.uploadStarted(batchId, filename, fileSize);
             }
@@ -202,17 +204,19 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
             log.info("📗 [{}] Traitement XLSX: {} ({} MB)", 
                 getName(), filename, fileSize / 1_000_000);
             
-            // ========== VALIDATIONS ==========
+            // ========================================================================
+            // VALIDATIONS
+            // ========================================================================
             
+            // Empty file check
             if (file.isEmpty() || fileSize == 0) {
-                // ✅ AJOUT : Progress - Error
                 if (progressNotifier != null) {
                     progressNotifier.error(batchId, filename, "Fichier vide");
                 }
                 throw new IOException("Fichier XLSX vide: " + filename);
             }
             
-            // ✅ AJOUT : Progress - Validation
+            // Signature validation
             if (progressNotifier != null) {
                 progressNotifier.notifyProgress(batchId, filename, "VALIDATION", 8, 
                     "Validation du fichier...");
@@ -220,7 +224,11 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
             
             signatureValidator.validate(file, "xlsx");
             
-            // ✅ AJOUT : Progress - Déduplication
+            // ========================================================================
+            // ✅ SUPPRESSION: Vérification doublon (déjà faite par orchestrator)
+            // ========================================================================
+            // ❌ ANCIEN CODE SUPPRIMÉ:
+            /*
             if (progressNotifier != null) {
                 progressNotifier.notifyProgress(batchId, filename, "DEDUPLICATION", 10, 
                     "Vérification des duplicates...");
@@ -230,7 +238,6 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
                 deduplicationService.checkDuplication(file);
             
             if (dupInfo.isDuplicate()) {
-                // ✅ AJOUT : Progress - Error
                 if (progressNotifier != null) {
                     progressNotifier.error(batchId, filename, 
                         "Fichier déjà traité (batch: " + dupInfo.originalBatchId() + ")");
@@ -243,13 +250,22 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
                     dupInfo.originalBatchId()
                 );
             }
+            */
+            // ✅ FIN SUPPRESSION
             
-            // ✅ AJOUT : Progress - Upload completed
+            // ========================================================================
+            // PROGRESS - Upload completed
+            // ========================================================================
             if (progressNotifier != null) {
                 progressNotifier.uploadCompleted(batchId, filename);
             }
             
-            // ========== DÉTECTION MODE STREAMING ==========
+            // ========================================================================
+            // PROCESSING - Streaming ou Normal
+            // ========================================================================
+            if (progressNotifier != null) {
+                progressNotifier.processingStarted(batchId, filename);
+            }
             
             IngestionResult result;
             
@@ -263,15 +279,23 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
                 result = ingestNormal(file, batchId);
             }
             
-            // ========== POST-TRAITEMENT ==========
+            // ========================================================================
+            // POST-TRAITEMENT
+            // ========================================================================
             
-            deduplicationService.markAsIngested(file, batchId);
+            // ✅ OPTIONNEL: Enregistrement (déjà fait par orchestrator)
+            // deduplicationService.markAsIngested(file, batchId);
+            
+            // Text deduplication cleanup
             textDeduplicationService.clearLocalCache();
             
             var dedupStats = textDeduplicationService.getStats(batchId);
             log.info("📊 [Dedup] Stats - Total indexés: {}, Cache local: {}", 
                 dedupStats.totalIndexed(), dedupStats.localCacheSize());
             
+            // ========================================================================
+            // METRICS
+            // ========================================================================
             long duration = System.currentTimeMillis() - startTime;
             int totalEmbeddings = result.textEmbeddings() + result.imageEmbeddings();
             
@@ -281,7 +305,9 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
                 totalEmbeddings
             );
             
-            // ✅ AJOUT : Progress - Completed
+            // ========================================================================
+            // PROGRESS - Completed
+            // ========================================================================
             if (progressNotifier != null) {
                 progressNotifier.completed(batchId, filename, 
                     result.textEmbeddings(), result.imageEmbeddings());
@@ -294,19 +320,24 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
             
             return result;
             
-        } catch (DuplicateFileException e) {
-            throw e;
-            
         } catch (Exception e) {
-            // ✅ AJOUT : Progress - Error
+            // ========================================================================
+            // ERROR HANDLING
+            // ========================================================================
+            
+            // Progress - Error
             if (progressNotifier != null) {
                 progressNotifier.error(batchId, filename, e.getMessage());
-            }           
+            }
+            
             log.error("❌ [{}] Erreur traitement XLSX: {}", getName(), filename, e);
+            
+            // Re-throw exception
             throw e;
             
         } finally {
-           
+            // Cleanup si nécessaire
+            // Par exemple: fermer des ressources, nettoyer temp files, etc.
         }
     }
     
