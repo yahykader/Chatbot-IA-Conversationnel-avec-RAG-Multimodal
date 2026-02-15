@@ -28,6 +28,8 @@ import { CrudApiService } from './core/services/crud-api.service';
 import { StreamingApiService } from './core/services/streaming-api.service';
 import { WebSocketProgressService } from './core/services/websocket-progress.service';
 import { IngestionApiService } from './core/services/ingestion-api.service';
+import { crudReducer } from './features/ingestion/store/crud.reducer';
+import { CrudEffects } from './features/ingestion/store/crud.effects';
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -56,13 +58,15 @@ export const appConfig: ApplicationConfig = {
     // NgRx Store
     provideStore({
       ingestion: ingestionReducer,
-      progress: progressReducer
+      progress: progressReducer,
+      crud: crudReducer
     }),
     
     // NgRx Effects
     provideEffects([
       IngestionEffects,
-      ProgressEffects
+      ProgressEffects,
+      CrudEffects
     ]),
     
     // NgRx DevTools

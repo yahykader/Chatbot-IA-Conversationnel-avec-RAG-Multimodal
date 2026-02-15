@@ -1,4 +1,4 @@
-
+<!-- features/ingestion/components/upload-item/upload-item.component.html -->
 <div class="card upload-item" [class]="'border-' + getStatusColor()">
   <div class="card-body">
     <div class="row align-items-center">
@@ -15,7 +15,7 @@
           {{ formatFileSize(upload.file.size) }}
         </small>
         
-        <!-- ✅ Real-time Progress Info - SEULEMENT si uploading -->
+        <!-- Real-time Progress Info - SEULEMENT si uploading -->
         <div *ngIf="upload.status === 'uploading' && (progress$ | async) as progress" class="mt-1">
           <small class="text-info">
             <i [class]="'bi ' + getStageIcon(progress.stage) + ' me-1'"></i>
@@ -30,7 +30,7 @@
           {{ getStatusText() }}
         </span>
         
-        <!-- ✅ Progress Percentage - SEULEMENT si uploading -->
+        <!-- Progress Percentage - SEULEMENT si uploading -->
         <div *ngIf="upload.status === 'uploading' && (progress$ | async) as progress" class="mt-1">
           <span class="badge bg-info">
             {{ progress.progressPercentage }}%
@@ -40,22 +40,36 @@
       
       <!-- Actions -->
       <div class="col-auto">
+        <!-- Bouton Start (si pending) -->
         <button 
           *ngIf="upload.status === 'pending'"
           class="btn btn-sm btn-success me-2"
-          (click)="start.emit()">
+          (click)="onStart()"
+          title="Démarrer l'upload">
           <i class="bi bi-play-fill"></i>
         </button>
         
+        <!-- Bouton Delete -->
         <button 
           class="btn btn-sm btn-outline-danger"
-          (click)="remove.emit()">
-          <i class="bi bi-trash"></i>
+          (click)="onDelete()"
+          [disabled]="isDeleting$ | async"
+          [title]="getDeleteTooltip()">
+          <!-- Spinner si suppression en cours -->
+          <span 
+            *ngIf="isDeleting$ | async"
+            class="spinner-border spinner-border-sm"
+            role="status">
+          </span>
+          <!-- Icône trash si pas de suppression -->
+          <i 
+            *ngIf="!(isDeleting$ | async)"
+            class="bi bi-trash"></i>
         </button>
       </div>
     </div>
     
-    <!-- ✅ Real-time Progress Bar - SEULEMENT si uploading ET progress existe -->
+    <!-- Real-time Progress Bar - SEULEMENT si uploading -->
     <div *ngIf="upload.status === 'uploading' && (progress$ | async) as progress" class="mt-3">
       <div class="progress" style="height: 25px;">
         <div 
@@ -84,7 +98,7 @@
       </div>
     </div>
     
-    <!-- ✅ DUPLICATE MESSAGE -->
+    <!-- DUPLICATE MESSAGE -->
     <div *ngIf="upload.status === 'duplicate'" class="mt-2">
       <div class="alert alert-warning mb-0 py-2">
         <i class="bi bi-exclamation-triangle-fill me-1"></i>
@@ -102,7 +116,7 @@
       </div>
     </div>
     
-    <!-- ✅ Error Message -->
+    <!-- Error Message -->
     <div *ngIf="upload.status === 'error' && upload.error" class="mt-2">
       <div class="alert alert-danger mb-0 py-2">
         <i class="bi bi-exclamation-circle me-1"></i>
@@ -113,7 +127,7 @@
       </div>
     </div>
     
-    <!-- ✅ Success Details -->
+    <!-- Success Details -->
     <div *ngIf="upload.status === 'success' && upload.response" class="mt-2">
       <div class="alert alert-success mb-0 py-2">
         <strong>✅ Terminé!</strong>
@@ -127,3 +141,11 @@
     </div>
   </div>
 </div>
+
+<!-- Modal de Confirmation - EN DEHORS du card -->
+<!-- Modal de Confirmation avec ID UNIQUE -->
+<app-delete-batch-modal
+  [modalId]="'deleteBatchModal-' + upload.id"
+  (confirmed)="onDeleteConfirmed()"
+  (cancelled)="onDeleteCancelled()">
+</app-delete-batch-modal>

@@ -2,7 +2,7 @@
 import { createAction, props } from '@ngrx/store';
 import { AsyncResponse, IngestionResponse } from '../../../core/services/ingestion-api.service';
 
-
+import { UploadFile } from './ingestion.state';
 // ========================================================================
 // ASYNC UPLOAD ACTIONS
 // ========================================================================
@@ -67,6 +67,37 @@ export const uploadFileError = createAction(
   props<{ fileId: string; error: string }>()
 );
 
+
+/**
+ * Ajouter un fichier à la liste des uploads
+ */
+export const addUpload = createAction(
+  '[Ingestion] Add Upload',
+  props<{ upload: UploadFile }>()
+);
+
+/**
+ * Mettre à jour le statut d'un upload
+ */
+export const updateUploadStatus = createAction(
+  '[Ingestion] Update Upload Status',
+  props<{
+    fileId: string;
+    status: 'pending' | 'uploading' | 'success' | 'error' | 'duplicate';
+    batchId?: string;
+    existingBatchId?: string;
+    error?: string;
+  }>()
+);
+
+/**
+ * Changer le mode d'upload (sync/async)
+ */
+export const setUploadMode = createAction(
+  '[Ingestion] Set Upload Mode',
+  props<{ mode: 'sync' | 'async' }>()
+);
+
 export const uploadFileDuplicate = createAction(
   '[Ingestion] Upload File Duplicate',
   props<{ fileId: string; batchId: string; existingBatchId?: string; message?: string }>()
@@ -125,7 +156,7 @@ export const loadStatsSuccess = createAction(
   props<{ stats: any }>()
 );
 
-//  AJOUTER: Remove upload
+//   Remove upload
 export const removeUpload = createAction(
   '[Ingestion] Remove Upload',
   props<{ fileId: string }>()

@@ -3,6 +3,8 @@ import { createReducer, on } from '@ngrx/store';
 import { initialState, UploadFile } from './ingestion.state';
 import * as IngestionActions from './ingestion.actions';
 import * as ProgressActions from './progress.actions';
+import * as CrudActions from './crud.actions';
+
 
 export const ingestionReducer = createReducer(
   initialState,
@@ -268,5 +270,67 @@ export const ingestionReducer = createReducer(
   on(IngestionActions.toggleUploadMode, (state) => ({
     ...state,
     uploadMode: state.uploadMode === 'sync' ? 'async' : 'sync'
-  }))
+  })),
+
+
+
+  // ========================================================================
+  // UPLOAD MANAGEMENT (existant)
+  // ========================================================================
+  
+  on(IngestionActions.addUpload, (state, { upload }) => ({
+    ...state,
+    uploads: [...state.uploads, upload]
+  })),
+  
+  on(IngestionActions.updateUploadStatus, (state, { fileId, status, batchId, existingBatchId, error }) => ({
+    ...state,
+    uploads: state.uploads.map(upload =>
+      upload.id === fileId
+        ? { ...upload, status, batchId, existingBatchId, error }
+        : upload
+    )
+  })),
+  
+  on(IngestionActions.setUploadMode, (state, { mode }) => ({
+    ...state,
+    uploadMode: mode
+  })),
+  
+  // ========================================================================
+  // ✅ DELETE MANAGEMENT - VERSION OPTIMISTE
+  // ========================================================================
+  
+  on(IngestionActions.removeUpload, (state, { fileId }) => {
+    console.log(`🗑️ [Ingestion] Manual remove: ${fileId}`);
+    return {
+      ...state,
+      uploads: state.uploads.filter(upload => upload.id !== fileId)
+    };
+  }),
+  
+  on(CrudActions.deleteBatch, (state, { batchId }) => {
+    console.log(`🗑️ [Optimistic] Removing uploads for batch: ${batchId}`);
+    
+    return {
+      ...state,
+      uploads: state.uploads.filter(upload => {
+        const uploadBatchId = upload.existingBatchId || upload.batchId;
+        return uploadBatchId !== batchId;
+      })
+    };
+  }),
+  
+  on(CrudActions.deleteBatchError, (state, { error }) => ({
+    ...state,
+    error
+  })),
+  
+  on(CrudActions.deleteAllFilesSuccess, (state) => {
+    console.log(`🗑️ [Ingestion] Clearing all uploads`);
+    return {
+      ...state,
+      uploads: []
+    };
+  })
 );

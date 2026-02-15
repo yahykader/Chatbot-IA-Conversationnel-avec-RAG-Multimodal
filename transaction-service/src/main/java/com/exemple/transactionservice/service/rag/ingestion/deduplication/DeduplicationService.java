@@ -1,7 +1,3 @@
-// ============================================================================
-// SERVICE - DeduplicationService.java (VERSION UUID COMPLÈTE)
-// Service de détection de doublons avec Redis + support UUID
-// ============================================================================
 package com.exemple.transactionservice.service.rag.ingestion.deduplication;
 
 import com.exemple.transactionservice.service.rag.metrics.RAGMetrics;
@@ -14,24 +10,14 @@ import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
+import java.util.Set;  // ✅ AJOUTER
 import java.util.concurrent.TimeUnit;
 
 /**
  * Service de déduplication de fichiers basé sur le hash SHA-256.
  * Utilise Redis pour stocker les hash des fichiers déjà ingérés.
  * 
- * ✅ VERSION AVEC SUPPORT UUID STRING
- * 
- * Fonctionnalités:
- * - Calcul hash SHA-256 du contenu
- * - Détection doublons via Redis
- * - TTL configurable (30 jours par défaut)
- * - Support metadata associées
- * - Support UUID String ET Long pour batchId
- * - Health check Redis
- * 
- * @author RAG Team
- * @version 2.0 (UUID Support)
+ * ✅ VERSION AVEC SUPPORT UUID STRING + CRUD
  */
 @Slf4j
 @Service
@@ -42,6 +28,9 @@ public class DeduplicationService {
     
     private static final String REDIS_KEY_PREFIX = "ingestion:hash:";
     private static final int DEFAULT_TTL_DAYS = 30;
+    
+    // ✅ AJOUTER pour removeBatch()
+    private static final String FILE_HASH_PREFIX = REDIS_KEY_PREFIX;
     
     public DeduplicationService(
             RedisTemplate<String, String> redisTemplate, 
@@ -133,7 +122,7 @@ public class DeduplicationService {
     }
     
     /**
-     * ✅ MISE À JOUR: Retourne le batchId en String (UUID ou numérique)
+     * Retourne le batchId en String (UUID ou numérique)
      */
     public String getDuplicateMetadata(String hash) {
         String key = REDIS_KEY_PREFIX + hash;
@@ -141,10 +130,7 @@ public class DeduplicationService {
     }
     
     /**
-     * ✅ MISE À JOUR: Récupère le batchId existant (String)
-     * 
-     * @param fileHash Hash du fichier
-     * @return batchId du fichier existant (UUID String), ou null si pas trouvé
+     * Récupère le batchId existant (String)
      */
     public String getExistingBatchId(String fileHash) {
         try {
@@ -167,9 +153,6 @@ public class DeduplicationService {
     }
     
     /**
-     * ✅ OBSOLÈTE: Gardé pour compatibilité mais déprécié
-     * Utilisez getExistingBatchId() qui retourne String
-     * 
      * @deprecated Utilisez getExistingBatchId() à la place
      */
     @Deprecated
@@ -199,7 +182,7 @@ public class DeduplicationService {
     // ========================================================================
     
     /**
-     * ✅ Check duplication + enregistre la métrique
+     * Check duplication + enregistre la métrique
      */
     public boolean isDuplicateAndRecord(String fileHash, String strategyName) {
         boolean dup = isDuplicateByHash(fileHash);
@@ -213,7 +196,7 @@ public class DeduplicationService {
     }
     
     /**
-     * ✅ MISE À JOUR: Retourne String batchId dans DuplicationInfo
+     * Retourne String batchId dans DuplicationInfo
      */
     public DuplicationInfo checkDuplicationAndRecord(
             MultipartFile file, 
@@ -234,7 +217,7 @@ public class DeduplicationService {
     // ========================================================================
     
     /**
-     * ✅ MISE À JOUR: Accepte batchId String (UUID)
+     * Accepte batchId String (UUID)
      */
     public void markAsIngested(MultipartFile file, String batchId) throws IOException {
         String hash = computeHash(file);
@@ -242,14 +225,14 @@ public class DeduplicationService {
     }
     
     /**
-     * ✅ MISE À JOUR: batchId en String
+     * batchId en String
      */
     public void markAsIngestedByHash(String hash, String batchId) {
         markAsIngestedByHash(hash, batchId, DEFAULT_TTL_DAYS, TimeUnit.DAYS);
     }
     
     /**
-     * ✅ MISE À JOUR: batchId en String avec TTL custom
+     * batchId en String avec TTL custom
      */
     public void markAsIngestedByHash(
             String hash, 
@@ -270,8 +253,7 @@ public class DeduplicationService {
     }
     
     /**
-     * ✅ SURCHARGE: Accepte Long batchId (convertit en String)
-     * Pour compatibilité avec ancien code
+     * Accepte Long batchId (convertit en String) - Pour compatibilité
      */
     public void registerFile(String fileHash, Long batchId, String filename) {
         markAsIngestedByHash(fileHash, String.valueOf(batchId));
@@ -280,7 +262,7 @@ public class DeduplicationService {
     }
     
     /**
-     * ✅ NOUVEAU: Accepte String batchId directement
+     * Accepte String batchId directement
      */
     public void registerFile(String fileHash, String batchId, String filename) {
         markAsIngestedByHash(fileHash, batchId);
@@ -291,7 +273,28 @@ public class DeduplicationService {
     // ========================================================================
     // CLEANUP
     // ========================================================================
-    
+    /**
+     * ✅ Nettoie tous les hashs (DANGER - à utiliser avec précaution)
+     */
+    public void clearAll() {
+        try {
+            log.warn("🚨 SUPPRESSION GLOBALE des hashs demandée");
+            
+            String pattern = REDIS_KEY_PREFIX + "*";
+            Set<String> keys = redisTemplate.keys(pattern);
+            
+            if (keys != null && !keys.isEmpty()) {
+                Long deleted = redisTemplate.delete(keys);
+                log.warn("✅ {} hashs Redis supprimés", deleted);
+            } else {
+                log.info("ℹ️ Aucun hash Redis à supprimer");
+            }
+            
+        } catch (Exception e) {
+            log.error("❌ Erreur suppression globale Redis", e);
+        }
+    }
+
     /**
      * Supprime un hash de Redis
      */
@@ -310,6 +313,42 @@ public class DeduplicationService {
     public void removeFile(MultipartFile file) throws IOException {
         String hash = computeHash(file);
         removeHash(hash);
+    }
+    
+    /**
+     * ✅ NOUVEAU: Supprime un batch du cache Redis
+     */
+    public void removeBatch(String batchId) {
+        try {
+            log.info("🗑️ Suppression batch de la déduplication: {}", batchId);
+            
+            // Pattern pour trouver toutes les clés
+            String pattern = FILE_HASH_PREFIX + "*";
+            
+            Set<String> keys = redisTemplate.keys(pattern);
+            
+            if (keys != null && !keys.isEmpty()) {
+                int deletedCount = 0;
+                
+                for (String key : keys) {
+                    String storedBatchId = redisTemplate.opsForValue().get(key);
+                    
+                    if (batchId.equals(storedBatchId)) {
+                        redisTemplate.delete(key);
+                        deletedCount++;
+                        log.debug("🗑️ Clé Redis supprimée: {}", key);
+                    }
+                }
+                
+                log.info("✅ Batch supprimé de la déduplication: {} ({} clés supprimées)", 
+                    batchId, deletedCount);
+            } else {
+                log.debug("ℹ️ Aucune clé trouvée pour le batch: {}", batchId);
+            }
+            
+        } catch (Exception e) {
+            log.error("❌ Erreur suppression batch Redis: {}", batchId, e);
+        }
     }
     
     // ========================================================================
@@ -340,6 +379,13 @@ public class DeduplicationService {
             log.error("❌ [Dedup] Redis inaccessible: {}", e.getMessage());
             return false;
         }
+    }
+    
+    /**
+     * ✅ NOUVEAU: Alias pour IngestionOrchestrator
+     */
+    public boolean isHealthy() {
+        return isRedisAvailable();
     }
     
     /**
@@ -389,12 +435,12 @@ public class DeduplicationService {
     }
     
     /**
-     * ✅ MISE À JOUR: batchId en String
+     * batchId en String
      */
     public record DuplicationInfo(
         boolean isDuplicate,
         String hash,
-        String originalBatchId  // ✅ String (UUID ou numérique)
+        String originalBatchId
     ) {
         public String getShortHash() {
             return hash != null && hash.length() >= 16 
@@ -431,11 +477,11 @@ public class DeduplicationService {
     }
     
     /**
-     * ✅ MISE À JOUR: batchId en String
+     * batchId en String
      */
     public record FileInfo(
         String hash,
-        String batchId,  // ✅ String (UUID ou numérique)
+        String batchId,
         long ttlSeconds
     ) {
         public String getShortHash() {

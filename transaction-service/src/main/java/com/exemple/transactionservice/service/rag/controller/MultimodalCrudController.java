@@ -2,7 +2,7 @@ package com.exemple.transactionservice.service.rag.controller;
 
 import com.exemple.transactionservice.service.rag.ingestion.IngestionOrchestrator;
 import com.exemple.transactionservice.service.rag.ingestion.repository.EmbeddingRepository;
-import com.exemple.transactionservice.service.rag.ingestion.model.IngestionResult;
+import com.exemple.transactionservice.service.rag.ingestion.deduplication.DeduplicationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -16,7 +16,6 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 @Slf4j
 @RestController
@@ -26,20 +25,26 @@ public class MultimodalCrudController {
 
     private final EmbeddingRepository embeddingRepository;
     private final IngestionOrchestrator ingestionService;
-    
+    private final DeduplicationService deduplicationService;  // ✅ AJOUTER
 
     public MultimodalCrudController(
             EmbeddingRepository embeddingRepository,  
-            IngestionOrchestrator ingestionService) {
+            IngestionOrchestrator ingestionService,
+            DeduplicationService deduplicationService) {  // ✅ AJOUTER
 
         this.embeddingRepository = embeddingRepository;  
         this.ingestionService = ingestionService;
+        this.deduplicationService = deduplicationService;  // ✅ AJOUTER
         
         log.info("✅ MultimodalCrudController initialisé");
     }
 
+    // ========================================================================
+    // SUPPRESSION INDIVIDUELLE
+    // ========================================================================
+    
     /**
-     * ✨ Supprime un embedding spécifique par son ID
+     * Supprime un embedding spécifique par son ID
      */
     @DeleteMapping("/file/{embeddingId}")
     @Operation(summary = "Supprimer un fichier par ID",
@@ -97,12 +102,16 @@ public class MultimodalCrudController {
         }
     }
 
+    // ========================================================================
+    // ✅ SUPPRESSION PAR BATCH - AVEC NETTOYAGE REDIS
+    // ========================================================================
+    
     /**
-     * Supprime tous les fichiers d'un batch.
+     * Supprime tous les fichiers d'un batch + nettoyage Redis
      */
     @DeleteMapping("/batch/{batchId}/files")
     @Operation(summary = "Supprimer tous les fichiers d'un batch",
-            description = "Supprime tous les embeddings (texte + images) d'un batch spécifique")
+            description = "Supprime tous les embeddings (texte + images) d'un batch + cache Redis")
     public ResponseEntity<DeleteResponse> deleteBatchFiles(
             @PathVariable String batchId) {
         
@@ -122,20 +131,29 @@ public class MultimodalCrudController {
             // Récupérer stats avant suppression
             Map<String, Integer> stats = ingestionService.getBatchStats(batchId);
             
-            // Supprimer
+            // 1. Supprimer les embeddings (PostgreSQL)
             int deleted = ingestionService.deleteBatch(batchId);
+            log.info("✅ {} embeddings supprimés de PostgreSQL", deleted);
             
-            log.info("✅ Batch supprimé: {} - {} embeddings", batchId, deleted);
+            // 2. ✅ Nettoyer Redis pour ce batch
+            log.info("🗑️ Nettoyage Redis pour batch: {}", batchId);
+            deduplicationService.removeBatch(batchId);
+            log.info("✅ Cache Redis nettoyé pour batch: {}", batchId);
+            
+            String message = String.format(
+                "Batch supprimé: %d embeddings (text: %d, images: %d) + cache Redis",
+                deleted,
+                stats.get("textEmbeddings"),
+                stats.get("imageEmbeddings")
+            );
+            
+            log.info("✅ Batch supprimé: {} - {}", batchId, message);
             
             return ResponseEntity.ok(DeleteResponse.builder()
                 .success(true)
                 .deletedCount(deleted)
                 .batchId(batchId)
-                .message(String.format("Batch supprimé: %d embeddings " +
-                    "(text: %d, images: %d)",
-                    deleted,
-                    stats.get("textEmbeddings"),
-                    stats.get("imageEmbeddings")))
+                .message(message)
                 .build());
             
         } catch (Exception e) {
@@ -149,8 +167,12 @@ public class MultimodalCrudController {
         }
     }
 
+    // ========================================================================
+    // SUPPRESSION PAR LISTE D'IDS
+    // ========================================================================
+    
     /**
-     * ✨ Supprime une liste d'embeddings texte
+     * Supprime une liste d'embeddings texte
      */
     @DeleteMapping("/files/text/batch")
     @Operation(summary = "Supprimer plusieurs fichiers texte",
@@ -193,7 +215,7 @@ public class MultimodalCrudController {
     }
 
     /**
-     * ✨ Supprime une liste d'embeddings image
+     * Supprime une liste d'embeddings image
      */
     @DeleteMapping("/files/image/batch")
     @Operation(summary = "Supprimer plusieurs fichiers image",
@@ -235,12 +257,16 @@ public class MultimodalCrudController {
         }
     }
 
+    // ========================================================================
+    // ✅ SUPPRESSION GLOBALE - AVEC NETTOYAGE COMPLET
+    // ========================================================================
+    
     /**
-     * ✨ Supprime TOUS les fichiers (DANGEREUX!)
+     * Supprime TOUS les fichiers + Redis + Tracker (DANGEREUX!)
      */
     @DeleteMapping("/files/all")
     @Operation(summary = "Supprimer TOUS les fichiers",
-            description = "⚠️ DANGER: Supprime TOUS les embeddings du système. " +
+            description = "⚠️ DANGER: Supprime TOUS les embeddings + cache Redis + tracker. " +
                             "Nécessite confirmation='DELETE_ALL_FILES'")
     public ResponseEntity<DeleteResponse> deleteAllFiles(
             @Parameter(description = "Confirmation requise: DELETE_ALL_FILES", 
@@ -261,14 +287,31 @@ public class MultimodalCrudController {
             log.warn("🚨 DELETE /files/all - SUPPRESSION GLOBALE DEMANDÉE");
             log.warn("🚨 Confirmation reçue: {}", confirmation);
             
-            int deleted = embeddingRepository.deleteAllFiles();
+            // 1. Supprimer les embeddings (PostgreSQL)
+            int deletedEmbeddings = embeddingRepository.deleteAllFiles();
+            log.info("✅ {} embeddings supprimés de PostgreSQL", deletedEmbeddings);
             
-            log.warn("✅ Suppression globale effectuée: {} embeddings", deleted);
+            // 2. ✅ Nettoyer Redis (déduplication)
+            log.info("🗑️ Nettoyage Redis (déduplication)...");
+            deduplicationService.clearAll();
+            log.info("✅ Cache Redis nettoyé");
+            
+            // 3. ✅ Nettoyer le tracker (mémoire)
+            log.info("🗑️ Nettoyage tracker (mémoire)...");
+            ingestionService.clearAllTracking();
+            log.info("✅ Tracker nettoyé");
+            
+            String message = String.format(
+                "TOUS les fichiers supprimés: %d embeddings + cache Redis + tracker", 
+                deletedEmbeddings
+            );
+            
+            log.warn("✅ Suppression globale effectuée: {}", message);
             
             return ResponseEntity.ok(DeleteResponse.builder()
                 .success(true)
-                .deletedCount(deleted)
-                .message(String.format("TOUS les fichiers supprimés: %d embeddings", deleted))
+                .deletedCount(deletedEmbeddings)
+                .message(message)
                 .timestamp(new java.util.Date())
                 .build());
             
@@ -282,18 +325,12 @@ public class MultimodalCrudController {
         }
     }
 
+    // ========================================================================
+    // ENDPOINTS OPTIONNELS
+    // ========================================================================
     
-// ========================================================================
-// ✨ NOUVEAUX ENDPOINTS À AJOUTER (OPTIONNELS)
-// ========================================================================
-
     /**
-     * ✨ OPTIONNEL : Vérifie si un fichier existe déjà (doublon)
-     * 
-     * Utile pour :
-     * - Vérifier avant upload côté frontend
-     * - Afficher un avertissement à l'utilisateur
-     * - Éviter les uploads inutiles
+     * Vérifie si un fichier existe déjà (doublon)
      */
     @PostMapping(value = "/check-duplicate", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @Operation(summary = "Vérifier si un fichier existe déjà",
@@ -305,11 +342,9 @@ public class MultimodalCrudController {
         try {
             log.info("🔍 POST /check-duplicate - {}", file.getOriginalFilename());
             
-            // Vérifier si le fichier existe
             boolean exists = ingestionService.fileExists(file);
             
             if (exists) {
-                // Récupérer le batchId existant
                 String existingBatchId = ingestionService.getExistingBatchId(file);
                 
                 log.info("⚠️ Doublon détecté: {} (batch: {})", 
@@ -345,12 +380,7 @@ public class MultimodalCrudController {
     }
 
     /**
-     * ✨ OPTIONNEL : Récupère les informations d'un batch
-     * 
-     * Utile pour :
-     * - Afficher les détails d'un batch avant suppression
-     * - Vérifier l'état d'un batch
-     * - Debug et monitoring
+     * Récupère les informations d'un batch
      */
     @GetMapping("/batch/{batchId}/info")
     @Operation(summary = "Informations sur un batch",
@@ -361,7 +391,6 @@ public class MultimodalCrudController {
         try {
             log.info("📊 GET /batch/{}/info", batchId);
             
-            // Vérifier si le batch existe
             if (!ingestionService.batchExists(batchId)) {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(BatchInfoResponse.builder()
@@ -371,7 +400,6 @@ public class MultimodalCrudController {
                         .build());
             }
             
-            // Récupérer les stats
             Map<String, Integer> stats = ingestionService.getBatchStats(batchId);
             
             return ResponseEntity.ok(BatchInfoResponse.builder()
@@ -395,12 +423,7 @@ public class MultimodalCrudController {
     }
 
     /**
-     * ✨ OPTIONNEL : Statistiques globales sur les doublons
-     * 
-     * Utile pour :
-     * - Dashboard de monitoring
-     * - Métriques de l'application
-     * - Analytics
+     * Statistiques globales du système
      */
     @GetMapping("/stats/system")
     @Operation(summary = "Statistiques globales du système",
@@ -410,10 +433,7 @@ public class MultimodalCrudController {
         try {
             log.info("📊 GET /stats/system");
             
-            // Récupérer les stats du service
             var serviceStats = ingestionService.getStats();
-            
-            // Récupérer le health report
             var healthReport = ingestionService.getHealthReport();
             
             return ResponseEntity.ok(SystemStatsResponse.builder()
@@ -432,14 +452,22 @@ public class MultimodalCrudController {
         }
     }
 
+    // ========================================================================
+    // DTOs
+    // ========================================================================
 
-// ========================================================================
-// ✨ NOUVEAUX DTOs À AJOUTER (OPTIONNELS)
-// ========================================================================
-
-    /**
-     * ✨ DTO : Réponse pour la vérification de doublon
-     */
+    @Data
+    @Builder
+    public static class DeleteResponse {
+        private Boolean success;
+        private Integer deletedCount;
+        private String embeddingId;
+        private String batchId;
+        private String type;
+        private String message;
+        private java.util.Date timestamp;
+    }
+    
     @Data
     @Builder
     public static class DuplicateCheckResponse {
@@ -449,9 +477,6 @@ public class MultimodalCrudController {
         private String message;
     }
 
-    /**
-     * ✨ DTO : Réponse pour les infos d'un batch
-     */
     @Data
     @Builder
     public static class BatchInfoResponse {
@@ -463,9 +488,6 @@ public class MultimodalCrudController {
         private String message;
     }
 
-    /**
-     * ✨ DTO : Réponse pour les stats système
-     */
     @Data
     @Builder
     public static class SystemStatsResponse {
@@ -477,144 +499,4 @@ public class MultimodalCrudController {
         private Boolean redisHealthy;
         private String systemStatus;
     }
-
-
-    // ========================================================================
-    // ✨ NOUVEAU DTO - DeleteResponse
-    // ========================================================================
-
-    /**
-     * Réponse pour les opérations de suppression
-     */
-    @Data
-    @Builder
-    public static class DeleteResponse {
-        private Boolean success;
-        private Integer deletedCount;
-        private String embeddingId;      // Pour suppression individuelle
-        private String batchId;          // Pour suppression batch
-        private String type;             // "text" ou "image"
-        private String message;
-        private java.util.Date timestamp;
-    }
-    
 }
-    // ========================================================================
-    // ✨ ENDPOINTS BONUS - RECHERCHE (OPTIONNEL)
-    // ========================================================================
-
-    /**
-     * ✨ BONUS: Recherche des fichiers similaires (texte)
-    //  */
-    // @PostMapping("/search/text")
-    // @Operation(summary = "Rechercher des fichiers texte similaires",
-    //         description = "Recherche par similarité dans les embeddings texte")
-    // public ResponseEntity<SearchResponse> searchText(
-    //         @Parameter(description = "Texte de la requête")
-    //         @RequestParam String query,
-    //         @Parameter(description = "Nombre maximum de résultats")
-    //         @RequestParam(defaultValue = "10") int maxResults,
-    //         @Parameter(description = "Score minimum (0.0-1.0)")
-    //         @RequestParam(defaultValue = "0.7") double minScore) {
-        
-    //     try {
-    //         log.info("🔍 POST /search/text - query: '{}', max: {}, min: {}", 
-    //             query, maxResults, minScore);
-            
-    //         // Note: Nécessite un EmbeddingModel pour convertir query en embedding
-    //         // Pour l'instant, retourner une erreur "Not Implemented"
-            
-    //         return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
-    //             .body(SearchResponse.builder()
-    //                 .success(false)
-    //                 .message("Recherche non implémentée - nécessite EmbeddingModel")
-    //                 .build());
-            
-    //         // TODO: Implémenter quand EmbeddingModel est disponible
-    //         /*
-    //         Embedding queryEmbedding = embeddingModel.embed(query).content();
-            
-    //         List<EmbeddingMatch<TextSegment>> matches = 
-    //             ingestionService.searchText(queryEmbedding, maxResults, minScore);
-            
-    //         List<Map<String, Object>> results = matches.stream()
-    //             .map(match -> {
-    //                 Map<String, Object> map = new HashMap<>();
-    //                 map.put("score", match.score());
-    //                 map.put("embeddingId", match.embeddingId());
-    //                 map.put("text", match.embedded().text());
-    //                 map.put("metadata", match.embedded().metadata().toMap());
-    //                 return map;
-    //             })
-    //             .toList();
-            
-    //         return ResponseEntity.ok(SearchResponse.builder()
-    //             .success(true)
-    //             .resultCount(results.size())
-    //             .results(results)
-    //             .query(query)
-    //             .build());
-    //         */
-            
-    //     } catch (Exception e) {
-    //         log.error("❌ Erreur recherche text", e);
-    //         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-    //             .body(SearchResponse.builder()
-    //                 .success(false)
-    //                 .message("Erreur: " + e.getMessage())
-    //                 .build());
-    //     }
-    // }
-
-    // /**
-    //  * ✨ BONUS: Recherche des fichiers similaires (image)
-    //  */
-    // @PostMapping("/search/image")
-    // @Operation(summary = "Rechercher des images similaires",
-    //         description = "Recherche par similarité dans les embeddings image")
-    // public ResponseEntity<SearchResponse> searchImage(
-    //         @Parameter(description = "Description de l'image recherchée")
-    //         @RequestParam String description,
-    //         @Parameter(description = "Nombre maximum de résultats")
-    //         @RequestParam(defaultValue = "10") int maxResults,
-    //         @Parameter(description = "Score minimum (0.0-1.0)")
-    //         @RequestParam(defaultValue = "0.7") double minScore) {
-        
-    //     try {
-    //         log.info("🔍 POST /search/image - description: '{}', max: {}, min: {}", 
-    //             description, maxResults, minScore);
-            
-    //         // Note: Nécessite un EmbeddingModel pour convertir description en embedding
-    //         return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
-    //             .body(SearchResponse.builder()
-    //                 .success(false)
-    //                 .message("Recherche image non implémentée - nécessite EmbeddingModel")
-    //                 .build());
-            
-    //     } catch (Exception e) {
-    //         log.error("❌ Erreur recherche image", e);
-    //         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-    //             .body(SearchResponse.builder()
-    //                 .success(false)
-    //                 .message("Erreur: " + e.getMessage())
-    //                 .build());
-    //     }
-    // }
-
-    // // ========================================================================
-    // // ✨ NOUVEAU DTO - SearchResponse
-    // // ========================================================================
-
-    // /**
-    //  * Réponse pour les recherches
-    //  */
-    // @Data
-    // @Builder
-    // public static class SearchResponse {
-    //     private Boolean success;
-    //     private String query;
-    //     private Integer resultCount;
-    //     private List<Map<String, Object>> results;
-    //     private String message;
-    // }
-

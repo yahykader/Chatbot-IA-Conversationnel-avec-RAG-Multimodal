@@ -219,36 +219,108 @@ public class IngestionOrchestrator {
         
         return CompletableFuture.completedFuture(result);
     }
-    
+  
     // ========================================================================
-    // BATCH MANAGEMENT
+    // ✅ NOUVELLES MÉTHODES CRUD
     // ========================================================================
     
-    public int deleteBatch(String batchId) {
+    /**
+     * Vérifie si un batch existe
+     */
+    public boolean batchExists(String batchId) {
         try {
-            log.info("🗑️ Deleting batch: {}", batchId);
+            // Vérifier dans le tracker
+            boolean existsInTracker = tracker.batchExists(batchId);
             
-            List<String> textIds = tracker.getTextEmbeddingIds(batchId);
-            List<String> imageIds = tracker.getImageEmbeddingIds(batchId);
+            if (existsInTracker) {
+                log.debug("✅ Batch trouvé dans tracker: {}", batchId);
+                return true;
+            }
             
-            int deleted = embeddingRepository.deleteBatchFiles(textIds, imageIds);
-            tracker.clearBatch(batchId);
+            // Vérifier dans Qdrant
+            Map<String, Integer> stats = getBatchStats(batchId);
+            boolean existsInQdrant = stats.get("textEmbeddings") > 0 || 
+                                     stats.get("imageEmbeddings") > 0;
             
-            log.info("✅ Batch deleted: {} - {} embeddings", batchId, deleted);
-            return deleted;
+            if (existsInQdrant) {
+                log.debug("✅ Batch trouvé dans Qdrant: {}", batchId);
+                return true;
+            }
+            
+            log.debug("⚠️ Batch non trouvé: {}", batchId);
+            return false;
             
         } catch (Exception e) {
-            log.error("❌ Delete batch error: {}", batchId, e);
-            throw new RuntimeException("Delete batch failed", e);
+            log.error("❌ Erreur vérification existence batch: {}", batchId, e);
+            return false;
         }
     }
     
-    public boolean batchExists(String batchId) {
-        return embeddingRepository.batchExists(batchId);
+    /**
+     * Récupère les statistiques d'un batch
+     */
+    public Map<String, Integer> getBatchStats(String batchId) {
+        Map<String, Integer> stats = new HashMap<>();
+        
+        try {
+            // Compter les embeddings texte
+            int textCount = embeddingRepository.countTextByBatchId(batchId);
+            
+            // Compter les embeddings image
+            int imageCount = embeddingRepository.countImageByBatchId(batchId);
+            
+            stats.put("textEmbeddings", textCount);
+            stats.put("imageEmbeddings", imageCount);
+            
+            log.debug("📊 Stats batch {}: text={}, images={}", 
+                batchId, textCount, imageCount);
+            
+            return stats;
+            
+        } catch (Exception e) {
+            log.error("❌ Erreur récupération stats batch: {}", batchId, e);
+            stats.put("textEmbeddings", 0);
+            stats.put("imageEmbeddings", 0);
+            return stats;
+        }
     }
     
-    public Map<String, Integer> getBatchStats(String batchId) {
-        return embeddingRepository.countBatchFiles(batchId);
+    /**
+     * Supprime tous les fichiers d'un batch
+     */
+    public int deleteBatch(String batchId) {
+        try {
+            log.info("🗑️ Suppression batch: {}", batchId);
+            
+            int totalDeleted = 0;
+            
+            // 1. Supprimer les embeddings texte
+            int textDeleted = embeddingRepository.deleteTextByBatchId(batchId);
+            log.info("📝 Embeddings texte supprimés: {}", textDeleted);
+            totalDeleted += textDeleted;
+            
+            // 2. Supprimer les embeddings image
+            int imageDeleted = embeddingRepository.deleteImageByBatchId(batchId);
+            log.info("🖼️ Embeddings image supprimés: {}", imageDeleted);
+            totalDeleted += imageDeleted;
+            
+            // 3. Supprimer du tracker
+            tracker.removeBatch(batchId);
+            log.info("📊 Batch supprimé du tracker");
+            
+            // 4. Supprimer du service de déduplication
+            deduplicationService.removeBatch(batchId);
+            log.info("🔍 Batch supprimé de la déduplication");
+            
+            log.info("✅ Batch supprimé: {} - Total: {} embeddings", 
+                batchId, totalDeleted);
+            
+            return totalDeleted;
+            
+        } catch (Exception e) {
+            log.error("❌ Erreur suppression batch: {}", batchId, e);
+            throw new RuntimeException("Erreur suppression batch: " + e.getMessage(), e);
+        }
     }
     
     // ========================================================================
@@ -542,6 +614,19 @@ public class IngestionOrchestrator {
             log.error("❌ ExistingBatch check error: {}", 
                 file.getOriginalFilename(), e);
             return null;
+        }
+    }
+
+    /**
+     * Nettoie tout le tracking (à utiliser avec deleteAllFiles)
+     */
+    public void clearAllTracking() {
+        try {
+            log.warn("🗑️ Nettoyage complet du tracker");
+            tracker.clearAll();
+            log.info("✅ Tracker nettoyé");
+        } catch (Exception e) {
+            log.error("❌ Erreur nettoyage tracker", e);
         }
     }
     

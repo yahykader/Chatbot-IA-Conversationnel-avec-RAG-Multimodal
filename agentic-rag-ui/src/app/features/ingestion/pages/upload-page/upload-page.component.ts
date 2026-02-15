@@ -16,6 +16,7 @@ import { UploadProgress } from '../../../../core/services/websocket-progress.ser
 import { UploadZoneComponent } from '../../components/upload-zone/upload-zone.component';
 import { UploadItemComponent } from '../../components/upload-item/upload-item.component';
 import { ProgressPanelComponent } from '../../components/progress-panel/progress-panel.component';
+import { DeleteAllButtonComponent } from '../../components/delete-all-button/delete-all-button.component';
 
 @Component({
   selector: 'app-upload-page',
@@ -24,7 +25,8 @@ import { ProgressPanelComponent } from '../../components/progress-panel/progress
     CommonModule,
     UploadZoneComponent,
     UploadItemComponent,
-    ProgressPanelComponent
+    ProgressPanelComponent,
+    DeleteAllButtonComponent,
   ],
   templateUrl: './upload-page.component.html',
   styleUrls: ['./upload-page.component.scss']

@@ -1,0 +1,138 @@
+    <div class="modal fade" 
+         id="deleteAllModal" 
+         tabindex="-1" 
+         data-bs-backdrop="static" 
+         data-bs-keyboard="false">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-danger">
+          
+          <!-- Header -->
+          <div class="modal-header bg-danger text-white">
+            <h5 class="modal-title">
+              <i class="bi bi-exclamation-triangle-fill me-2"></i>
+              {{ getTitle() }}
+            </h5>
+            <button 
+              type="button" 
+              class="btn-close btn-close-white" 
+              (click)="cancel()"
+              [disabled]="isDeleting">
+            </button>
+          </div>
+          
+          <!-- Body -->
+          <div class="modal-body">
+            
+            <!-- Étape 1: Premier avertissement -->
+            <div *ngIf="step === 1" class="text-center">
+              <div class="alert alert-danger mb-4">
+                <h4 class="alert-heading mb-3">
+                  <i class="bi bi-exclamation-octagon fs-1 d-block mb-3"></i>
+                  ATTENTION CRITIQUE
+                </h4>
+                <p class="mb-2">Vous êtes sur le point de <strong>SUPPRIMER TOUS LES FICHIERS</strong> du système.</p>
+                <hr>
+                <p class="mb-1">Cela inclut :</p>
+                <ul class="list-unstyled mb-0">
+                  <li>✓ Tous les embeddings (PostgreSQL)</li>
+                  <li>✓ Tout le cache Redis</li>
+                  <li>✓ Tous les batches en mémoire</li>
+                </ul>
+              </div>
+              <p class="text-muted mb-0">
+                Voulez-vous vraiment continuer ?
+              </p>
+            </div>
+            
+            <!-- Étape 2: Deuxième confirmation -->
+            <div *ngIf="step === 2" class="text-center">
+              <div class="alert alert-warning mb-4">
+                <h4 class="alert-heading mb-3">
+                  <i class="bi bi-shield-fill-exclamation fs-1 d-block mb-3"></i>
+                  DERNIÈRE CHANCE
+                </h4>
+                <p class="mb-0">
+                  Cette action est <strong class="text-danger">IRRÉVERSIBLE</strong>.
+                </p>
+                <p class="mt-2 mb-0">
+                  Toutes les données seront perdues <strong>définitivement</strong>.
+                </p>
+              </div>
+              <p class="text-muted mb-0">
+                Êtes-vous <strong>absolument certain</strong> ?
+              </p>
+            </div>
+            
+            <!-- Étape 3: Saisie de confirmation -->
+            <div *ngIf="step === 3">
+              <div class="alert alert-info mb-3">
+                <i class="bi bi-info-circle me-2"></i>
+                Pour confirmer, tapez exactement :
+              </div>
+              
+              <div class="text-center mb-3">
+                <code class="fs-5 text-danger fw-bold">DELETE_ALL_FILES</code>
+              </div>
+              
+              <input 
+                type="text" 
+                class="form-control form-control-lg text-center"
+                [(ngModel)]="confirmationText"
+                placeholder="Tapez ici..."
+                (keyup.enter)="validateAndDelete()"
+                autocomplete="off"
+                [class.is-invalid]="confirmationText && confirmationText !== 'DELETE_ALL_FILES'"
+                [class.is-valid]="confirmationText === 'DELETE_ALL_FILES'">
+              
+              <div class="invalid-feedback d-block" *ngIf="confirmationText && confirmationText !== 'DELETE_ALL_FILES'">
+                ❌ Le texte ne correspond pas
+              </div>
+              
+              <div class="valid-feedback d-block" *ngIf="confirmationText === 'DELETE_ALL_FILES'">
+                ✅ Confirmation correcte
+              </div>
+            </div>
+            
+            <!-- Étape 4: En cours de suppression -->
+            <div *ngIf="step === 4" class="text-center py-4">
+              <div class="spinner-border text-danger mb-3" style="width: 3rem; height: 3rem;"></div>
+              <h5>Suppression en cours...</h5>
+              <p class="text-muted mb-0">Veuillez patienter</p>
+            </div>
+            
+          </div>
+          
+          <!-- Footer -->
+          <div class="modal-footer" *ngIf="step < 4">
+            <button 
+              type="button" 
+              class="btn btn-secondary"
+              (click)="cancel()"
+              [disabled]="isDeleting">
+              <i class="bi bi-x-lg me-2"></i>
+              Annuler
+            </button>
+            
+            <button 
+              *ngIf="step === 1 || step === 2"
+              type="button" 
+              class="btn btn-danger"
+              (click)="nextStep()">
+              <i class="bi bi-arrow-right me-2"></i>
+              Continuer
+            </button>
+            
+            <button 
+              *ngIf="step === 3"
+              type="button" 
+              class="btn btn-danger"
+              (click)="validateAndDelete()"
+              [disabled]="confirmationText !== 'DELETE_ALL_FILES'">
+              <i class="bi bi-trash3-fill me-2"></i>
+              Supprimer TOUT
+            </button>
+          </div>
+          
+        </div>
+      </div>
+    </div>

@@ -1,0 +1,12 @@
+    .delete-all-container {
+      padding: 2rem;
+      border: 2px solid var(--bs-danger);
+      border-radius: 0.5rem;
+      background-color: rgba(220, 53, 69, 0.05);
+    }
+    
+    .alert-heading {
+      display: flex;
+      align-items: center;
+      margin-bottom: 1rem;
+    }

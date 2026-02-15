@@ -1,0 +1,27 @@
+    .modal-content {
+      border-width: 3px;
+    }
+    
+    .modal-header {
+      border-bottom: 3px solid rgba(220, 53, 69, 0.3);
+    }
+    
+    .modal-footer {
+      border-top: 1px solid rgba(0, 0, 0, 0.1);
+    }
+    
+    .alert {
+      border-radius: 0.5rem;
+    }
+    
+    code {
+      padding: 0.5rem 1rem;
+      background-color: rgba(220, 53, 69, 0.1);
+      border-radius: 0.25rem;
+      border: 2px dashed #dc3545;
+    }
+    
+    .form-control {
+      font-family: monospace;
+      font-weight: 600;
+    }

@@ -30,12 +30,6 @@ app:
     analyze-with-vision: true
     render-dpi: 300
 
-# nom des tableaux
-langchain4j:
-  pgvector:
-    text-table-name: text_embeddings
-    image-table-name: image_embeddings
-
 repository:
   delete:
     truncate-threshold: 10000  # Seuil DELETE/TRUNCATE
@@ -124,6 +118,11 @@ spring:
 # ===========================================================================
 # Configuration complète
 embedding:
+  text:
+    dimension: 1536  # ✅ text-embedding-3-large ou ada-002
+  image:
+    dimension: 512   # ✅ CLIP ou autre modèle image
+
   compression:
     # Active/désactive compression
     enabled: true
@@ -450,6 +449,11 @@ pgvector:
     timeout: 30
   validation:
     enabled: true
+  
+  text:
+    table: text_embeddings
+  image:
+    table: image_embeddings
 
 # ============================================================================
 # MANAGEMENT / ACTUATOR / METRICS ✨ AMÉLIORÉ

@@ -1,7 +1,3 @@
-// ============================================================================
-// SERVICE - IngestionTracker.java (VERSION CORRIGÉE)
-// Service de tracking des embeddings pour rollback transactionnel
-// ============================================================================
 package com.exemple.transactionservice.service.rag.ingestion.tracker;
 
 import dev.langchain4j.data.segment.TextSegment;
@@ -11,6 +7,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -26,10 +23,16 @@ public class IngestionTracker {
     private final RedisTemplate<String, Object> redisTemplate;
     
     /**
-     * Map stockant les embeddings par batchId
+     * ✅ Map pour rollback (utilise BatchEmbeddings)
      * Thread-safe pour ingestions concurrentes
      */
     private final Map<String, BatchEmbeddings> batchMap = new ConcurrentHashMap<>();
+    
+    /**
+     * ✅ Map pour info batches (utilise BatchInfo)
+     * Pour méthodes CRUD
+     */
+    private final Map<String, BatchInfo> batches = new ConcurrentHashMap<>();
     
     public IngestionTracker(
             @Qualifier("textEmbeddingStore") EmbeddingStore<TextSegment> textStore,
@@ -40,11 +43,11 @@ public class IngestionTracker {
         this.imageStore = imageStore;
         this.redisTemplate = redisTemplate;
         
-        log.info("✅ IngestionTracker initialisé (rollback support)");
+        log.info("✅ IngestionTracker initialisé (rollback + CRUD support)");
     }
     
     // ========================================================================
-    // TRACKING EMBEDDINGS
+    // TRACKING EMBEDDINGS (pour rollback)
     // ========================================================================
     
     /**
@@ -55,8 +58,15 @@ public class IngestionTracker {
             return;
         }
         
+        // Pour rollback
         BatchEmbeddings batch = batchMap.computeIfAbsent(batchId, k -> new BatchEmbeddings());
         batch.addTextEmbedding(embeddingId);
+        
+        // Pour CRUD
+        BatchInfo info = batches.get(batchId);
+        if (info != null) {
+            info.textEmbeddings().add(embeddingId);
+        }
         
         log.debug("📝 [Tracker] Text embedding ajouté: batch={} id={} (total: {})",
             batchId, embeddingId, batch.getTextEmbeddingCount());
@@ -70,15 +80,57 @@ public class IngestionTracker {
             return;
         }
         
+        // Pour rollback
         BatchEmbeddings batch = batchMap.computeIfAbsent(batchId, k -> new BatchEmbeddings());
         batch.addImageEmbedding(embeddingId);
+        
+        // Pour CRUD
+        BatchInfo info = batches.get(batchId);
+        if (info != null) {
+            info.imageEmbeddings().add(embeddingId);
+        }
         
         log.debug("🖼️ [Tracker] Image embedding ajouté: batch={} id={} (total: {})",
             batchId, embeddingId, batch.getImageEmbeddingCount());
     }
     
     // ========================================================================
-    // RÉCUPÉRATION
+    // BATCH INFO (pour CRUD)
+    // ========================================================================
+    
+    /**
+     * Enregistre un nouveau batch
+     */
+    public void trackBatch(String batchId, String filename, String mimeType) {
+        BatchInfo info = new BatchInfo(
+            batchId,
+            filename,
+            mimeType,
+            LocalDateTime.now(),
+            new ArrayList<>(),
+            new ArrayList<>()
+        );
+        
+        batches.put(batchId, info);
+        log.info("📊 Batch tracké: {} - {}", batchId, filename);
+    }
+    
+    /**
+     * Récupère les informations d'un batch
+     */
+    public Optional<BatchInfo> getBatchInfo(String batchId) {
+        return Optional.ofNullable(batches.get(batchId));
+    }
+    
+    /**
+     * Récupère tous les batches
+     */
+    public Map<String, BatchInfo> getAllBatches() {
+        return new HashMap<>(batches);
+    }
+    
+    // ========================================================================
+    // RÉCUPÉRATION (pour rollback)
     // ========================================================================
     
     /**
@@ -109,7 +161,7 @@ public class IngestionTracker {
     // ========================================================================
     
     /**
-     * ✅ MÉTHODE ROLLBACKBATCH CORRIGÉE
+     * Rollback complet d'un batch
      */
     public int rollbackBatch(String batchId) {
         log.info("🔄 [ROLLBACK] Démarrage: {}", batchId);
@@ -124,7 +176,6 @@ public class IngestionTracker {
                 return 0;
             }
             
-            // ✅ CORRECTION : Utiliser les méthodes getters existantes
             List<String> textIds = batchData.getTextEmbeddingIds();
             List<String> imageIds = batchData.getImageEmbeddingIds();
             
@@ -163,25 +214,6 @@ public class IngestionTracker {
             throw new RuntimeException("Erreur rollback batch: " + batchId, e);
         }
     }
-
-    /**
-     * Supprime un batch du tracking (Redis)
-     */
-    private void removeBatch(String batchId) {
-        try {
-            redisTemplate.delete("batch:" + batchId + ":text");
-            redisTemplate.delete("batch:" + batchId + ":images");
-            
-            // Supprimer aussi de la map locale
-            batchMap.remove(batchId);
-            
-            log.debug("🗑️ [ROLLBACK] Batch supprimé du tracking: {}", batchId);
-            
-        } catch (Exception e) {
-            log.warn("⚠️ [ROLLBACK] Erreur suppression tracking: {} - {}", 
-                batchId, e.getMessage());
-        }
-    }
     
     // ========================================================================
     // NETTOYAGE
@@ -205,7 +237,44 @@ public class IngestionTracker {
     public void clearAll() {
         int count = batchMap.size();
         batchMap.clear();
+        batches.clear();
         log.warn("⚠️ [Tracker] Tous les batches nettoyés: {} batches", count);
+    }
+    
+    // ========================================================================
+    // CRUD OPERATIONS
+    // ========================================================================
+    
+    /**
+     * Vérifie si un batch existe
+     */
+    public boolean batchExists(String batchId) {
+        return batches.containsKey(batchId) || batchMap.containsKey(batchId);
+    }
+    
+    /**
+     * Supprime un batch du tracker
+     */
+    public void removeBatch(String batchId) {
+        batches.remove(batchId);
+        batchMap.remove(batchId);
+        log.info("📊 Batch supprimé du tracker: {}", batchId);
+    }
+    
+    /**
+     * Nombre de batches trackés
+     */
+    public int getBatchCount() {
+        return batches.size();
+    }
+    
+    /**
+     * Nombre total d'embeddings trackés (depuis BatchInfo)
+     */
+    public int getTotalEmbeddings() {
+        return batches.values().stream()
+            .mapToInt(batch -> batch.textEmbeddings().size() + batch.imageEmbeddings().size())
+            .sum();
     }
     
     // ========================================================================
@@ -220,7 +289,7 @@ public class IngestionTracker {
     }
     
     /**
-     * Retourne le nombre total d'embeddings trackés
+     * Retourne le nombre total d'embeddings trackés (depuis BatchEmbeddings)
      */
     public int getTotalEmbeddingCount() {
         return batchMap.values().stream()
@@ -264,8 +333,6 @@ public class IngestionTracker {
     // ========================================================================
     
     /**
-     * ✨ CLASSE BATCHEMBEDDINGS (MANQUAIT DANS VOTRE CODE)
-     * 
      * Contient les IDs d'embeddings d'un batch pour rollback
      */
     public static class BatchEmbeddings {
@@ -296,6 +363,18 @@ public class IngestionTracker {
             return imageEmbeddingIds.size();
         }
     }
+    
+    /**
+     * Record pour stocker les informations d'un batch (CRUD)
+     */
+    public record BatchInfo(
+        String batchId,
+        String filename,
+        String mimeType,
+        LocalDateTime timestamp,
+        List<String> textEmbeddings,
+        List<String> imageEmbeddings
+    ) {}
     
     /**
      * Record pour statistiques tracker
