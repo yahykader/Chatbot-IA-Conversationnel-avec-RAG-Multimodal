@@ -3,6 +3,8 @@ package com.exemple.transactionservice.service.rag.controller;
 import com.exemple.transactionservice.service.rag.ingestion.IngestionOrchestrator;
 import com.exemple.transactionservice.service.rag.ingestion.repository.EmbeddingRepository;
 import com.exemple.transactionservice.service.rag.ingestion.deduplication.DeduplicationService;
+import com.exemple.transactionservice.service.rag.ingestion.deduplication.TextDeduplicationService;
+import com.exemple.transactionservice.service.rag.ingestion.cache.EmbeddingCache;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -25,16 +27,23 @@ public class MultimodalCrudController {
 
     private final EmbeddingRepository embeddingRepository;
     private final IngestionOrchestrator ingestionService;
-    private final DeduplicationService deduplicationService;  // ✅ AJOUTER
+    private final DeduplicationService deduplicationService;
+    private final TextDeduplicationService textDeduplicationService;
+    private final EmbeddingCache embeddingCache;
+    
 
     public MultimodalCrudController(
             EmbeddingRepository embeddingRepository,  
             IngestionOrchestrator ingestionService,
-            DeduplicationService deduplicationService) {  // ✅ AJOUTER
+            DeduplicationService deduplicationService,
+            TextDeduplicationService textDeduplicationService,
+            EmbeddingCache embeddingCache) {
 
         this.embeddingRepository = embeddingRepository;  
         this.ingestionService = ingestionService;
-        this.deduplicationService = deduplicationService;  // ✅ AJOUTER
+        this.deduplicationService = deduplicationService;
+        this.textDeduplicationService = textDeduplicationService;
+        this.embeddingCache = embeddingCache;
         
         log.info("✅ MultimodalCrudController initialisé");
     }
@@ -106,9 +115,6 @@ public class MultimodalCrudController {
     // ✅ SUPPRESSION PAR BATCH - AVEC NETTOYAGE REDIS
     // ========================================================================
     
-    /**
-     * Supprime tous les fichiers d'un batch + nettoyage Redis
-     */
     @DeleteMapping("/batch/{batchId}/files")
     @Operation(summary = "Supprimer tous les fichiers d'un batch",
             description = "Supprime tous les embeddings (texte + images) d'un batch + cache Redis")
@@ -118,8 +124,8 @@ public class MultimodalCrudController {
         try {
             log.info("🗑️ DELETE /batch/{}/files", batchId);
             
-            // Vérifier si le batch existe
-            if (!ingestionService.batchExists(batchId)) {
+            // ✅ MODIFIÉ: Utiliser orchestrator (qui appelle cleanupRedisCaches)
+            if (!embeddingRepository.batchExists(batchId)) {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(DeleteResponse.builder()
                         .success(false)
@@ -129,19 +135,13 @@ public class MultimodalCrudController {
             }
             
             // Récupérer stats avant suppression
-            Map<String, Integer> stats = ingestionService.getBatchStats(batchId);
+            Map<String, Integer> stats = embeddingRepository.getBatchStats(batchId);
             
-            // 1. Supprimer les embeddings (PostgreSQL)
-            int deleted = ingestionService.deleteBatch(batchId);
-            log.info("✅ {} embeddings supprimés de PostgreSQL", deleted);
-            
-            // 2. ✅ Nettoyer Redis pour ce batch
-            log.info("🗑️ Nettoyage Redis pour batch: {}", batchId);
-            deduplicationService.removeBatch(batchId);
-            log.info("✅ Cache Redis nettoyé pour batch: {}", batchId);
+            // ✅ Appel orchestrator (qui fait TOUT le nettoyage)
+            int deleted = embeddingRepository.deleteBatch(batchId);
             
             String message = String.format(
-                "Batch supprimé: %d embeddings (text: %d, images: %d) + cache Redis",
+                "Batch supprimé: %d embeddings (text: %d, images: %d) + tous les caches Redis",
                 deleted,
                 stats.get("textEmbeddings"),
                 stats.get("imageEmbeddings")
@@ -166,10 +166,6 @@ public class MultimodalCrudController {
                     .build());
         }
     }
-
-    // ========================================================================
-    // SUPPRESSION PAR LISTE D'IDS
-    // ========================================================================
     
     /**
      * Supprime une liste d'embeddings texte
@@ -260,10 +256,6 @@ public class MultimodalCrudController {
     // ========================================================================
     // ✅ SUPPRESSION GLOBALE - AVEC NETTOYAGE COMPLET
     // ========================================================================
-    
-    /**
-     * Supprime TOUS les fichiers + Redis + Tracker (DANGEREUX!)
-     */
     @DeleteMapping("/files/all")
     @Operation(summary = "Supprimer TOUS les fichiers",
             description = "⚠️ DANGER: Supprime TOUS les embeddings + cache Redis + tracker. " +
@@ -274,7 +266,6 @@ public class MultimodalCrudController {
             @RequestParam(required = true) String confirmation) {
         
         try {
-            // Vérification de sécurité stricte
             if (!"DELETE_ALL_FILES".equals(confirmation)) {
                 log.warn("⚠️ Tentative suppression globale sans confirmation valide");
                 return ResponseEntity.badRequest()
@@ -288,21 +279,16 @@ public class MultimodalCrudController {
             log.warn("🚨 Confirmation reçue: {}", confirmation);
             
             // 1. Supprimer les embeddings (PostgreSQL)
-            int deletedEmbeddings = embeddingRepository.deleteAllFiles();
+            int deletedEmbeddings = embeddingRepository.deleteAllFilesPlusCache();
             log.info("✅ {} embeddings supprimés de PostgreSQL", deletedEmbeddings);
-            
-            // 2. ✅ Nettoyer Redis (déduplication)
-            log.info("🗑️ Nettoyage Redis (déduplication)...");
-            deduplicationService.clearAll();
-            log.info("✅ Cache Redis nettoyé");
-            
-            // 3. ✅ Nettoyer le tracker (mémoire)
+    
+            // 3. Nettoyer le tracker (mémoire)
             log.info("🗑️ Nettoyage tracker (mémoire)...");
-            ingestionService.clearAllTracking();
+            embeddingRepository.clearAllTracking();
             log.info("✅ Tracker nettoyé");
             
             String message = String.format(
-                "TOUS les fichiers supprimés: %d embeddings + cache Redis + tracker", 
+                "TOUS les fichiers supprimés: %d embeddings + tous les caches Redis + tracker", 
                 deletedEmbeddings
             );
             
@@ -391,7 +377,7 @@ public class MultimodalCrudController {
         try {
             log.info("📊 GET /batch/{}/info", batchId);
             
-            if (!ingestionService.batchExists(batchId)) {
+            if (!embeddingRepository.batchExists(batchId)) {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(BatchInfoResponse.builder()
                         .found(false)
@@ -400,7 +386,7 @@ public class MultimodalCrudController {
                         .build());
             }
             
-            Map<String, Integer> stats = ingestionService.getBatchStats(batchId);
+            Map<String, Integer> stats = embeddingRepository.getBatchStats(batchId);
             
             return ResponseEntity.ok(BatchInfoResponse.builder()
                 .found(true)

@@ -126,9 +126,6 @@ public class TikaIngestionStrategy implements IngestionStrategy {
         long startTime = System.currentTimeMillis();
         
         try {
-            // ========================================================================
-            // PROGRESS - Upload started
-            // ========================================================================
             if (progressNotifier != null) {
                 progressNotifier.uploadStarted(batchId, filename, fileSize);
             }
@@ -136,9 +133,6 @@ public class TikaIngestionStrategy implements IngestionStrategy {
             log.info("🔧 [{}] Processing TIKA (universal fallback): {} ({} MB, ext: {})", 
                 getName(), filename, fileSize / 1_000_000, extension.toUpperCase());
             
-            // ========================================================================
-            // VALIDATION - Empty file check
-            // ========================================================================
             if (file.isEmpty() || fileSize == 0) {
                 if (progressNotifier != null) {
                     progressNotifier.error(batchId, filename, "Empty file");
@@ -146,46 +140,10 @@ public class TikaIngestionStrategy implements IngestionStrategy {
                 throw new IOException("Empty file: " + filename);
             }
             
-            // ========================================================================
-            // ✅ SUPPRESSION: Vérification doublon (déjà faite par orchestrator)
-            // ========================================================================
-            // ❌ ANCIEN CODE SUPPRIMÉ:
-            /*
-            if (progressNotifier != null) {
-                progressNotifier.notifyProgress(batchId, filename, "DEDUPLICATION", 10, 
-                    "Checking duplicates...");
-            }
-            
-            DeduplicationService.DuplicationInfo dupInfo = 
-                deduplicationService.checkDuplication(file);
-            
-            if (dupInfo.isDuplicate()) {
-                if (progressNotifier != null) {
-                    progressNotifier.error(batchId, filename, 
-                        "Already processed (batch: " + dupInfo.originalBatchId() + ")");
-                }
-                
-                ragMetrics.recordDuplicate(getName());
-                
-                throw new DuplicateFileException(
-                    String.format("File already processed (batch: %s)", 
-                        dupInfo.originalBatchId()),
-                    dupInfo.originalBatchId()
-                );
-            }
-            */
-            // ✅ FIN SUPPRESSION
-            
-            // ========================================================================
-            // PROGRESS - Upload completed
-            // ========================================================================
             if (progressNotifier != null) {
                 progressNotifier.uploadCompleted(batchId, filename);
             }
             
-            // ========================================================================
-            // PROCESSING - Apache Tika Extraction
-            // ========================================================================
             if (progressNotifier != null) {
                 progressNotifier.processingStarted(batchId, filename);
             }
@@ -204,16 +162,12 @@ public class TikaIngestionStrategy implements IngestionStrategy {
                 result = ingestNormal(file, filename, extension, batchId, fileSize);
             }
             
-            // ========================================================================
-            // ✅ OPTIONNEL: Enregistrement (déjà fait par orchestrator)
-            // ========================================================================
-            // Note: L'orchestrator enregistre déjà le fichier AVANT l'appel strategy
-            // Cette ligne est redondante mais sans danger
-            // deduplicationService.markAsIngested(file, batchId);
+            // ✅ AJOUT: Cleanup local cache + stats
+            textDeduplicationService.clearLocalCache();
+            var dedupStats = textDeduplicationService.getStats(batchId);
+            log.info("📊 [Dedup] Stats - Total indexés: {}, Cache local: {}", 
+                dedupStats.totalIndexed(), dedupStats.localCacheSize());
             
-            // ========================================================================
-            // METRICS
-            // ========================================================================
             long duration = System.currentTimeMillis() - startTime;
             
             ragMetrics.recordStrategyProcessing(
@@ -222,9 +176,6 @@ public class TikaIngestionStrategy implements IngestionStrategy {
                 result.textEmbeddings()
             );
             
-            // ========================================================================
-            // PROGRESS - Completed
-            // ========================================================================
             if (progressNotifier != null) {
                 progressNotifier.completed(batchId, filename, result.textEmbeddings(), 0);
             }
@@ -236,18 +187,14 @@ public class TikaIngestionStrategy implements IngestionStrategy {
             return result;
             
         } catch (Exception e) {
-            // ========================================================================
-            // ERROR HANDLING
-            // ========================================================================
+            // ✅ AJOUT: Cleanup local cache même en cas d'erreur
+            textDeduplicationService.clearLocalCache();
             
-            // Progress - Error
             if (progressNotifier != null) {
                 progressNotifier.error(batchId, filename, e.getMessage());
             }
             
             log.error("❌ [{}] Tika processing error: {}", getName(), filename, e);
-            
-            // Re-throw exception
             throw e;
         }
     }

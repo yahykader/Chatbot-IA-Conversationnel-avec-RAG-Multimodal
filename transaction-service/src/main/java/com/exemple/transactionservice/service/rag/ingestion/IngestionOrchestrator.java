@@ -6,8 +6,6 @@ package com.exemple.transactionservice.service.rag.ingestion;
 
 import com.exemple.transactionservice.service.rag.ingestion.repository.EmbeddingRepository;
 import com.exemple.transactionservice.service.rag.ingestion.deduplication.DeduplicationService;
-import com.exemple.transactionservice.service.rag.ingestion.deduplication.TextDeduplicationService;  // ✅ AJOUTER
-import com.exemple.transactionservice.service.rag.ingestion.cache.EmbeddingCache;  // ✅ AJOUTER
 import com.exemple.transactionservice.service.rag.metrics.RAGMetrics;
 import com.exemple.transactionservice.service.rag.ingestion.model.IngestionResult;
 import com.exemple.transactionservice.service.rag.ingestion.security.AntivirusScanner;
@@ -36,8 +34,6 @@ public class IngestionOrchestrator {
     private final RAGMetrics ragMetrics;
     private final IngestionTracker tracker;
     private final DeduplicationService deduplicationService;
-    private final TextDeduplicationService textDeduplicationService;  // ✅ AJOUTER
-    private final EmbeddingCache embeddingCache;  // ✅ AJOUTER
     private final AntivirusScanner antivirusScanner;
     private final EmbeddingRepository embeddingRepository;
     
@@ -51,8 +47,6 @@ public class IngestionOrchestrator {
             RAGMetrics ragMetrics,
             IngestionTracker tracker,
             DeduplicationService deduplicationService,
-            TextDeduplicationService textDeduplicationService,  // ✅ AJOUTER
-            EmbeddingCache embeddingCache,  // ✅ AJOUTER
             AntivirusScanner antivirusScanner,
             EmbeddingRepository embeddingRepository) {
         
@@ -60,8 +54,6 @@ public class IngestionOrchestrator {
         this.ragMetrics = ragMetrics;
         this.tracker = tracker;
         this.deduplicationService = deduplicationService;
-        this.textDeduplicationService = textDeduplicationService;  // ✅ AJOUTER
-        this.embeddingCache = embeddingCache;  // ✅ AJOUTER
         this.antivirusScanner = antivirusScanner;
         this.embeddingRepository = embeddingRepository;
         
@@ -208,141 +200,6 @@ public class IngestionOrchestrator {
         );
         
         return CompletableFuture.completedFuture(result);
-    }
-  
-    // ========================================================================
-    // ✅ MÉTHODES CRUD - MODIFIÉES
-    // ========================================================================
-    
-    /**
-     * Vérifie si un batch existe (INCHANGÉE)
-     */
-    public boolean batchExists(String batchId) {
-        try {
-            boolean existsInTracker = tracker.batchExists(batchId);
-            
-            if (existsInTracker) {
-                log.debug("✅ Batch trouvé dans tracker: {}", batchId);
-                return true;
-            }
-            
-            Map<String, Integer> stats = getBatchStats(batchId);
-            boolean existsInQdrant = stats.get("textEmbeddings") > 0 || 
-                                     stats.get("imageEmbeddings") > 0;
-            
-            if (existsInQdrant) {
-                log.debug("✅ Batch trouvé dans Qdrant: {}", batchId);
-                return true;
-            }
-            
-            log.debug("⚠️ Batch non trouvé: {}", batchId);
-            return false;
-            
-        } catch (Exception e) {
-            log.error("❌ Erreur vérification existence batch: {}", batchId, e);
-            return false;
-        }
-    }
-    
-    /**
-     * Récupère les statistiques d'un batch (INCHANGÉE)
-     */
-    public Map<String, Integer> getBatchStats(String batchId) {
-        Map<String, Integer> stats = new HashMap<>();
-        
-        try {
-            int textCount = embeddingRepository.countTextByBatchId(batchId);
-            int imageCount = embeddingRepository.countImageByBatchId(batchId);
-            
-            stats.put("textEmbeddings", textCount);
-            stats.put("imageEmbeddings", imageCount);
-            
-            log.debug("📊 Stats batch {}: text={}, images={}", 
-                batchId, textCount, imageCount);
-            
-            return stats;
-            
-        } catch (Exception e) {
-            log.error("❌ Erreur récupération stats batch: {}", batchId, e);
-            stats.put("textEmbeddings", 0);
-            stats.put("imageEmbeddings", 0);
-            return stats;
-        }
-    }
-    
-    /**
-     * ✅ MODIFIÉ: Supprime batch + TOUS les caches Redis
-     */
-    public int deleteBatch(String batchId) {
-        try {
-            log.info("🗑️ Suppression batch: {}", batchId);
-            
-            int totalDeleted = 0;
-            
-            // 1. Supprimer les embeddings texte
-            int textDeleted = embeddingRepository.deleteTextByBatchId(batchId);
-            log.info("📝 Embeddings texte supprimés: {}", textDeleted);
-            totalDeleted += textDeleted;
-            
-            // 2. Supprimer les embeddings image
-            int imageDeleted = embeddingRepository.deleteImageByBatchId(batchId);
-            log.info("🖼️ Embeddings image supprimés: {}", imageDeleted);
-            totalDeleted += imageDeleted;
-            
-            // 3. Supprimer du tracker
-            tracker.removeBatch(batchId);
-            log.info("📊 Batch supprimé du tracker");
-            
-            // 4. ✅ AMÉLIORER: Nettoyer TOUS les caches Redis
-            cleanupRedisCaches(batchId);
-            
-            log.info("✅ Batch supprimé: {} - Total: {} embeddings", 
-                batchId, totalDeleted);
-            
-            return totalDeleted;
-            
-        } catch (Exception e) {
-            log.error("❌ Erreur suppression batch: {}", batchId, e);
-            throw new RuntimeException("Erreur suppression batch: " + e.getMessage(), e);
-        }
-    }
-    
-    /**
-     * ✅ NOUVELLE MÉTHODE: Nettoie TOUS les caches Redis pour un batch
-     */
-    private void cleanupRedisCaches(String batchId) {
-        try {
-            log.info("🧹 [Redis] Nettoyage complet des caches pour batch: {}", batchId);
-            
-            // 1. DeduplicationService: ingestion:hash:*
-            try {
-                deduplicationService.removeBatch(batchId);
-                log.info("🔍 Batch supprimé de la déduplication fichiers");
-            } catch (Exception e) {
-                log.error("❌ Erreur nettoyage DeduplicationService", e);
-            }
-            
-            // 2. ✅ TextDeduplicationService: text:dedup:* + batch:text:*
-            try {
-                textDeduplicationService.removeBatch(batchId);
-                log.info("📝 Batch supprimé du cache de déduplication texte");
-            } catch (Exception e) {
-                log.error("❌ Erreur nettoyage TextDeduplicationService", e);
-            }
-            
-            // 3. ✅ EmbeddingCache: emb:* + batch:emb:*
-            try {
-                embeddingCache.removeBatch(batchId);
-                log.info("💾 Batch supprimé du cache d'embeddings");
-            } catch (Exception e) {
-                log.error("❌ Erreur nettoyage EmbeddingCache", e);
-            }
-            
-            log.info("✅ [Redis] Nettoyage complet terminé pour batch: {}", batchId);
-            
-        } catch (Exception e) {
-            log.error("❌ [Redis] Erreur nettoyage caches pour batch: {}", batchId, e);
-        }
     }
     
     // ========================================================================
@@ -582,44 +439,6 @@ public class IngestionOrchestrator {
             log.error("❌ ExistingBatch check error: {}", 
                 file.getOriginalFilename(), e);
             return null;
-        }
-    }
-
-    /**
-     * ✅ AMÉLIORER: Nettoie tout le tracking + TOUS les caches Redis
-     */
-    public void clearAllTracking() {
-        try {
-            log.warn("🗑️ Nettoyage complet du tracker et des caches");
-            
-            // 1. Tracker mémoire
-            tracker.clearAll();
-            log.info("✅ Tracker nettoyé");
-            
-            // 2. ✅ Tous les caches Redis
-            try {
-                deduplicationService.clearAll();
-                log.info("✅ DeduplicationService nettoyé");
-            } catch (Exception e) {
-                log.error("❌ Erreur clearAll DeduplicationService", e);
-            }
-            
-            try {
-                textDeduplicationService.clearAll();
-                log.info("✅ TextDeduplicationService nettoyé");
-            } catch (Exception e) {
-                log.error("❌ Erreur clearAll TextDeduplicationService", e);
-            }
-            
-            try {
-                embeddingCache.clear();
-                log.info("✅ EmbeddingCache nettoyé");
-            } catch (Exception e) {
-                log.error("❌ Erreur clear EmbeddingCache", e);
-            }
-            
-        } catch (Exception e) {
-            log.error("❌ Erreur nettoyage complet", e);
         }
     }
     

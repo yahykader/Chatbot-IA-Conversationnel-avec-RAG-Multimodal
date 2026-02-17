@@ -205,6 +205,28 @@ public class EmbeddingCache {
             return 0;
         }
     }
+
+
+    /**
+     * Supprime TOUS les embeddings + batch tracking
+     */
+    public void clearAll() {
+        // Supprimer tous les emb:*
+        Set<String> embKeys = redisTemplate.keys(EMB_CACHE_PREFIX + "*");
+        if (embKeys != null && !embKeys.isEmpty()) {
+            redisTemplate.delete(embKeys);
+            log.info("✅ [Cache] {} embeddings supprimés", embKeys.size());
+        }
+        
+        // Supprimer tous les batch:emb:*
+        Set<String> batchKeys = redisTemplate.keys(BATCH_EMB_PREFIX + "*");
+        if (batchKeys != null && !batchKeys.isEmpty()) {
+            redisTemplate.delete(batchKeys);
+            log.info("✅ [Cache] {} batch tracking supprimés", batchKeys.size());
+        }
+        
+        log.info("✅ [Cache] Tous les caches embeddings supprimés");
+    }
     
     // ========================================================================
     // MÉTHODES PRIVÉES (INCHANGÉES)

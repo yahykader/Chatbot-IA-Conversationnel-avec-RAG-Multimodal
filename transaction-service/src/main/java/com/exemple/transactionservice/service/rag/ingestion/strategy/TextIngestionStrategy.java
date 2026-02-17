@@ -136,9 +136,6 @@ public class TextIngestionStrategy implements IngestionStrategy {
         long startTime = System.currentTimeMillis();
         
         try {
-            // ========================================================================
-            // PROGRESS - Upload started
-            // ========================================================================
             if (progressNotifier != null) {
                 progressNotifier.uploadStarted(batchId, filename, fileSize);
             }
@@ -146,9 +143,6 @@ public class TextIngestionStrategy implements IngestionStrategy {
             log.info("📄 [{}] Processing text file: {} ({} MB, ext: {})", 
                 getName(), filename, fileSize / 1_000_000, extension.toUpperCase());
             
-            // ========================================================================
-            // VALIDATION - Empty file check
-            // ========================================================================
             if (file.isEmpty() || fileSize == 0) {
                 if (progressNotifier != null) {
                     progressNotifier.error(batchId, filename, "Empty file");
@@ -156,16 +150,10 @@ public class TextIngestionStrategy implements IngestionStrategy {
                 throw new IOException("Empty text file: " + filename);
             }
             
-            // ========================================================================
-            // PROGRESS - Upload completed
-            // ========================================================================
             if (progressNotifier != null) {
                 progressNotifier.uploadCompleted(batchId, filename);
             }
             
-            // ========================================================================
-            // PROCESSING - Streaming ou Normal
-            // ========================================================================
             if (progressNotifier != null) {
                 progressNotifier.processingStarted(batchId, filename);
             }
@@ -182,9 +170,12 @@ public class TextIngestionStrategy implements IngestionStrategy {
                 result = ingestNormal(file, filename, extension, batchId, fileSize);
             }
             
-            // ========================================================================
-            // METRICS
-            // ========================================================================
+            // ✅ AJOUT: Cleanup local cache + stats
+            textDeduplicationService.clearLocalCache();
+            var dedupStats = textDeduplicationService.getStats(batchId);
+            log.info("📊 [Dedup] Stats - Total indexés: {}, Cache local: {}", 
+                dedupStats.totalIndexed(), dedupStats.localCacheSize());
+            
             long duration = System.currentTimeMillis() - startTime;
             
             ragMetrics.recordStrategyProcessing(
@@ -193,9 +184,6 @@ public class TextIngestionStrategy implements IngestionStrategy {
                 result.textEmbeddings()
             );
             
-            // ========================================================================
-            // PROGRESS - Completed
-            // ========================================================================
             if (progressNotifier != null) {
                 progressNotifier.completed(batchId, filename, result.textEmbeddings(), 0);
             }
@@ -207,21 +195,17 @@ public class TextIngestionStrategy implements IngestionStrategy {
             return result;
             
         } catch (Exception e) {
-            // ========================================================================
-            // ERROR HANDLING
-            // ========================================================================
+            // ✅ AJOUT: Cleanup local cache même en cas d'erreur
+            textDeduplicationService.clearLocalCache();
             
-            // Progress - Error
             if (progressNotifier != null) {
                 progressNotifier.error(batchId, filename, e.getMessage());
             }
             
             log.error("❌ [{}] Processing error: {}", getName(), filename, e);
-            
-            // Re-throw exception
             throw e;
         }
-    }    
+    }   
     private IngestionResult ingestNormal(MultipartFile file, String filename,
                                           String extension, String batchId,
                                           long fileSize) throws Exception {

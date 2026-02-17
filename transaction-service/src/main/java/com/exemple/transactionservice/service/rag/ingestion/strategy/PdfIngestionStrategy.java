@@ -172,6 +172,12 @@ public class PdfIngestionStrategy implements IngestionStrategy {
                 result = ingestNormal(file, batchId);
             }
             
+            // ✅ AJOUT: Cleanup local cache + stats
+            textDeduplicationService.clearLocalCache();
+            var dedupStats = textDeduplicationService.getStats(batchId);
+            log.info("📊 [Dedup] Stats - Total indexés: {}, Cache local: {}", 
+                dedupStats.totalIndexed(), dedupStats.localCacheSize());
+            
             long duration = System.currentTimeMillis() - startTime;
             int totalEmbeddings = result.textEmbeddings() + result.imageEmbeddings();
             
@@ -194,6 +200,9 @@ public class PdfIngestionStrategy implements IngestionStrategy {
             return result;
             
         } catch (Exception e) {
+            // ✅ AJOUT: Cleanup local cache même en cas d'erreur
+            textDeduplicationService.clearLocalCache();
+            
             if (progressNotifier != null) {
                 progressNotifier.error(batchId, filename, e.getMessage());
             }
@@ -202,7 +211,6 @@ public class PdfIngestionStrategy implements IngestionStrategy {
             throw e;
         }
     }
-    
     // ========================================================================
     // MÉTHODES PRIVÉES - INGESTION (TOUTES INCHANGÉES)
     // ========================================================================
