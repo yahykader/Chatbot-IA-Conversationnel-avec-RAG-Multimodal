@@ -225,35 +225,6 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
             signatureValidator.validate(file, "xlsx");
             
             // ========================================================================
-            // ✅ SUPPRESSION: Vérification doublon (déjà faite par orchestrator)
-            // ========================================================================
-            // ❌ ANCIEN CODE SUPPRIMÉ:
-            /*
-            if (progressNotifier != null) {
-                progressNotifier.notifyProgress(batchId, filename, "DEDUPLICATION", 10, 
-                    "Vérification des duplicates...");
-            }
-            
-            DeduplicationService.DuplicationInfo dupInfo = 
-                deduplicationService.checkDuplication(file);
-            
-            if (dupInfo.isDuplicate()) {
-                if (progressNotifier != null) {
-                    progressNotifier.error(batchId, filename, 
-                        "Fichier déjà traité (batch: " + dupInfo.originalBatchId() + ")");
-                }
-                
-                ragMetrics.recordDuplicate(getName());
-                log.warn("⚠️ [{}] XLSX doublon: {}", getName(), filename);
-                throw new DuplicateFileException(
-                    String.format("XLSX déjà traité (batch: %s)", dupInfo.originalBatchId()),
-                    dupInfo.originalBatchId()
-                );
-            }
-            */
-            // ✅ FIN SUPPRESSION
-            
-            // ========================================================================
             // PROGRESS - Upload completed
             // ========================================================================
             if (progressNotifier != null) {
@@ -1219,20 +1190,23 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
                 Metadata.from(metadata)
             );
             
-            // ✅ Tracking Embedding avec callback
-            Embedding embedding = embeddingCache.getOrCompute(
-                description, 
-                () -> {
-                    long apiStart = System.currentTimeMillis();
-                    Embedding emb = embeddingModel.embed(description).content();
-                    long apiDuration = System.currentTimeMillis() - apiStart;
-                    
-                    // ✅ MÉTRIQUE: Embedding API call
-                    ragMetrics.recordApiCall("embed_text", apiDuration);
-                    
-                    return emb;
-                }
-            );
+            // ✅ MODIFIÉ: Récupérer batchId depuis metadata
+            String batchId = (String) additionalMetadata.get("batchId");
+            
+            // ✅ MODIFIÉ: Utiliser getAndTrack + put avec batchId
+            Embedding embedding = embeddingCache.getAndTrack(description, batchId);
+            
+            if (embedding == null) {
+                // Cache miss - Créer l'embedding
+                long apiStart = System.currentTimeMillis();
+                embedding = embeddingModel.embed(description).content();
+                long apiDuration = System.currentTimeMillis() - apiStart;
+                
+                ragMetrics.recordApiCall("embed_text", apiDuration);
+                
+                // ✅ NOUVEAU: Stocker avec tracking batch
+                embeddingCache.put(description, embedding, batchId);
+            }
             
             // ✅ Tracking Vector Store
             long storeStart = System.currentTimeMillis();
@@ -1355,20 +1329,20 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
         
         TextSegment segment = TextSegment.from(text, metadata);
         
-        // ✅ MODIFIER: Ajouter tracking embedding
-        Embedding embedding = embeddingCache.getOrCompute(
-            text, 
-            () -> {
-                long apiStart = System.currentTimeMillis();
-                Embedding emb = embeddingModel.embed(text).content();
-                long apiDuration = System.currentTimeMillis() - apiStart;
-                
-                // ✅ MÉTRIQUE: Embedding API call
-                ragMetrics.recordApiCall("embed_text", apiDuration);
-                
-                return emb;
-            }
-        );
+        // ✅ MODIFIÉ: Utiliser getAndTrack + put avec batchId
+        Embedding embedding = embeddingCache.getAndTrack(text, batchId);
+        
+        if (embedding == null) {
+            // Cache miss - Créer l'embedding
+            long apiStart = System.currentTimeMillis();
+            embedding = embeddingModel.embed(text).content();
+            long apiDuration = System.currentTimeMillis() - apiStart;
+            
+            ragMetrics.recordApiCall("embed_text", apiDuration);
+            
+            // ✅ NOUVEAU: Stocker avec tracking batch
+            embeddingCache.put(text, embedding, batchId);
+        }
         
         // ✅ AJOUTER: Tracking vector store
         long storeStart = System.currentTimeMillis();

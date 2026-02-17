@@ -6,6 +6,8 @@ package com.exemple.transactionservice.service.rag.ingestion;
 
 import com.exemple.transactionservice.service.rag.ingestion.repository.EmbeddingRepository;
 import com.exemple.transactionservice.service.rag.ingestion.deduplication.DeduplicationService;
+import com.exemple.transactionservice.service.rag.ingestion.deduplication.TextDeduplicationService;  // ✅ AJOUTER
+import com.exemple.transactionservice.service.rag.ingestion.cache.EmbeddingCache;  // ✅ AJOUTER
 import com.exemple.transactionservice.service.rag.metrics.RAGMetrics;
 import com.exemple.transactionservice.service.rag.ingestion.model.IngestionResult;
 import com.exemple.transactionservice.service.rag.ingestion.security.AntivirusScanner;
@@ -26,32 +28,16 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
-/**
- * Orchestrateur principal d'ingestion multimodale.
- * 
- * ✅ ADAPTÉ AVEC RAGMetrics unifié
- * 
- * Fonctionnalités:
- * - API asynchrone (@Async)
- * - Batch processing parallèle
- * - Tracking temps réel
- * - Rollback transactionnel
- * - Métriques Prometheus via RAGMetrics
- * - Scan antivirus ClamAV
- * - Détection et gestion des doublons
- * - Health checks
- * 
- * @author RAG Team
- * @version 3.0 - Adapté avec RAGMetrics unifié
- */
 @Slf4j
 @Service
 public class IngestionOrchestrator {
     
     private final List<IngestionStrategy> strategies;
-    private final RAGMetrics ragMetrics;  // ✅ Metrics unifié
+    private final RAGMetrics ragMetrics;
     private final IngestionTracker tracker;
     private final DeduplicationService deduplicationService;
+    private final TextDeduplicationService textDeduplicationService;  // ✅ AJOUTER
+    private final EmbeddingCache embeddingCache;  // ✅ AJOUTER
     private final AntivirusScanner antivirusScanner;
     private final EmbeddingRepository embeddingRepository;
     
@@ -62,16 +48,20 @@ public class IngestionOrchestrator {
     
     public IngestionOrchestrator(
             List<IngestionStrategy> strategies,
-            RAGMetrics ragMetrics,  // ✅ Injection RAGMetrics
+            RAGMetrics ragMetrics,
             IngestionTracker tracker,
             DeduplicationService deduplicationService,
+            TextDeduplicationService textDeduplicationService,  // ✅ AJOUTER
+            EmbeddingCache embeddingCache,  // ✅ AJOUTER
             AntivirusScanner antivirusScanner,
             EmbeddingRepository embeddingRepository) {
         
         this.strategies = strategies;
-        this.ragMetrics = ragMetrics;  // ✅ Utilisation du metrics unifié
+        this.ragMetrics = ragMetrics;
         this.tracker = tracker;
         this.deduplicationService = deduplicationService;
+        this.textDeduplicationService = textDeduplicationService;  // ✅ AJOUTER
+        this.embeddingCache = embeddingCache;  // ✅ AJOUTER
         this.antivirusScanner = antivirusScanner;
         this.embeddingRepository = embeddingRepository;
         
@@ -83,7 +73,7 @@ public class IngestionOrchestrator {
     }
     
     // ========================================================================
-    // API SYNCHRONE
+    // API SYNCHRONE (INCHANGÉE)
     // ========================================================================
     
     public IngestionResult ingestFile(MultipartFile file, String batchId) 
@@ -92,7 +82,7 @@ public class IngestionOrchestrator {
     }
     
     // ========================================================================
-    // API ASYNCHRONE - FICHIER UNIQUE
+    // API ASYNCHRONE - FICHIER UNIQUE (INCHANGÉE)
     // ========================================================================
     
     @Async
@@ -120,7 +110,7 @@ public class IngestionOrchestrator {
     }
     
     // ========================================================================
-    // API ASYNCHRONE - BATCH
+    // API ASYNCHRONE - BATCH (INCHANGÉE)
     // ========================================================================
     
     @Async
@@ -221,15 +211,14 @@ public class IngestionOrchestrator {
     }
   
     // ========================================================================
-    // ✅ NOUVELLES MÉTHODES CRUD
+    // ✅ MÉTHODES CRUD - MODIFIÉES
     // ========================================================================
     
     /**
-     * Vérifie si un batch existe
+     * Vérifie si un batch existe (INCHANGÉE)
      */
     public boolean batchExists(String batchId) {
         try {
-            // Vérifier dans le tracker
             boolean existsInTracker = tracker.batchExists(batchId);
             
             if (existsInTracker) {
@@ -237,7 +226,6 @@ public class IngestionOrchestrator {
                 return true;
             }
             
-            // Vérifier dans Qdrant
             Map<String, Integer> stats = getBatchStats(batchId);
             boolean existsInQdrant = stats.get("textEmbeddings") > 0 || 
                                      stats.get("imageEmbeddings") > 0;
@@ -257,16 +245,13 @@ public class IngestionOrchestrator {
     }
     
     /**
-     * Récupère les statistiques d'un batch
+     * Récupère les statistiques d'un batch (INCHANGÉE)
      */
     public Map<String, Integer> getBatchStats(String batchId) {
         Map<String, Integer> stats = new HashMap<>();
         
         try {
-            // Compter les embeddings texte
             int textCount = embeddingRepository.countTextByBatchId(batchId);
-            
-            // Compter les embeddings image
             int imageCount = embeddingRepository.countImageByBatchId(batchId);
             
             stats.put("textEmbeddings", textCount);
@@ -286,7 +271,7 @@ public class IngestionOrchestrator {
     }
     
     /**
-     * Supprime tous les fichiers d'un batch
+     * ✅ MODIFIÉ: Supprime batch + TOUS les caches Redis
      */
     public int deleteBatch(String batchId) {
         try {
@@ -308,9 +293,8 @@ public class IngestionOrchestrator {
             tracker.removeBatch(batchId);
             log.info("📊 Batch supprimé du tracker");
             
-            // 4. Supprimer du service de déduplication
-            deduplicationService.removeBatch(batchId);
-            log.info("🔍 Batch supprimé de la déduplication");
+            // 4. ✅ AMÉLIORER: Nettoyer TOUS les caches Redis
+            cleanupRedisCaches(batchId);
             
             log.info("✅ Batch supprimé: {} - Total: {} embeddings", 
                 batchId, totalDeleted);
@@ -323,9 +307,48 @@ public class IngestionOrchestrator {
         }
     }
     
+    /**
+     * ✅ NOUVELLE MÉTHODE: Nettoie TOUS les caches Redis pour un batch
+     */
+    private void cleanupRedisCaches(String batchId) {
+        try {
+            log.info("🧹 [Redis] Nettoyage complet des caches pour batch: {}", batchId);
+            
+            // 1. DeduplicationService: ingestion:hash:*
+            try {
+                deduplicationService.removeBatch(batchId);
+                log.info("🔍 Batch supprimé de la déduplication fichiers");
+            } catch (Exception e) {
+                log.error("❌ Erreur nettoyage DeduplicationService", e);
+            }
+            
+            // 2. ✅ TextDeduplicationService: text:dedup:* + batch:text:*
+            try {
+                textDeduplicationService.removeBatch(batchId);
+                log.info("📝 Batch supprimé du cache de déduplication texte");
+            } catch (Exception e) {
+                log.error("❌ Erreur nettoyage TextDeduplicationService", e);
+            }
+            
+            // 3. ✅ EmbeddingCache: emb:* + batch:emb:*
+            try {
+                embeddingCache.removeBatch(batchId);
+                log.info("💾 Batch supprimé du cache d'embeddings");
+            } catch (Exception e) {
+                log.error("❌ Erreur nettoyage EmbeddingCache", e);
+            }
+            
+            log.info("✅ [Redis] Nettoyage complet terminé pour batch: {}", batchId);
+            
+        } catch (Exception e) {
+            log.error("❌ [Redis] Erreur nettoyage caches pour batch: {}", batchId, e);
+        }
+    }
+    
     // ========================================================================
-    // LOGIQUE INGESTION INTERNE
+    // LOGIQUE INGESTION INTERNE (TOUTES INCHANGÉES)
     // ========================================================================
+    
     private IngestionResult ingestFileInternal(
             MultipartFile file,
             String batchId) throws Exception {
@@ -337,7 +360,6 @@ public class IngestionOrchestrator {
             filename, extension.toUpperCase(),
             file.getSize() / 1024, batchId);
         
-        // ✅ MÉTRIQUE: Début ingestion
         ragMetrics.startIngestion();
         
         IngestionStatus status = new IngestionStatus(batchId, filename);
@@ -347,9 +369,7 @@ public class IngestionOrchestrator {
         String strategyName = "unknown";
         
         try {
-            // ========================================================================
             // 0. SCAN ANTIVIRUS
-            // ========================================================================
             if (antivirusEnabled) {
                 log.debug("🦠 Antivirus scan: {}", filename);
                 
@@ -364,7 +384,6 @@ public class IngestionOrchestrator {
                     log.error("🚨 VIRUS DETECTED: {} - {}",
                         filename, scanResult.getVirusName());
                     
-                    // ✅ MÉTRIQUE: Virus détecté
                     ragMetrics.recordVirusDetected(scanResult.getVirusName());
                     
                     throw new VirusDetectedException(
@@ -375,9 +394,7 @@ public class IngestionOrchestrator {
                 log.debug("✅ File clean");
             }
             
-            // ========================================================================
             // 1. SÉLECTION STRATEGY
-            // ========================================================================
             IngestionStrategy strategy = selectStrategy(file, extension);
             
             if (strategy == null) {
@@ -392,56 +409,37 @@ public class IngestionOrchestrator {
             log.info("🎯 Strategy: {} (priority: {})",
                 strategyName, strategy.getPriority());
             
-            // ========================================================================
             // 2. VÉRIFICATION DOUBLON
-            // ========================================================================
             byte[] fileBytes = file.getBytes();
             String fileHash = deduplicationService.calculateHash(fileBytes);
 
-            // ✅ CORRECTION 1: isDuplicateAndRecord() enregistre déjà la métrique
-            // Pas besoin de recordDuplicate() après
             if (deduplicationService.isDuplicateAndRecord(fileHash, strategyName)) {
-                
-                // ✅ CORRECTION 2: getExistingBatchId() retourne String directement
                 String existingBatchId = deduplicationService.getExistingBatchId(fileHash);
-                ragMetrics.recordDuplicate(strategyName); // Enregistre le doublon dans les métriques
+                ragMetrics.recordDuplicate(strategyName);
                 
                 log.warn("⚠️ Duplicate: {} (existing batch: {})", 
                     filename, existingBatchId);
                 
-                // ✅ CORRECTION 3: Passer String directement (pas de conversion Long)
                 throw new DuplicateFileException(
                     "Duplicate file: " + filename, 
                     existingBatchId
                 );
             }
             
-            // ✅ AJOUT: Enregistrer le fichier si pas de doublon
             deduplicationService.registerFile(fileHash, batchId, filename);
 
-            // ========================================================================
             // 3. INGESTION
-            // ========================================================================
             IngestionResult result = strategy.ingest(file, batchId);
             
-            // ========================================================================
             // 4. SUCCÈS - MÉTRIQUES
-            // ========================================================================
             long duration = System.currentTimeMillis() - startTime;
             status.complete(true, duration);
             
             int totalEmbeddings = result.textEmbeddings() + result.imageEmbeddings();
-
-            // ✅ MÉTRIQUE: Chunks per file (utilise textEmbeddings comme proxy)
             int chunks = Math.max(result.textEmbeddings(), 0);
-            ragMetrics.recordStrategyProcessing(strategyName, duration, chunks);
             
-            // ✅ MÉTRIQUE: Ingestion réussie
-            ragMetrics.recordIngestionSuccess(
-                strategyName,
-                duration,
-                totalEmbeddings
-            );
+            ragMetrics.recordStrategyProcessing(strategyName, duration, chunks);
+            ragMetrics.recordIngestionSuccess(strategyName, duration, totalEmbeddings);
             
             log.info("✅ Success: {} - strategy={}, text={}, images={}, {}ms",
                 filename, strategyName,
@@ -450,29 +448,13 @@ public class IngestionOrchestrator {
             return result;
             
         } catch (Exception e) {
-            
-            // ========================================================================
-            // GESTION ERREURS
-            // ========================================================================
             boolean isDuplicate = e instanceof DuplicateFileException;
             
             if (isDuplicate) {
-                // ========================================================================
-                // CAS 1: DOUBLON - Pas de rollback
-                // ========================================================================
                 DuplicateFileException dupEx = (DuplicateFileException) e;
-                
                 log.warn("⚠️ Duplicate: {} (existing batch: {})", 
                     filename, dupEx.getExistingBatchId());
-                
-                // ✅ CORRECTION 4: Ne PAS enregistrer la métrique ici
-                // Elle a déjà été enregistrée par isDuplicateAndRecord()
-                // ragMetrics.recordDuplicate(strategyName); // ❌ SUPPRIMÉ (doublon)
-                
             } else {
-                // ========================================================================
-                // CAS 2: ERREUR RÉELLE - Rollback
-                // ========================================================================
                 log.error("❌ Failure: {} - Rolling back...", filename, e);
                 
                 try {
@@ -482,31 +464,24 @@ public class IngestionOrchestrator {
                     log.error("❌ Rollback error: {}", rollbackError.getMessage());
                 }
                 
-                // ✅ MÉTRIQUE: Erreur ingestion
-                ragMetrics.recordIngestionError(
-                    strategyName,
-                    e.getClass().getSimpleName()
-                );
+                ragMetrics.recordIngestionError(strategyName, e.getClass().getSimpleName());
             }
             
             long duration = System.currentTimeMillis() - startTime;
             status.complete(false, duration);
             
-            // Re-throw exception pour le controller
             throw e;
             
         } finally {
-            // ✅ MÉTRIQUE: Fin ingestion
             ragMetrics.endIngestion();
             
-            // Cleanup tracking après 60s
             CompletableFuture.delayedExecutor(60, TimeUnit.SECONDS)
                 .execute(() -> activeIngestions.remove(batchId));
         }
     }
     
     // ========================================================================
-    // PRIVATE HELPERS
+    // PRIVATE HELPERS (TOUTES INCHANGÉES)
     // ========================================================================
     
     private FileIngestionResult processFileForBatch(
@@ -575,7 +550,7 @@ public class IngestionOrchestrator {
     }
     
     // ========================================================================
-    // UTILITAIRES DOUBLONS
+    // UTILITAIRES DOUBLONS (TOUTES INCHANGÉES)
     // ========================================================================
     
     public boolean fileExists(MultipartFile file) {
@@ -591,21 +566,14 @@ public class IngestionOrchestrator {
         }
     }
     
-    /**
-     * Récupère le batchId existant d'un fichier (si doublon détecté)
-     * 
-     * @param file Fichier à vérifier
-     * @return batchId du fichier existant, ou null si pas de doublon
-     */
     public String getExistingBatchId(MultipartFile file) {
         try {
             byte[] fileBytes = file.getBytes();
             String fileHash = deduplicationService.calculateHash(fileBytes);
             
             if (deduplicationService.isDuplicate(fileHash)) {
-        
                 String batchId = deduplicationService.getExistingBatchId(fileHash);
-                return batchId; // Retourne le batchId existant directement
+                return batchId;
             }
             
             return null;
@@ -618,20 +586,45 @@ public class IngestionOrchestrator {
     }
 
     /**
-     * Nettoie tout le tracking (à utiliser avec deleteAllFiles)
+     * ✅ AMÉLIORER: Nettoie tout le tracking + TOUS les caches Redis
      */
     public void clearAllTracking() {
         try {
-            log.warn("🗑️ Nettoyage complet du tracker");
+            log.warn("🗑️ Nettoyage complet du tracker et des caches");
+            
+            // 1. Tracker mémoire
             tracker.clearAll();
             log.info("✅ Tracker nettoyé");
+            
+            // 2. ✅ Tous les caches Redis
+            try {
+                deduplicationService.clearAll();
+                log.info("✅ DeduplicationService nettoyé");
+            } catch (Exception e) {
+                log.error("❌ Erreur clearAll DeduplicationService", e);
+            }
+            
+            try {
+                textDeduplicationService.clearAll();
+                log.info("✅ TextDeduplicationService nettoyé");
+            } catch (Exception e) {
+                log.error("❌ Erreur clearAll TextDeduplicationService", e);
+            }
+            
+            try {
+                embeddingCache.clear();
+                log.info("✅ EmbeddingCache nettoyé");
+            } catch (Exception e) {
+                log.error("❌ Erreur clear EmbeddingCache", e);
+            }
+            
         } catch (Exception e) {
-            log.error("❌ Erreur nettoyage tracker", e);
+            log.error("❌ Erreur nettoyage complet", e);
         }
     }
     
     // ========================================================================
-    // MONITORING
+    // MONITORING (TOUTES INCHANGÉES)
     // ========================================================================
     
     public List<IngestionStatus> getActiveIngestions() {
@@ -648,7 +641,7 @@ public class IngestionOrchestrator {
             activeIngestions.size(),
             tracker.getActiveBatchCount(),
             tracker.getTotalEmbeddingCount(),
-            ragMetrics.getActiveIngestions()  // ✅ Utilisation RAGMetrics
+            ragMetrics.getActiveIngestions()
         );
     }
     
@@ -703,7 +696,7 @@ public class IngestionOrchestrator {
     }
     
     // ========================================================================
-    // CLASSES INTERNES
+    // CLASSES INTERNES (TOUTES INCHANGÉES)
     // ========================================================================
     
     public static class IngestionStatus {
@@ -801,3 +794,4 @@ public class IngestionOrchestrator {
         String className
     ) {}
 }
+

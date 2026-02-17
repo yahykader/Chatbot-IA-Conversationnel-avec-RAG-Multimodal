@@ -561,19 +561,21 @@ public class TextIngestionStrategy implements IngestionStrategy {
         
         TextSegment segment = TextSegment.from(text, metadata);
         
-        Embedding embedding = embeddingCache.getOrCompute(
-            text, 
-            () -> {
-                long apiStart = System.currentTimeMillis();
-                Embedding emb = embeddingModel.embed(text).content();
-                long apiDuration = System.currentTimeMillis() - apiStart;
-                
-                // ✅ MÉTRIQUE: Embedding API call
-                ragMetrics.recordApiCall("embed_text", apiDuration);
-                
-                return emb;
-            }
-        );
+        // ✅ MODIFIÉ: Utiliser getAndTrack + put avec batchId
+        Embedding embedding = embeddingCache.getAndTrack(text, batchId);
+        
+        if (embedding == null) {
+            // Cache miss - Créer l'embedding
+            long apiStart = System.currentTimeMillis();
+            embedding = embeddingModel.embed(text).content();
+            long apiDuration = System.currentTimeMillis() - apiStart;
+            
+            // ✅ MÉTRIQUE: Embedding API call (INCHANGÉE)
+            ragMetrics.recordApiCall("embed_text", apiDuration);
+            
+            // ✅ NOUVEAU: Stocker avec tracking batch
+            embeddingCache.put(text, embedding, batchId);
+        }
         
         long storeStart = System.currentTimeMillis();
         String embeddingId = textStore.add(embedding, segment);

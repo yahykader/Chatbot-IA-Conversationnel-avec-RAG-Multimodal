@@ -10,14 +10,14 @@ import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
-import java.util.Set;  // ✅ AJOUTER
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
  * Service de déduplication de fichiers basé sur le hash SHA-256.
  * Utilise Redis pour stocker les hash des fichiers déjà ingérés.
  * 
- * ✅ VERSION AVEC SUPPORT UUID STRING + CRUD
+ * VERSION AVEC SUPPORT UUID STRING + CRUD + NETTOYAGE SÉLECTIF
  */
 @Slf4j
 @Service
@@ -28,8 +28,6 @@ public class DeduplicationService {
     
     private static final String REDIS_KEY_PREFIX = "ingestion:hash:";
     private static final int DEFAULT_TTL_DAYS = 30;
-    
-    // ✅ AJOUTER pour removeBatch()
     private static final String FILE_HASH_PREFIX = REDIS_KEY_PREFIX;
     
     public DeduplicationService(
@@ -37,16 +35,13 @@ public class DeduplicationService {
             RAGMetrics ragMetrics) {
         this.redisTemplate = redisTemplate;
         this.ragMetrics = ragMetrics;
-        log.info("✅ DeduplicationService initialisé - Redis activé (UUID support)");
+        log.info("✅ DeduplicationService initialisé - Redis activé (UUID support + Nettoyage sélectif)");
     }
     
     // ========================================================================
-    // HASH CALCULATION
+    // HASH CALCULATION (INCHANGÉ)
     // ========================================================================
     
-    /**
-     * Calcule le hash SHA-256 d'un fichier
-     */
     public String computeHash(MultipartFile file) throws IOException {
         try {
             byte[] fileBytes = file.getBytes();
@@ -67,9 +62,6 @@ public class DeduplicationService {
         }
     }
     
-    /**
-     * Calcule le hash SHA-256 de bytes
-     */
     public String computeHash(byte[] bytes) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -80,28 +72,19 @@ public class DeduplicationService {
         }
     }
     
-    /**
-     * Alias pour compatibilité
-     */
     public String calculateHash(byte[] fileBytes) {
         return computeHash(fileBytes);
     }
     
     // ========================================================================
-    // DUPLICATE DETECTION
+    // DUPLICATE DETECTION (INCHANGÉ)
     // ========================================================================
     
-    /**
-     * Vérifie si un fichier a déjà été ingéré
-     */
     public boolean isDuplicate(MultipartFile file) throws IOException {
         String hash = computeHash(file);
         return isDuplicateByHash(hash);
     }
     
-    /**
-     * Vérifie si un hash existe déjà dans Redis
-     */
     public boolean isDuplicateByHash(String hash) {
         String key = REDIS_KEY_PREFIX + hash;
         Boolean exists = redisTemplate.hasKey(key);
@@ -114,24 +97,15 @@ public class DeduplicationService {
         return false;
     }
     
-    /**
-     * Alias pour compatibilité
-     */
     public boolean isDuplicate(String fileHash) {
         return isDuplicateByHash(fileHash);
     }
     
-    /**
-     * Retourne le batchId en String (UUID ou numérique)
-     */
     public String getDuplicateMetadata(String hash) {
         String key = REDIS_KEY_PREFIX + hash;
         return redisTemplate.opsForValue().get(key);
     }
     
-    /**
-     * Récupère le batchId existant (String)
-     */
     public String getExistingBatchId(String fileHash) {
         try {
             String key = REDIS_KEY_PREFIX + fileHash;
@@ -152,9 +126,6 @@ public class DeduplicationService {
         }
     }
     
-    /**
-     * @deprecated Utilisez getExistingBatchId() à la place
-     */
     @Deprecated
     public Long getExistingBatchIdAsLong(String fileHash) {
         try {
@@ -178,12 +149,9 @@ public class DeduplicationService {
     }
     
     // ========================================================================
-    // DUPLICATE DETECTION + METRICS
+    // DUPLICATE DETECTION + METRICS (INCHANGÉ)
     // ========================================================================
     
-    /**
-     * Check duplication + enregistre la métrique
-     */
     public boolean isDuplicateAndRecord(String fileHash, String strategyName) {
         boolean dup = isDuplicateByHash(fileHash);
         if (dup) {
@@ -195,9 +163,6 @@ public class DeduplicationService {
         return dup;
     }
     
-    /**
-     * Retourne String batchId dans DuplicationInfo
-     */
     public DuplicationInfo checkDuplicationAndRecord(
             MultipartFile file, 
             String strategyName) throws IOException {
@@ -213,27 +178,18 @@ public class DeduplicationService {
     }
     
     // ========================================================================
-    // MARKING AS INGESTED
+    // MARKING AS INGESTED (INCHANGÉ)
     // ========================================================================
     
-    /**
-     * Accepte batchId String (UUID)
-     */
     public void markAsIngested(MultipartFile file, String batchId) throws IOException {
         String hash = computeHash(file);
         markAsIngestedByHash(hash, batchId);
     }
     
-    /**
-     * batchId en String
-     */
     public void markAsIngestedByHash(String hash, String batchId) {
         markAsIngestedByHash(hash, batchId, DEFAULT_TTL_DAYS, TimeUnit.DAYS);
     }
     
-    /**
-     * batchId en String avec TTL custom
-     */
     public void markAsIngestedByHash(
             String hash, 
             String batchId, 
@@ -241,8 +197,6 @@ public class DeduplicationService {
             TimeUnit timeUnit) {
         
         String key = REDIS_KEY_PREFIX + hash;
-        
-        // Stocker batchId comme valeur (String: UUID ou numérique)
         redisTemplate.opsForValue().set(key, batchId, ttl, timeUnit);
         
         log.debug("✅ [Dedup] Fichier marqué comme ingéré: hash={} batchId={} ttl={}{}",
@@ -252,18 +206,12 @@ public class DeduplicationService {
             timeUnit.toString().toLowerCase());
     }
     
-    /**
-     * Accepte Long batchId (convertit en String) - Pour compatibilité
-     */
     public void registerFile(String fileHash, Long batchId, String filename) {
         markAsIngestedByHash(fileHash, String.valueOf(batchId));
         log.debug("✅ [Dedup] Fichier enregistré: {} -> batch {}", 
             filename != null ? filename : "unknown", batchId);
     }
     
-    /**
-     * Accepte String batchId directement
-     */
     public void registerFile(String fileHash, String batchId, String filename) {
         markAsIngestedByHash(fileHash, batchId);
         log.debug("✅ [Dedup] Fichier enregistré: {} -> batch {}", 
@@ -271,33 +219,46 @@ public class DeduplicationService {
     }
     
     // ========================================================================
-    // CLEANUP
+    // CLEANUP - ✅ VERSION AMÉLIORÉE
     // ========================================================================
+    
     /**
-     * ✅ Nettoie tous les hashs (DANGER - à utiliser avec précaution)
+     * ✅ MODIFIÉ: Nettoie TOUT SAUF rate-limit
      */
     public void clearAll() {
         try {
-            log.warn("🚨 SUPPRESSION GLOBALE des hashs demandée");
+            log.warn("🚨 [Redis] SUPPRESSION GLOBALE des caches demandée");
             
-            String pattern = REDIS_KEY_PREFIX + "*";
-            Set<String> keys = redisTemplate.keys(pattern);
+            int totalDeleted = 0;
             
-            if (keys != null && !keys.isEmpty()) {
-                Long deleted = redisTemplate.delete(keys);
-                log.warn("✅ {} hashs Redis supprimés", deleted);
-            } else {
-                log.info("ℹ️ Aucun hash Redis à supprimer");
+            String[] patterns = {
+                FILE_HASH_PREFIX + "*",
+                "text:dedup:*",
+                "emb:*",
+                "text:*"
+            };
+            
+            for (String pattern : patterns) {
+                Set<String> keys = redisTemplate.keys(pattern);
+                
+                if (keys != null && !keys.isEmpty()) {
+                    keys.removeIf(key -> key.startsWith("rate-limit:"));
+                    
+                    if (!keys.isEmpty()) {
+                        Long deleted = redisTemplate.delete(keys);
+                        totalDeleted += (deleted != null ? deleted.intValue() : 0);
+                        log.info("✅ [Redis] Pattern '{}': {} clés supprimées", pattern, deleted);
+                    }
+                }
             }
             
+            log.warn("✅ [Redis] SUPPRESSION GLOBALE terminée: {} clés supprimées", totalDeleted);
+            
         } catch (Exception e) {
-            log.error("❌ Erreur suppression globale Redis", e);
+            log.error("❌ [Redis] Erreur suppression globale", e);
         }
     }
-
-    /**
-     * Supprime un hash de Redis
-     */
+    
     public void removeHash(String hash) {
         String key = REDIS_KEY_PREFIX + hash;
         Boolean deleted = redisTemplate.delete(key);
@@ -307,57 +268,72 @@ public class DeduplicationService {
         }
     }
     
-    /**
-     * Supprime le marquage d'un fichier
-     */
     public void removeFile(MultipartFile file) throws IOException {
         String hash = computeHash(file);
         removeHash(hash);
     }
     
     /**
-     * ✅ NOUVEAU: Supprime un batch du cache Redis
+     * ✅ MODIFIÉ: Nettoyage sélectif (seulement ingestion:hash:* du batch)
+     * Les caches text:dedup:* et emb:* sont gérés par leurs services respectifs
      */
     public void removeBatch(String batchId) {
         try {
-            log.info("🗑️ Suppression batch de la déduplication: {}", batchId);
+            log.info("🗑️ [Redis] Nettoyage sélectif pour batch: {}", batchId);
             
-            // Pattern pour trouver toutes les clés
-            String pattern = FILE_HASH_PREFIX + "*";
+            // Supprimer SEULEMENT ingestion:hash:* qui contient ce batchId
+            int deleted = deleteHashKeysForBatch(batchId);
             
-            Set<String> keys = redisTemplate.keys(pattern);
-            
-            if (keys != null && !keys.isEmpty()) {
-                int deletedCount = 0;
-                
-                for (String key : keys) {
-                    String storedBatchId = redisTemplate.opsForValue().get(key);
-                    
-                    if (batchId.equals(storedBatchId)) {
-                        redisTemplate.delete(key);
-                        deletedCount++;
-                        log.debug("🗑️ Clé Redis supprimée: {}", key);
-                    }
-                }
-                
-                log.info("✅ Batch supprimé de la déduplication: {} ({} clés supprimées)", 
-                    batchId, deletedCount);
-            } else {
-                log.debug("ℹ️ Aucune clé trouvée pour le batch: {}", batchId);
-            }
+            log.info("✅ [Redis] Batch supprimé: {} ({} fichier(s) hash supprimé(s))", batchId, deleted);
             
         } catch (Exception e) {
-            log.error("❌ Erreur suppression batch Redis: {}", batchId, e);
+            log.error("❌ [Redis] Erreur suppression batch: {}", batchId, e);
+        }
+    }
+    
+    /**
+     * ✅ NOUVELLE MÉTHODE: Supprime uniquement ingestion:hash:* du batch
+     */
+    private int deleteHashKeysForBatch(String batchId) {
+        try {
+            Set<String> keys = redisTemplate.keys(FILE_HASH_PREFIX + "*");
+            
+            if (keys == null || keys.isEmpty()) {
+                log.debug("ℹ️ [Redis] Aucune clé ingestion:hash:* trouvée");
+                return 0;
+            }
+            
+            int deleted = 0;
+            
+            for (String key : keys) {
+                String value = redisTemplate.opsForValue().get(key);
+                
+                // ✅ Supprimer SEULEMENT si la valeur correspond exactement au batchId
+                if (batchId.equals(value)) {
+                    Boolean success = redisTemplate.delete(key);
+                    if (Boolean.TRUE.equals(success)) {
+                        deleted++;
+                        log.debug("🗑️ [Redis] Clé supprimée: {}", key);
+                    }
+                }
+            }
+            
+            if (deleted > 0) {
+                log.info("✅ [Redis] Pattern 'ingestion:hash:*': {} clés supprimées", deleted);
+            }
+            
+            return deleted;
+            
+        } catch (Exception e) {
+            log.error("❌ [Redis] Erreur suppression hashs batch: {}", e.getMessage());
+            return 0;
         }
     }
     
     // ========================================================================
-    // STATISTICS
+    // STATISTICS (INCHANGÉ)
     // ========================================================================
     
-    /**
-     * Compte le nombre de hash stockés
-     */
     public long countTrackedFiles() {
         try {
             var keys = redisTemplate.keys(REDIS_KEY_PREFIX + "*");
@@ -368,9 +344,6 @@ public class DeduplicationService {
         }
     }
     
-    /**
-     * Vérifie si Redis est accessible
-     */
     public boolean isRedisAvailable() {
         try {
             redisTemplate.opsForValue().get("ping");
@@ -381,16 +354,10 @@ public class DeduplicationService {
         }
     }
     
-    /**
-     * ✅ NOUVEAU: Alias pour IngestionOrchestrator
-     */
     public boolean isHealthy() {
         return isRedisAvailable();
     }
     
-    /**
-     * Health check complet
-     */
     public boolean performHealthCheck() {
         try {
             String testKey = "health:check:" + System.currentTimeMillis();
@@ -417,12 +384,9 @@ public class DeduplicationService {
     }
     
     // ========================================================================
-    // ADVANCED FEATURES
+    // ADVANCED FEATURES (INCHANGÉ)
     // ========================================================================
     
-    /**
-     * Vérifie duplication et retourne infos complètes
-     */
     public DuplicationInfo checkDuplication(MultipartFile file) throws IOException {
         String hash = computeHash(file);
         
@@ -434,9 +398,6 @@ public class DeduplicationService {
         return new DuplicationInfo(false, hash, null);
     }
     
-    /**
-     * batchId en String
-     */
     public record DuplicationInfo(
         boolean isDuplicate,
         String hash,
@@ -449,9 +410,6 @@ public class DeduplicationService {
         }
     }
     
-    /**
-     * Récupère infos complètes d'un fichier dupliqué
-     */
     public FileInfo getFileInfo(String fileHash) {
         try {
             if (isDuplicateByHash(fileHash)) {
@@ -476,9 +434,6 @@ public class DeduplicationService {
         }
     }
     
-    /**
-     * batchId en String
-     */
     public record FileInfo(
         String hash,
         String batchId,
@@ -491,13 +446,10 @@ public class DeduplicationService {
         }
         
         public boolean isExpiringSoon() {
-            return ttlSeconds > 0 && ttlSeconds < 86400; // < 24h
+            return ttlSeconds > 0 && ttlSeconds < 86400;
         }
     }
     
-    /**
-     * Rafraîchit le TTL d'un hash
-     */
     public boolean refreshTTL(String fileHash, long ttl, TimeUnit timeUnit) {
         try {
             String key = REDIS_KEY_PREFIX + fileHash;
@@ -521,9 +473,6 @@ public class DeduplicationService {
         }
     }
     
-    /**
-     * Statistiques du service
-     */
     public DeduplicationStats getStats() {
         try {
             long trackedFiles = countTrackedFiles();
@@ -547,9 +496,6 @@ public class DeduplicationService {
         }
     }
     
-    /**
-     * Record pour statistiques
-     */
     public record DeduplicationStats(
         long trackedFiles,
         boolean redisAvailable,
