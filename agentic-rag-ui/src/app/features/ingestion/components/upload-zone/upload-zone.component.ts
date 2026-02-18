@@ -1,7 +1,8 @@
-// features/ingestion/components/upload-zone/upload-zone.component.ts
 import { Component, Output, EventEmitter, Input } from '@angular/core';
 import { CommonModule } from '@angular/common';
-
+import { Observable } from 'rxjs';
+import { Store } from '@ngrx/store';
+import { selectIsRateLimited } from '../../store/rate-limit/rate-limit.selectors';
 @Component({
   selector: 'app-upload-zone',
   standalone: true,
@@ -18,8 +19,15 @@ export class UploadZoneComponent {
   @Input() acceptedFormats = '*/*'; // Tous formats par défaut
   @Input() multiple = true; // Multiple files par défaut
   @Input() disabled = false; // Désactiver la zone
+
+  //Rate limiting Déclarer comme readonly (sera initialisé dans constructor)
+  readonly isRateLimited$: Observable<boolean>;
   
   isDragging = false;
+
+  constructor(private store: Store){
+    this.isRateLimited$ = this.store.select(selectIsRateLimited);
+  }
   
   /**
    * Gestion du drag over
@@ -112,6 +120,10 @@ export class UploadZoneComponent {
       fileInput.click();
     }
   }
+
+  get isDisabled$(): Observable<boolean> {
+    return this.isRateLimited$;
+  }
   
   /**
    * Formater la taille de fichier
@@ -132,4 +144,4 @@ export class UploadZoneComponent {
     formatMaxSize(): string {
     return this.formatFileSize(this.maxFileSize);
     }
-    }
+}

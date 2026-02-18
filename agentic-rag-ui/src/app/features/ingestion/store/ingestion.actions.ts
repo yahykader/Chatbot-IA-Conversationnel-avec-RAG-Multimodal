@@ -43,6 +43,15 @@ export const uploadBatchAsyncError = createAction(
   props<{ error: string }>()
 );
 
+export const uploadFileRateLimited = createAction(
+  '[Ingestion] Upload File Rate Limited',
+  props<{ 
+    fileId: string; 
+    retryAfterSeconds: number;
+    message: string;
+  }>()
+);
+
 
 // ========================================================================
 // SYNCHRONE UPLOAD ACTIONS

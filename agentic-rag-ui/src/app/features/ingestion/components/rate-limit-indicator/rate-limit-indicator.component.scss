@@ -1,0 +1,32 @@
+    .rate-limit-indicator {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 16px;
+      background: #f5f5f5;
+      border-radius: 8px;
+      font-size: 0.9rem;
+    }
+    
+    .indicator-bar {
+      flex: 1;
+      height: 8px;
+      background: #e0e0e0;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    
+    .indicator-fill {
+      height: 100%;
+      transition: width 0.3s ease, background-color 0.3s ease;
+      
+      &.high { background: #4caf50; }
+      &.medium { background: #ff9800; }
+      &.low { background: #f44336; }
+    }
+    
+    .indicator-value {
+      font-weight: 600;
+      min-width: 50px;
+      text-align: right;
+    }

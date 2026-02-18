@@ -8,8 +8,11 @@ import { HttpClient } from '@angular/common/http';
 import * as IngestionActions from './ingestion.actions';
 import * as ProgressActions from './progress.actions';
 import * as IngestionSelectors from './ingestion.selectors';
+import * as RateLimitActions from '../store/rate-limit/rate-limit.actions';
+import { selectIsRateLimited }  from '../store/rate-limit/rate-limit.selectors';
 import { IngestionApiService } from '../../../core/services/ingestion-api.service';
 import { Store } from '@ngrx/store';
+import { selectRateLimitedUploads } from './ingestion.selectors';
 
 @Injectable()
 export class IngestionEffects {
@@ -58,6 +61,20 @@ export class IngestionEffects {
           }),
           catchError(error => {
             console.error('❌ Upload async error:', error);
+
+            // ✅ AJOUT: Gérer erreur 429 (Rate Limit)
+            if (error.status === 429) {
+              const data = error.error;
+              const retryAfter = data?.retryAfterSeconds || 60;
+              
+              console.warn(`⏳ Rate limit atteint: retry après ${retryAfter}s`);
+              
+              return of(IngestionActions.uploadFileRateLimited({
+                fileId,
+                retryAfterSeconds: retryAfter,
+                message: data?.message || 'Rate limit dépassé. Réessayez dans quelques instants.'
+              }));
+            }
             
             // ✅ Gérer erreur 409 (Duplicate)
             if (error.isDuplicate || error.status === 409) {
@@ -363,4 +380,20 @@ export class IngestionEffects {
       )
     )
   );
-}
+
+/*   autoRetryRateLimited$ = createEffect(() =>
+  this.actions$.pipe(
+    ofType(RateLimitActions.rateLimitReset),
+    withLatestFrom(this.store.select(selectRateLimitedUploads)),
+    filter(([_, uploads]) => uploads.length > 0),
+    mergeMap(([_, uploads]) =>
+      uploads.map(upload =>
+        IngestionActions.uploadFileAsync({
+          fileId: upload.id,
+          file: upload.file
+        })
+      )
+    )
+  )
+);*/
+} 

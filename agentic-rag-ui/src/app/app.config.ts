@@ -30,6 +30,10 @@ import { WebSocketProgressService } from './core/services/websocket-progress.ser
 import { IngestionApiService } from './core/services/ingestion-api.service';
 import { crudReducer } from './features/ingestion/store/crud.reducer';
 import { CrudEffects } from './features/ingestion/store/crud.effects';
+import { rateLimitInterceptor } from './core/interceptors/rate-limit.interceptor';
+import { rateLimitReducer } from './features/ingestion/store/rate-limit/rate-limit.reducer';
+import { rateLimitReset } from './features/ingestion/store/rate-limit/rate-limit.actions';
+import { RateLimitEffects } from './features/ingestion/store/rate-limit/rate-limit.effects';
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -43,7 +47,7 @@ export const appConfig: ApplicationConfig = {
     
     // HTTP avec Interceptor
     provideHttpClient(
-      withInterceptors([duplicateInterceptor])
+      withInterceptors([duplicateInterceptor, rateLimitInterceptor])
     ),
     
     // Animations
@@ -59,11 +63,13 @@ export const appConfig: ApplicationConfig = {
     provideStore({
       ingestion: ingestionReducer,
       progress: progressReducer,
-      crud: crudReducer
+      crud: crudReducer,
+      rateLimit: rateLimitReducer
     }),
     
     // NgRx Effects
     provideEffects([
+      RateLimitEffects,
       IngestionEffects,
       ProgressEffects,
       CrudEffects

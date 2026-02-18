@@ -332,5 +332,38 @@ export const ingestionReducer = createReducer(
       ...state,
       uploads: []
     };
+  }),
+
+// features/ingestion/store/ingestion.reducer.ts
+
+  on(IngestionActions.uploadFileRateLimited, (state, { fileId, retryAfterSeconds, message }) => {
+    console.log(`⏳ Upload ${fileId} rate limited - retry après ${retryAfterSeconds}s`);
+
+      // ✅ Vérifier si ce fichier est déjà compté comme rate-limited
+      const existingUpload = state.uploads.find(u => u.id === fileId);
+      const isAlreadyRateLimited = existingUpload?.status === 'rate-limited';
+    
+    return {
+      ...state,
+      uploads: state.uploads.map(upload =>
+        upload.id === fileId
+          ? {
+              ...upload,
+              status: 'rate-limited' as const,
+              error: message,
+              retryAfterSeconds,
+              progress: 0
+            }
+          : upload
+      ),
+      activeUploads: Math.max(0, state.activeUploads - 1),  // ✅ Décrémenter
+      stats: {
+        ...state.stats,
+          // ✅ N'incrémenter que si ce n'était pas déjà rate-limited
+        rateLimited: isAlreadyRateLimited 
+          ? state.stats.rateLimited 
+          : state.stats.rateLimited + 1
+        }
+    };
   })
 );

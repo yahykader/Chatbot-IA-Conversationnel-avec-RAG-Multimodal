@@ -1,0 +1,62 @@
+.rate-limit-toast {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  background: linear-gradient(135deg, #ff9966, #ff5e62);
+  color: white;
+  padding: 20px;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(255, 94, 98, 0.4);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  z-index: 9999;
+  max-width: 400px;
+  animation: slideIn 0.3s ease-out;
+}
+
+.rate-limit-icon {
+  font-size: 2rem;
+  animation: pulse 1s infinite;
+}
+
+.rate-limit-content {
+  h4 {
+    margin: 0 0 8px 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+  }
+  
+  p {
+    margin: 0 0 4px 0;
+    font-size: 0.9rem;
+    opacity: 0.95;
+  }
+}
+
+.countdown {
+  margin-top: 8px !important;
+  font-size: 1rem !important;
+  font-weight: 500;
+  
+  strong {
+    font-size: 1.2rem;
+    color: #ffe66d;
+  }
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(400px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+}

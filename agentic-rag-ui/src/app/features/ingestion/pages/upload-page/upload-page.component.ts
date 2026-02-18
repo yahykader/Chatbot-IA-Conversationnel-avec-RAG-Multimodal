@@ -17,6 +17,7 @@ import { UploadZoneComponent } from '../../components/upload-zone/upload-zone.co
 import { UploadItemComponent } from '../../components/upload-item/upload-item.component';
 import { ProgressPanelComponent } from '../../components/progress-panel/progress-panel.component';
 import { DeleteAllButtonComponent } from '../../components/delete-all-button/delete-all-button.component';
+import { selectIsRateLimited, selectRetryAfterSeconds } from '../../store/rate-limit/rate-limit.selectors';
 
 @Component({
   selector: 'app-upload-page',
@@ -43,12 +44,16 @@ export class UploadPageComponent implements OnInit, OnDestroy {
   uploadMode$: Observable<'sync' | 'async'>;
   
   // Progress
-  activeProgress$: Observable<UploadProgress[]>;  // ✅ AJOUTER
-  activeProgressCount$: Observable<number>;        // ✅ AJOUTER (optionnel)
+  activeProgress$: Observable<UploadProgress[]>;
+  activeProgressCount$: Observable<number>;
   wsConnected$: Observable<boolean>;
   
   // Strategies
   strategies$: Observable<any[]>;
+
+  // Rate limiting
+  isRateLimited$: Observable<boolean>;
+  retryAfterSeconds$: Observable<number>;
   
   constructor(private store: Store) {
     // Uploads
@@ -60,13 +65,17 @@ export class UploadPageComponent implements OnInit, OnDestroy {
     this.stats$ = this.store.select(IngestionSelectors.selectStats);
     this.uploadMode$ = this.store.select(IngestionSelectors.selectUploadMode);
     
-    // ✅ AJOUTER: Progress
+    // Progress
     this.activeProgress$ = this.store.select(ProgressSelectors.selectActiveProgress);
     this.activeProgressCount$ = this.store.select(ProgressSelectors.selectActiveProgressCount);
     this.wsConnected$ = this.store.select(ProgressSelectors.selectWebSocketConnected);
     
     // Strategies
     this.strategies$ = this.store.select(IngestionSelectors.selectStrategies);
+  
+    // Rate limiting
+    this.isRateLimited$ = this.store.select(selectIsRateLimited);
+    this.retryAfterSeconds$ = this.store.select(selectRetryAfterSeconds);
   }
   
   ngOnInit(): void {
@@ -100,41 +109,41 @@ export class UploadPageComponent implements OnInit, OnDestroy {
   
   /**
    * ✅ CORRECTION: Uploader tous les fichiers en attente
-   */
+  */
   startAllUploads(): void {
-    // Utiliser take(1) au lieu de subscribe/unsubscribe
-    this.pendingUploads$.pipe(take(1)).subscribe(uploads => {
-      
-      if (!uploads || uploads.length === 0) {
-        console.warn('⚠️ Aucun fichier en attente');
-        return;
+    // ✅ AJOUT: Vérifier rate limit AVANT d'uploader
+    this.isRateLimited$.pipe(take(1)).subscribe(isRateLimited => {
+      if (isRateLimited) {
+        console.warn('⚠️ Rate limit actif - Upload bloqué');
+        return;  // ✅ Arrêter immédiatement
       }
       
-      console.log(`🚀 Starting ${uploads.length} uploads...`);
-      
-      // Pour chaque fichier en attente
-      uploads.forEach(upload => {
+      this.pendingUploads$.pipe(take(1)).subscribe(uploads => {
+        if (!uploads || uploads.length === 0) {
+          console.warn('⚠️ Aucun fichier en attente');
+          return;
+        }
         
-        // Vérifier le mode (async ou sync)
-        this.uploadMode$.pipe(take(1)).subscribe(mode => {
-          
-          if (mode === 'async') {
-            console.log(`📤 Async upload: ${upload.file.name}`);
-            this.store.dispatch(
-              IngestionActions.uploadFileAsync({ 
-                fileId: upload.id, 
-                file: upload.file 
-              })
-            );
-          } else {
-            console.log(`📤 Sync upload: ${upload.file.name}`);
-            this.store.dispatch(
-              IngestionActions.uploadFile({ 
-                fileId: upload.id, 
-                file: upload.file 
-              })
-            );
-          }
+        console.log(`🚀 Starting ${uploads.length} uploads...`);
+        
+        uploads.forEach(upload => {
+          this.uploadMode$.pipe(take(1)).subscribe(mode => {
+            if (mode === 'async') {
+              this.store.dispatch(
+                IngestionActions.uploadFileAsync({ 
+                  fileId: upload.id, 
+                  file: upload.file 
+                })
+              );
+            } else {
+              this.store.dispatch(
+                IngestionActions.uploadFile({ 
+                  fileId: upload.id, 
+                  file: upload.file 
+                })
+              );
+            }
+          });
         });
       });
     });

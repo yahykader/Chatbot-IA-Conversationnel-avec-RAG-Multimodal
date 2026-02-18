@@ -1536,3 +1536,27 @@ Vous venez de créer un système RAG d'entreprise de niveau production avec :
 ✨ Performance optimale avec cache multi-niveaux
 ✨ Monitoring complet (Prometheus + WebSocket)
 ✨ Robustesse industrielle (retry, fallback, antivirus)
+
+┌─────────────────────────────────────────────────┐
+│          RATE LIMITING COMPLET                   │
+├─────────────────────────────────────────────────┤
+│                                                  │
+│  ✅ BACKEND (Java/Spring)                        │
+│  ├── RateLimitConfig (Bucket4j + Redis)         │
+│  ├── RateLimitInterceptor (HTTP)                │
+│  ├── Bucket: 10 req/min pour upload             │
+│  └── Réponse 429 si limite dépassée             │
+│                                                  │
+│  ✅ FRONTEND (Angular 21 + NgRx)                 │
+│  ├── rateLimitInterceptor (HTTP)                │
+│  ├── RateLimitState (NgRx Store)                │
+│  ├── RateLimitEffects (countdown)               │
+│  ├── Upload Zone (disabled + orange)            │
+│  ├── Toast Notification (alerte)                │
+│  ├── Stats Card (Rate Limits: 5)                │
+│  └── Upload Items (badge orange)                │
+│                                                  │
+│  ✅ REDIS                                        │
+│  └── rate-limit:* (tokens Bucket4j)             │
+│                                                  │
+└─────────────────────────────────────────────────┘

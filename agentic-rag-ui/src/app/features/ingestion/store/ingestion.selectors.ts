@@ -51,3 +51,13 @@ export const selectUploadMode = createSelector(
   selectIngestionState,
   (state) => state.uploadMode
 );
+
+export const selectRateLimitedUploads = createSelector(
+  selectIngestionState,
+  (state) => state.uploads.filter(u => u.status === 'rate-limited')
+);
+
+export const selectRateLimitedCount = createSelector(
+  selectIngestionState,
+  (state) => state.stats.rateLimited
+);
