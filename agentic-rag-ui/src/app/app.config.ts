@@ -1,5 +1,5 @@
 // app.config.ts
-import { ApplicationConfig, provideZoneChangeDetection, importProvidersFrom } from '@angular/core';
+import { ApplicationConfig, provideZoneChangeDetection, importProvidersFrom  } from '@angular/core';
 import { provideRouter } from '@angular/router';
 import {   
   provideHttpClient,
@@ -9,6 +9,7 @@ import { provideAnimations } from '@angular/platform-browser/animations';
 import { provideStore } from '@ngrx/store';
 import { provideEffects } from '@ngrx/effects';
 import { provideStoreDevtools } from '@ngrx/store-devtools';
+import { provideMarkdown } from 'ngx-markdown';
 
 import { routes } from './app.routes';
 
@@ -34,6 +35,8 @@ import { rateLimitInterceptor } from './core/interceptors/rate-limit.interceptor
 import { rateLimitReducer } from './features/ingestion/store/rate-limit/rate-limit.reducer';
 import { rateLimitReset } from './features/ingestion/store/rate-limit/rate-limit.actions';
 import { RateLimitEffects } from './features/ingestion/store/rate-limit/rate-limit.effects';
+import { chatReducer } from './features/chat/store/chat.reducer';
+import { ChatEffects } from './features/chat/store/chat.effects';
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -49,6 +52,9 @@ export const appConfig: ApplicationConfig = {
     provideHttpClient(
       withInterceptors([duplicateInterceptor, rateLimitInterceptor])
     ),
+
+    // AJOUT: Markdown
+    provideMarkdown(),
     
     // Animations
     provideAnimations(),
@@ -64,7 +70,8 @@ export const appConfig: ApplicationConfig = {
       ingestion: ingestionReducer,
       progress: progressReducer,
       crud: crudReducer,
-      rateLimit: rateLimitReducer
+      rateLimit: rateLimitReducer,
+      chat: chatReducer
     }),
     
     // NgRx Effects
@@ -72,7 +79,8 @@ export const appConfig: ApplicationConfig = {
       RateLimitEffects,
       IngestionEffects,
       ProgressEffects,
-      CrudEffects
+      CrudEffects,
+      ChatEffects
     ]),
     
     // NgRx DevTools

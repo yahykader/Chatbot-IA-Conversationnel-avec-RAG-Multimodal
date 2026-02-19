@@ -15,10 +15,9 @@ import java.util.concurrent.CompletableFuture;
 /**
  * Controller pour Server-Sent Events (SSE)
  * 
- * Endpoint: POST /api/v1/assistant/stream
- * 
  * Features:
  * - Streaming temps réel token-par-token
+ * - Support GET (EventSource) et POST
  * - Événements de progression détaillés
  * - Heartbeat automatique
  * - Timeout configuré
@@ -26,7 +25,7 @@ import java.util.concurrent.CompletableFuture;
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/assistant")
-@Tag(name = "Streaming Search", description = "API Streaming Search ")
+@Tag(name = "Streaming Search", description = "API Streaming Search")
 public class StreamingAssistantController {
     
     private final StreamingOrchestrator orchestrator;
@@ -35,14 +34,48 @@ public class StreamingAssistantController {
     private static final long SSE_TIMEOUT = 300000; // 5 minutes
     
     public StreamingAssistantController(
-                    StreamingOrchestrator orchestrator,
-                    EventEmitter eventEmitter) {
+            StreamingOrchestrator orchestrator,
+            EventEmitter eventEmitter) {
         this.orchestrator = orchestrator;
         this.eventEmitter = eventEmitter;
     }
     
+    // ========================================================================
+    // ✅ NOUVEAU: Endpoint GET pour EventSource (Browser)
+    // ========================================================================
+    
     /**
-     * Endpoint SSE principal
+     * Endpoint SSE avec GET
+     * 
+     * GET /api/v1/assistant/stream?query=...&conversationId=...
+     * Accept: text/event-stream
+     * 
+     * Utilisé par EventSource dans les navigateurs (Angular, React, etc.)
+     */
+    @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter streamGet(
+            @RequestParam String query,
+            @RequestParam(required = false) String conversationId) {
+        
+        log.info("📡 SSE GET: query={}, conversationId={}", 
+            truncate(query, 50), conversationId);
+        
+        // Construire StreamingRequest à partir des query params
+        StreamingRequest request = StreamingRequest.builder()
+            .query(query)
+            .conversationId(conversationId)
+            .build();
+        
+        // Utiliser la même logique que POST
+        return executeStream(request);
+    }
+    
+    // ========================================================================
+    // Endpoint POST existant (conservé tel quel)
+    // ========================================================================
+    
+    /**
+     * Endpoint SSE avec POST
      * 
      * POST /api/v1/assistant/stream
      * Content-Type: application/json
@@ -66,13 +99,28 @@ public class StreamingAssistantController {
      * data: {"response":{...},"metadata":{...}}
      */
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter stream(@RequestBody StreamingRequest request) {
+    public SseEmitter streamPost(@RequestBody StreamingRequest request) {
+        
+        log.info("📡 SSE POST: query={}, conversationId={}", 
+            truncate(request.getQuery(), 50), request.getConversationId());
+        
+        return executeStream(request);
+    }
+    
+    // ========================================================================
+    // ✅ NOUVEAU: Méthode commune pour GET et POST
+    // ========================================================================
+    
+    /**
+     * Logique commune d'exécution du streaming
+     * (évite la duplication de code entre GET et POST)
+     */
+    private SseEmitter executeStream(StreamingRequest request) {
         
         // Générer session ID unique
         String sessionId = generateSessionId();
         
-        log.info("📡 SSE stream start: session={}, query={}", 
-            sessionId, truncate(request.getQuery(), 50));
+        log.info("🚀 Starting SSE stream: sessionId={}", sessionId);
         
         // Créer SSE emitter
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT);
@@ -90,7 +138,7 @@ public class StreamingAssistantController {
                 orchestrator.executeStreaming(sessionId, request).join();
                 
             } catch (Exception e) {
-                log.error("❌ SSE streaming error: {}", sessionId, e);
+                log.error("❌ SSE streaming error: sessionId={}", sessionId, e);
                 eventEmitter.emitError(sessionId, e.getMessage(), "STREAMING_ERROR");
                 eventEmitter.completeWithError(sessionId, e);
             }
@@ -98,6 +146,10 @@ public class StreamingAssistantController {
         
         return emitter;
     }
+    
+    // ========================================================================
+    // Endpoints auxiliaires (inchangés)
+    // ========================================================================
     
     /**
      * Endpoint de santé pour SSE
@@ -114,7 +166,7 @@ public class StreamingAssistantController {
      */
     @PostMapping("/stream/{sessionId}/cancel")
     public ResponseEntity<Void> cancel(@PathVariable String sessionId) {
-        log.info("🛑 Cancelling stream: {}", sessionId);
+        log.info("🛑 Cancelling stream: sessionId={}", sessionId);
         
         eventEmitter.emitError(sessionId, "Stream cancelled by user", "CANCELLED");
         eventEmitter.complete(sessionId);
@@ -123,7 +175,7 @@ public class StreamingAssistantController {
     }
     
     // ========================================================================
-    // HELPER METHODS
+    // HELPER METHODS (inchangés)
     // ========================================================================
     
     private String generateSessionId() {

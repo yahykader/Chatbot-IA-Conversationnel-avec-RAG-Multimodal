@@ -1,0 +1,338 @@
+// features/chat/components/message-item/message-item.component.scss
+
+.message-item {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 24px;
+  max-width: 100%;
+  animation: fadeIn 0.3s ease-in;
+  
+  // ✅ USER à droite (bleu)
+  &.user-message {
+    flex-direction: row-reverse;
+    
+    .message-content {
+      background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+      color: white;
+      border-radius: 18px 18px 4px 18px;
+      margin-left: auto;
+      max-width: 65%;  // ✅ Largeur user
+    }
+    
+    .message-avatar {
+      background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+      color: white;
+    }
+  }
+  
+  // ✅ ASSISTANT à gauche (gris) - PLUS LARGE
+  &.assistant-message {
+    flex-direction: row;
+    
+    .message-content {
+      background: #f8f9fa;
+      color: #212529;
+      border-radius: 18px 18px 18px 4px;
+      max-width: 85%;  // ✅ CORRECTION: 85% au lieu de 80%
+    }
+    
+    .message-avatar {
+      background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
+      color: white;
+    }
+  }
+  
+  &.streaming {
+    .message-content {
+      box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.2);
+    }
+  }
+}
+
+.message-avatar {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  
+  i {
+    font-size: 1.5rem;
+  }
+}
+
+.message-content {
+  flex: 1;
+  padding: 16px 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  transition: all 0.2s;
+  
+  &:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  }
+}
+
+.message-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+
+.message-role {
+  font-weight: 600;
+  
+  .user-message & {
+    color: rgba(255, 255, 255, 0.95);
+  }
+  
+  .assistant-message & {
+    color: #495057;
+  }
+}
+
+.message-time {
+  font-size: 0.75rem;
+  
+  .user-message & {
+    color: rgba(255, 255, 255, 0.8);
+  }
+  
+  .assistant-message & {
+    color: #6c757d;
+  }
+}
+
+.message-body {
+  line-height: 1.6;
+  word-wrap: break-word;
+  
+  // Markdown styles (gardez tout le code markdown précédent)
+  ::ng-deep h1, ::ng-deep h2, ::ng-deep h3 {
+    margin-top: 16px;
+    margin-bottom: 8px;
+    font-weight: 600;
+    
+    .user-message & {
+      color: white;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+    }
+  }
+  
+  ::ng-deep h1 { font-size: 1.5rem; }
+  ::ng-deep h2 { font-size: 1.3rem; }
+  ::ng-deep h3 { font-size: 1.1rem; }
+  
+  ::ng-deep ul, ::ng-deep ol {
+    margin: 8px 0;
+    padding-left: 24px;
+  }
+  
+  ::ng-deep li {
+    margin-bottom: 4px;
+  }
+  
+  ::ng-deep pre {
+    background: rgba(0, 0, 0, 0.05);
+    padding: 12px;
+    border-radius: 6px;
+    overflow-x: auto;
+    margin: 12px 0;
+    
+    .user-message & {
+      background: rgba(255, 255, 255, 0.2);
+    }
+  }
+  
+  ::ng-deep code {
+    font-family: 'Courier New', monospace;
+    font-size: 0.9em;
+    
+    .user-message & {
+      background: rgba(255, 255, 255, 0.2);
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+    
+    .assistant-message & {
+      background: rgba(0, 0, 0, 0.08);
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+  }
+  
+  ::ng-deep strong {
+    font-weight: 600;
+  }
+  
+  ::ng-deep p {
+    margin: 0 0 8px 0;
+    
+    &:last-child {
+      margin-bottom: 0;
+    }
+  }
+}
+
+.streaming-cursor {
+  display: inline-block;
+  width: 8px;
+  height: 16px;
+  background: currentColor;
+  margin-left: 2px;
+  animation: blink 1s infinite;
+  
+  .user-message & {
+    background: rgba(255, 255, 255, 0.8);
+  }
+}
+
+@keyframes blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+.message-sources {
+  margin-top: 16px;
+  padding: 14px;
+  border-radius: 8px;
+  border: 1px solid #dee2e6;
+  
+  .assistant-message & {
+    background: rgba(0, 123, 255, 0.03);
+    border-left: 3px solid #007bff;
+    border-color: #dee2e6;
+  }
+  
+  .user-message & {
+    background: rgba(255, 255, 255, 0.15);
+    border-left: 3px solid rgba(255, 255, 255, 0.6);
+    border-color: rgba(255, 255, 255, 0.3);
+  }
+}
+
+.sources-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  
+  .user-message & {
+    color: rgba(255, 255, 255, 0.95);
+  }
+  
+  .assistant-message & {
+    color: #495057;
+  }
+  
+  i {
+    font-size: 1rem;
+  }
+}
+
+.sources-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.source-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  text-decoration: none;
+  font-size: 0.875rem;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  
+  .assistant-message & {
+    background: white;
+    border: 1px solid #dee2e6;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    
+    &:hover {
+      background: #e7f3ff;
+      border-color: #007bff;
+      transform: translateX(4px);
+      box-shadow: 0 2px 8px rgba(0, 123, 255, 0.15);
+      
+      .source-filename {
+        color: #0056b3;
+      }
+    }
+  }
+  
+  .user-message & {
+    background: rgba(255, 255, 255, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: white;
+    
+    &:hover {
+      background: rgba(255, 255, 255, 0.35);
+      border-color: rgba(255, 255, 255, 0.6);
+      transform: translateX(-4px);
+      box-shadow: 0 2px 8px rgba(255, 255, 255, 0.2);
+    }
+  }
+  
+  // ✅ Icône PDF
+  .bi-file-pdf-fill {
+    flex-shrink: 0;
+    font-size: 1.4rem;
+    
+    .assistant-message & {
+      color: #dc3545;
+    }
+    
+    .user-message & {
+      color: rgba(255, 255, 255, 0.9);
+    }
+  }
+}
+
+// ✅ Nom du fichier (principal)
+.source-filename {
+  flex: 1;
+  font-weight: 600;
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  
+  .assistant-message & {
+    color: #212529;
+  }
+  
+  .user-message & {
+    color: rgba(255, 255, 255, 0.95);
+  }
+}
+
+// ✅ Badge des indices (à droite)
+.source-indices-badge {
+  flex-shrink: 0;
+  font-weight: 700;
+  font-size: 0.75rem;
+  padding: 4px 10px;
+  border-radius: 12px;
+  
+  .assistant-message & {
+    background: #e7f3ff;
+    color: #0056b3;
+    border: 1px solid #b3d9ff;
+  }
+  
+  .user-message & {
+    background: rgba(255, 255, 255, 0.3);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.4);
+  }
+}

@@ -1560,3 +1560,18 @@ Vous venez de créer un système RAG d'entreprise de niveau production avec :
 │  └── rate-limit:* (tokens Bucket4j)             │
 │                                                  │
 └─────────────────────────────────────────────────┘
+
+
+📊 2. Monitoring & Métriques (System Monitor)
+    Fonctionnalités
+    typescriptDashboards en temps réel :
+    - 📈 Graphiques de performance (Recharts/Chart.js)
+    - ⚡ Latence moyenne des requêtes
+    - 💾 Utilisation de la base vectorielle
+    - 🔥 Hot documents (les plus recherchés)
+    - 📊 Distribution des types de fichiers
+    - 🚀 Rate limiting stats (uploads/min, etc.)
+    - 🔍 Requêtes les plus fréquentes
+    - ⏱️ Temps de traitement moyen par type
+    - 💬 Stats des conversations (nombre, durée)
+    - 🎯 Taux de succès des recherches
