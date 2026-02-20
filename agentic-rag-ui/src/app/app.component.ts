@@ -15,8 +15,6 @@ import { UploadPageComponent } from './features/ingestion/pages/upload-page/uplo
     RouterLink,
     RouterLinkActive,
     ToastContainerComponent,
-    UploadPageComponent,
-    ChatPageComponent,
   ],
   templateUrl: './app.component.html',
   styleUrls: ['./app.component.scss']

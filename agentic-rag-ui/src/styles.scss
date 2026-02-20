@@ -24,3 +24,22 @@ $theme: mat.m2-define-light-theme((
 
 @include mat.all-component-themes($theme);*/
 
+// src/styles.scss
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+app-root {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+app-workspace,
+app-chat-page,
+app-chat-interface {
+  height: 100%;
+  display: block;
+}

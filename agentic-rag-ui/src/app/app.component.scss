@@ -1,157 +1,19 @@
+// app.component.scss
 
-// Wrapper global
 .app-wrapper {
+  height: 100vh;
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
-  background-color: #f8f9fa;
+  overflow: hidden;
 }
 
-// Navbar
 .navbar {
-  z-index: 1000;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  flex-shrink: 0;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
-// Layout principal: Sidebar + Content
-.app-layout {
-  display: flex;
+// Router outlet prend le reste de l'espace
+router-outlet + * {
   flex: 1;
   overflow: hidden;
-  
-  // Sidebar gauche (Upload) - PLUS LARGE
-  .app-sidebar {
-    // ✅ Desktop large (> 1400px): 40% avec max 700px
-    width: 40%;
-    max-width: 700px;
-    min-width: 400px;
-    background-color: white;
-    border-right: 1px solid #dee2e6;
-    overflow-y: auto;
-    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.05);
-    
-    // Desktop standard (1200-1400px): 45%
-    @media (max-width: 1400px) {
-      width: 45%;
-      max-width: 600px;
-    }
-    
-    // Laptop (992-1200px): 50%
-    @media (max-width: 1200px) {
-      width: 50%;
-      max-width: 550px;
-      min-width: 380px;
-    }
-    
-    // Tablet (768-992px): 55%
-    @media (max-width: 992px) {
-      width: 55%;
-      max-width: 500px;
-      min-width: 350px;
-    }
-    
-    // Mobile (< 768px): 100%
-    @media (max-width: 768px) {
-      width: 100%;
-      max-width: 100%;
-      min-width: 100%;
-      border-right: none;
-      border-bottom: 1px solid #dee2e6;
-      max-height: 60vh; // 60% de la hauteur en mobile
-    }
-    
-    // Scrollbar custom
-    &::-webkit-scrollbar {
-      width: 10px;
-    }
-    
-    &::-webkit-scrollbar-track {
-      background: #f1f1f1;
-    }
-    
-    &::-webkit-scrollbar-thumb {
-      background: #888;
-      border-radius: 5px;
-      
-      &:hover {
-        background: #555;
-      }
-    }
-  }
-  
-  // Main content (Chat/Management)
-  .app-main {
-    flex: 1;
-    overflow-y: auto;
-    background-color: #f8f9fa;
-    padding: 2rem;
-    
-    // Mobile: moins de padding
-    @media (max-width: 768px) {
-      padding: 1rem;
-      min-height: 40vh; // 40% de la hauteur en mobile
-    }
-    
-    // Scrollbar custom
-    &::-webkit-scrollbar {
-      width: 10px;
-    }
-    
-    &::-webkit-scrollbar-track {
-      background: #f1f1f1;
-    }
-    
-    &::-webkit-scrollbar-thumb {
-      background: #888;
-      border-radius: 5px;
-      
-      &:hover {
-        background: #555;
-      }
-    }
-  }
-  
-  // Layout vertical sur tablet et mobile
-  @media (max-width: 768px) {
-    flex-direction: column;
-  }
-}
-
-// Navigation active link
-.navbar-nav .nav-link {
-  transition: all 0.3s ease;
-  padding: 0.5rem 1rem;
-  
-  &:hover {
-    background-color: rgba(255, 255, 255, 0.1);
-    border-radius: 4px;
-  }
-  
-  &.active {
-    background-color: rgba(255, 255, 255, 0.2);
-    border-radius: 4px;
-    font-weight: 500;
-  }
-  
-  i {
-    font-size: 1rem;
-  }
-}
-
-// Navbar brand
-.navbar-brand {
-  font-size: 1.25rem;
-  font-weight: 600;
-  
-  i {
-    font-size: 1.5rem;
-  }
-  
-  @media (max-width: 576px) {
-    font-size: 1.1rem;
-    
-    i {
-      font-size: 1.3rem;
-    }
-  }
 }
