@@ -1,0 +1,20 @@
+# application-docker.yml
+
+# ✅ Surcharge pour Docker (host devient pgvector)
+pgvector:
+  host: pgvector
+  
+spring:
+  datasource:
+    url: jdbc:postgresql://pgvector:5432/vectordb
+  redis:
+    host: redis
+
+security:
+  antivirus:
+    clamd-host: clamav
+
+management:
+  zipkin:
+    tracing:
+      endpoint: http://zipkin:9411/api/v2/spans

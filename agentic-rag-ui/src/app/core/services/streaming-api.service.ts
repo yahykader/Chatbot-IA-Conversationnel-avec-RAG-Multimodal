@@ -3,7 +3,8 @@
 import { Injectable, NgZone } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { environment } from '../../../../environements/environement';
+import { environment } from '../../../environments/environment';
+
 
 export interface StreamingRequest {
   query: string;
@@ -28,7 +29,7 @@ export interface StreamEvent {
 })
 export class StreamingApiService {
   
-  private apiUrl = `${environment.apiUrl}/api/v1/assistant`;
+  private apiUrl = `${environment.apiUrl}/v1/assistant`;
   
   constructor(private zone: NgZone, private http: HttpClient) {}
   

@@ -2,7 +2,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { environment } from '../../../../environements/environement';
+import { environment } from '../../../environments/environment';
 
 export interface DeleteResponse {
   success: boolean;
@@ -35,7 +35,7 @@ export interface BatchInfoResponse {
 })
 export class CrudApiService {
   
-  private apiUrl = `${environment.apiUrl}/api/v1/crud`;
+  private apiUrl = `${environment.apiUrl}/v1/crud`;
   
   constructor(private http: HttpClient) {}
   

@@ -24,7 +24,7 @@ import { progressReducer } from './features/ingestion/store/progress.reducer';
 import { IngestionEffects } from './features/ingestion/store/ingestion.effects';
 import { ProgressEffects } from './features/ingestion/store/progress.effects';
 import { MaterialModule } from './material/material.module';
-import { environment } from '../../environements/environement';
+
 import { CrudApiService } from './core/services/crud-api.service';
 import { StreamingApiService } from './core/services/streaming-api.service';
 import { WebSocketProgressService } from './core/services/websocket-progress.service';
@@ -33,10 +33,10 @@ import { crudReducer } from './features/ingestion/store/crud.reducer';
 import { CrudEffects } from './features/ingestion/store/crud.effects';
 import { rateLimitInterceptor } from './core/interceptors/rate-limit.interceptor';
 import { rateLimitReducer } from './features/ingestion/store/rate-limit/rate-limit.reducer';
-import { rateLimitReset } from './features/ingestion/store/rate-limit/rate-limit.actions';
 import { RateLimitEffects } from './features/ingestion/store/rate-limit/rate-limit.effects';
 import { chatReducer } from './features/chat/store/chat.reducer';
 import { ChatEffects } from './features/chat/store/chat.effects';
+import { environment } from '../environments/environment';
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -59,7 +59,7 @@ export const appConfig: ApplicationConfig = {
     // Animations
     provideAnimations(),
 
-        // ✅ Services globaux
+        // Services globaux
     IngestionApiService,
     WebSocketProgressService,
     StreamingApiService,

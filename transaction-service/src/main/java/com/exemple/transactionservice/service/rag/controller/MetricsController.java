@@ -20,7 +20,7 @@ import java.util.Map;
  */
 @Slf4j
 @RestController
-@RequestMapping("/actuator")
+@RequestMapping("/api/actuator")
 public class MetricsController {
     
     private final PrometheusMeterRegistry prometheusRegistry;

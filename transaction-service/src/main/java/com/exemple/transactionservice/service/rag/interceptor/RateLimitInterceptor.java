@@ -56,6 +56,11 @@ public class RateLimitInterceptor implements HandlerInterceptor {
             HttpServletRequest request, 
             HttpServletResponse response, 
             Object handler) throws Exception {
+
+        // AJOUTEZ : Autoriser OPTIONS (preflight CORS)
+        if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
+            return true;
+        }
         
         // Récupérer userId (depuis header, session, JWT, etc.)
         String userId = getUserId(request);

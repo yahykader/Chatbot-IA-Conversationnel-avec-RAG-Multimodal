@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { environment } from '../../../../environements/environement';
+import { environment } from '../../../environments/environment';
 
 export interface IngestionResponse {
   success: boolean;
@@ -76,7 +76,7 @@ export interface StatsResponse {
 })
 export class IngestionApiService {
   
-  private apiUrl = `${environment.apiUrl}/api/v1/ingestion`;
+  private apiUrl = `${environment.apiUrl}/v1/ingestion`;
   
   constructor(private http: HttpClient) {}
   

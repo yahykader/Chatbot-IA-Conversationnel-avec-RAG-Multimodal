@@ -33,6 +33,29 @@ app:
 repository:
   delete:
     truncate-threshold: 10000  # Seuil DELETE/TRUNCATE
+
+# ============================================================================
+# PGVECTOR
+# ============================================================================
+pgvector:
+  host: ${PGVECTOR_HOST:localhost}
+  port: ${PGVECTOR_PORT:5432}
+  database: ${PGVECTOR_DATABASE:vectordb}
+  user: ${PGVECTOR_USER:admin}
+  password: ${PGVECTOR_PASSWORD:1234}
+  dimension: 1536
+  connection:
+    pool:
+      size: 10
+    timeout: 30
+  validation:
+    enabled: true
+  
+  text:
+    table: text_embeddings
+  image:
+    table: image_embeddings
+    
 # ============================================================================
 # SPRING
 # ============================================================================
@@ -433,27 +456,6 @@ assistant:
     max-concurrent: 3
     allowed-extensions: pdf,png,jpg,jpeg,gif,bmp,webp,tiff,txt,md,csv,json,xml,html,docx,doc,pptx,ppt,xlsx,xls,log,java,py,js,ts,cpp,c,h
 
-# ============================================================================
-# PGVECTOR
-# ============================================================================
-pgvector:
-  host: ${PGVECTOR_HOST:localhost}
-  port: ${PGVECTOR_PORT:5432}
-  database: ${PGVECTOR_DATABASE:vectordb}
-  user: ${PGVECTOR_USER:admin}
-  password: ${PGVECTOR_PASSWORD:1234}
-  dimension: 1536
-  connection:
-    pool:
-      size: 10
-    timeout: 30
-  validation:
-    enabled: true
-  
-  text:
-    table: text_embeddings
-  image:
-    table: image_embeddings
 
 # ============================================================================
 # MANAGEMENT / ACTUATOR / METRICS ✨ AMÉLIORÉ

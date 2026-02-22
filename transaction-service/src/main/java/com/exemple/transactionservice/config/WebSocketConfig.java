@@ -72,9 +72,9 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer, WebSoc
         // ========================================================================
         registry.addEndpoint("/ws")
             .setAllowedOriginPatterns(
-                "http://localhost:4200",      // Angular dev
-                "http://localhost:3000",      // React dev (optionnel)
-                "https://yourdomain.com"      // Production
+                    "http://localhost",        // nginx port 80
+                    "http://localhost:4200",   // Angular dev server
+                    "https://*"                // prod HTTPS
             );
         
         log.info("✅ STOMP endpoint registered: /ws (native WebSocket)");
@@ -109,9 +109,9 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer, WebSoc
         // ========================================================================
         registry.addHandler(handler, "/ws/assistant")
             .setAllowedOrigins(
-                "http://localhost:4200",      // Angular dev
-                "http://localhost:3000",      // React dev
-                "https://yourdomain.com"      // Production
+                    "http://localhost",        // nginx port 80
+                    "http://localhost:4200",   // Angular dev server
+                    "https://*"                // prod HTTPS
             );
         
         log.info("✅ Raw WebSocket handler registered: /ws/assistant (native)");

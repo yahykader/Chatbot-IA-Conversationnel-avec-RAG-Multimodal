@@ -4,7 +4,8 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable, Subject } from 'rxjs';
-import { environment } from '../../../../environements/environement';
+import { environment } from '../../../environments/environment';
+
 
 /**
  * ✅ Service vocal avec OpenAI Whisper
@@ -14,7 +15,9 @@ import { environment } from '../../../../environements/environement';
   providedIn: 'root'
 })
 export class VoiceService {
-  private readonly API_URL = 'http://localhost:8090/api';
+
+  private readonly apiUrl = `${environment.apiUrl}/api/voice`;
+
   
   // ==================== ENREGISTREMENT AUDIO ====================
   
@@ -131,7 +134,7 @@ export class VoiceService {
     console.log('🌍 [VoiceService] Langue:', language);
     
     return this.http.post<WhisperResponse>(
-      this.API_URL + `/voice/transcribe`,
+      this.apiUrl + `/transcribe`,
       formData
     );
   }

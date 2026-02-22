@@ -287,6 +287,103 @@ services:
       - agentic-chatbot-net
     restart: unless-stopped
 
+
+
+  # ============================================================================
+  # 🆕 BACKEND SPRING BOOT
+  # ============================================================================
+  backend:
+    build:
+      context: ./transaction-service
+      dockerfile: Dockerfile
+    container_name: rag-backend
+    ports:
+      - "8090:8090"
+    depends_on:
+      pgvector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+      zipkin:
+        condition: service_healthy
+    environment:
+
+      # Variables d'environnement pour Docker
+      - PGVECTOR_HOST=pgvector
+      - PGVECTOR_PORT=5432
+      - PGVECTOR_DATABASE=vectordb
+      - PGVECTOR_USER=admin
+      - PGVECTOR_PASSWORD=1234
+
+      # Database
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://pgvector:5432/vectordb
+      - SPRING_DATASOURCE_USERNAME=admin
+      - SPRING_DATASOURCE_PASSWORD=1234
+      
+      # Redis
+      - SPRING_REDIS_HOST=redis
+      - SPRING_REDIS_PORT=6379
+      - SPRING_REDIS_PASSWORD=dev_password_123
+      
+      # ClamAV Antivirus
+      - ANTIVIRUS_ENABLED=true
+      - CLAMAV_HOST=clamav
+      - CLAMAV_PORT=3310
+      - ANTIVIRUS_TIMEOUT=30000
+      - ANTIVIRUS_CHUNK_SIZE=8192
+      - ANTIVIRUS_MAX_FILE_SIZE=104857600
+      
+      # Zipkin Tracing
+      - MANAGEMENT_TRACING_SAMPLING_PROBABILITY=1.0
+      - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
+      
+      # Server Port
+      - SERVER_PORT=8090
+
+      # OpenAI
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      
+      # Spring Profile
+      - SPRING_PROFILES_ACTIVE=docker
+      
+      # JVM Options
+      - JAVA_OPTS=-Xmx2g -Xms512m
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+    networks:
+      - agentic-chatbot-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8090/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ============================================================================
+  # 🆕 FRONTEND ANGULAR + NGINX
+  # ============================================================================
+  frontend:
+    build:
+      context: ./agentic-rag-ui
+      dockerfile: Dockerfile
+    container_name: rag-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - agentic-chatbot-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
 # ==============================================================================
 # VOLUMES
 # ==============================================================================
@@ -310,64 +407,3 @@ volumes:
 networks:
   agentic-chatbot-net:
     driver: bridge
-
-  # ============================================================================
-  # APPLICATION SPRING BOOT (transaction-service)
-  # ============================================================================
-  # OPTION 1: Avec Dockerfile existant (si votre Dockerfile est fonctionnel)
-  # app:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile
-  #   container_name: transaction-service
-  #   ports:
-  #     - "8080:8080"
-  #   depends_on:
-  #     pgvector:
-  #       condition: service_healthy
-  #     redis:
-  #       condition: service_healthy
-  #     clamav:
-  #       condition: service_healthy
-  #     zipkin:
-  #       condition: service_healthy
-  #   environment:
-  #     # Database
-  #     - SPRING_DATASOURCE_URL=jdbc:postgresql://pgvector:5432/vectordb
-  #     - SPRING_DATASOURCE_USERNAME=admin
-  #     - SPRING_DATASOURCE_PASSWORD=1234
-      
-  #     # Redis
-  #     - SPRING_REDIS_HOST=redis
-  #     - SPRING_REDIS_PORT=6379
-  #     - SPRING_REDIS_PASSWORD=dev_password_123
-      
-  #     # ClamAV Antivirus
-  #     - ANTIVIRUS_ENABLED=true
-  #     - CLAMAV_HOST=clamav
-  #     - CLAMAV_PORT=3310
-  #     - ANTIVIRUS_TIMEOUT=30000
-  #     - ANTIVIRUS_CHUNK_SIZE=8192
-  #     - ANTIVIRUS_MAX_FILE_SIZE=104857600
-      
-  #     # Zipkin Tracing
-  #     - MANAGEMENT_TRACING_SAMPLING_PROBABILITY=1.0
-  #     - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
-      
-  #     # Spring Profile
-  #     - SPRING_PROFILES_ACTIVE=docker
-      
-  #     # JVM Options
-  #     - JAVA_OPTS=-Xmx2g -Xms512m
-  #   volumes:
-  #     - ./uploads:/app/uploads
-  #     - ./logs:/app/logs
-  #   networks:
-  #     - agentic-chatbot-net
-  #   restart: unless-stopped
-  #   healthcheck:
-  #     test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 3
-  #     start_period: 60s
