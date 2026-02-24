@@ -20,10 +20,7 @@
 name: 🎯 Setup & Deploy (Bootstrap → Terraform → Deploy)
 
 on:
-  # Push auto sur factorisation → bootstrap skippé si skip_bootstrap='true', sinon il tourne
-  push:
-    branches: [factorisation]
-
+  # ✅ FIX 1 — Suppression du trigger push (évite le lancement sans inputs)
   workflow_dispatch:
     inputs:
       project_id:
@@ -267,19 +264,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ── Auth : clé du bootstrap OU secret GCP_SA_KEY si skip ─────────────
+      # ── Auth : clé du bootstrap OU secret GCP_OWNER_SA_KEY si skip ───────
+      # ✅ FIX 2 — GCP_SA_KEY remplacé par GCP_OWNER_SA_KEY
       - name: Prepare SA Key
         env:
-          SA_KEY_SECRET: ${{ secrets.GCP_SA_KEY }}
+          SA_KEY_SECRET: ${{ secrets.GCP_OWNER_SA_KEY }}
           SA_KEY_B64: ${{ needs.bootstrap.outputs.sa-key-b64 }}
         run: |
           if [ "${{ needs.bootstrap.result }}" = "success" ] && [ -n "$SA_KEY_B64" ]; then
             echo "$SA_KEY_B64" | base64 -d > /tmp/sa-key.json
             echo "✅ Clé SA depuis bootstrap"
           else
-            # Ecriture via variable env — évite les problèmes de quotes avec JSON
             echo "$SA_KEY_SECRET" > /tmp/sa-key.json
-            echo "✅ Clé SA depuis secret GCP_SA_KEY"
+            echo "✅ Clé SA depuis secret GCP_OWNER_SA_KEY"
           fi
           python3 -c "import json; json.load(open('/tmp/sa-key.json')); print('✅ JSON valide')"
           echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa-key.json" >> $GITHUB_ENV
@@ -358,10 +355,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ✅ FIX 2 — GCP_SA_KEY remplacé par GCP_OWNER_SA_KEY
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          credentials_json: ${{ secrets.GCP_OWNER_SA_KEY }}
 
       - uses: google-github-actions/setup-gcloud@v2
 
@@ -402,10 +400,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ✅ FIX 2 — GCP_SA_KEY remplacé par GCP_OWNER_SA_KEY
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          credentials_json: ${{ secrets.GCP_OWNER_SA_KEY }}
 
       - uses: google-github-actions/setup-gcloud@v2
 
