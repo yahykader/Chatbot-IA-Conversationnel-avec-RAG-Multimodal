@@ -20,7 +20,7 @@
 name: 🎯 Setup & Deploy (Bootstrap → Terraform → Deploy)
 
 on:
-  # Push auto sur factorisation → skip_bootstrap=true implicite, utilise GCP_SA_KEY
+  # Push auto sur factorisation → bootstrap skippé si skip_bootstrap='true', sinon il tourne
   push:
     branches: [factorisation]
 
@@ -69,7 +69,7 @@ jobs:
   bootstrap:
     name: 🏗️ 1. Bootstrap GCP
     runs-on: ubuntu-latest
-    if: github.event.inputs.skip_bootstrap == 'false'
+    if: github.event.inputs.skip_bootstrap != 'true'
     outputs:
       sa-key-b64: ${{ steps.sa-key.outputs.sa-key-b64 }}
 
