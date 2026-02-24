@@ -269,15 +269,19 @@ jobs:
 
       # ── Auth : clé du bootstrap OU secret GCP_SA_KEY si skip ─────────────
       - name: Prepare SA Key
+        env:
+          SA_KEY_SECRET: ${{ secrets.GCP_SA_KEY }}
+          SA_KEY_B64: ${{ needs.bootstrap.outputs.sa-key-b64 }}
         run: |
-          if [ "${{ needs.bootstrap.result }}" = "success" ] && \
-             [ -n "${{ needs.bootstrap.outputs.sa-key-b64 }}" ]; then
-            echo "${{ needs.bootstrap.outputs.sa-key-b64 }}" | base64 -d > /tmp/sa-key.json
+          if [ "${{ needs.bootstrap.result }}" = "success" ] && [ -n "$SA_KEY_B64" ]; then
+            echo "$SA_KEY_B64" | base64 -d > /tmp/sa-key.json
             echo "✅ Clé SA depuis bootstrap"
           else
-            echo '${{ secrets.GCP_SA_KEY }}' > /tmp/sa-key.json
+            # Ecriture via variable env — évite les problèmes de quotes avec JSON
+            echo "$SA_KEY_SECRET" > /tmp/sa-key.json
             echo "✅ Clé SA depuis secret GCP_SA_KEY"
           fi
+          python3 -c "import json; json.load(open('/tmp/sa-key.json')); print('✅ JSON valide')"
           echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa-key.json" >> $GITHUB_ENV
 
       - name: Authenticate to GCP
