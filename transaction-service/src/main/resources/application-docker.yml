@@ -18,3 +18,14 @@ management:
   zipkin:
     tracing:
       endpoint: http://zipkin:9411/api/v2/spans
+
+app:
+  pdf:
+    generated-pdf-dir: /app/uploads/extracted-images
+
+  libreoffice:
+    soffice-path: "/usr/bin/soffice"
+
+document: 
+  images:
+    storage-path: "${IMAGES_STORAGE_PATH:/app/uploads/extracted-images}"

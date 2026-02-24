@@ -120,7 +120,7 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
     @Value("${app.libreoffice.enabled:true}")
     private boolean libreofficeEnabled;
     
-    @Value("${app.libreoffice.sofficePath:}")
+    @Value("${app.libreoffice.soffice-path:}")
     private String sofficePath;
     
     @Value("${app.libreoffice.timeoutSeconds:60}")
@@ -1324,34 +1324,128 @@ public class XlsxIngestionStrategy implements IngestionStrategy {
     // UTILITAIRES
     // ========================================================================
     
+        /**
+     * Résout automatiquement le chemin de l'exécutable LibreOffice selon l'OS.
+     * 
+     * Ordre de recherche :
+     * 1. Chemin configuré via application.yml (si défini)
+     * 2. Auto-détection selon l'OS
+     * 3. Fallback sur commande système (PATH)
+     * 
+     * @return Chemin absolu vers soffice ou commande système
+     * @throws IllegalStateException si LibreOffice n'est pas trouvé
+     */
     private String resolveSofficeExecutable() {
+        // 1. ✅ Chemin configuré explicitement
         if (sofficePath != null && !sofficePath.isBlank()) {
-            Path p = Paths.get(sofficePath);
-            if (Files.exists(p)) {
-                return p.toAbsolutePath().toString();
+            Path configuredPath = Paths.get(sofficePath);
+            if (Files.exists(configuredPath)) {
+                log.info("✅ LibreOffice trouvé (configuré) : {}", configuredPath.toAbsolutePath());
+                return configuredPath.toAbsolutePath().toString();
             }
+            log.warn("⚠️ Chemin configuré introuvable : {}", configuredPath);
             throw new IllegalStateException(
-                "LibreOffice sofficePath configuré mais introuvable: " + p);
+                "LibreOffice sofficePath configuré mais introuvable: " + configuredPath
+            );
         }
 
-        if (System.getProperty("os.name").toLowerCase().contains("win")) {
-            List<String> candidates = List.of(
+        // 2. ✅ Auto-détection selon l'OS
+        String os = System.getProperty("os.name").toLowerCase();
+        log.debug("🔍 Détection LibreOffice sur OS : {}", os);
+        
+        String detectedPath = null;
+        
+        if (os.contains("win")) {
+            detectedPath = detectWindows();
+        } else if (os.contains("nix") || os.contains("nux") || os.contains("aix")) {
+            detectedPath = detectLinux();
+        } else if (os.contains("mac")) {
+            detectedPath = detectMac();
+        }
+        
+        if (detectedPath != null) {
+            log.info("✅ LibreOffice trouvé (auto-détection) : {}", detectedPath);
+            return detectedPath;
+        }
+
+        // 3. ⚠️ Fallback : Essayer la commande système (dans PATH)
+        String fallback = os.contains("win") ? "soffice.exe" : "soffice";
+        log.warn("⚠️ LibreOffice non trouvé, utilisation de la commande système : {}", fallback);
+        log.warn("⚠️ Assurez-vous que LibreOffice est dans le PATH système");
+        
+        return fallback;
+    }
+
+    /**
+     * Détection Windows - Chemins standards LibreOffice
+     */
+    private String detectWindows() {
+        List<String> candidates = List.of(
                 "C:\\Program Files\\LibreOffice\\program\\soffice.exe",
                 "C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe"
-            );
-            
-            for (String c : candidates) {
-                if (Files.exists(Paths.get(c))) {
-                    return c;
-                }
+        );
+        
+        for (String candidate : candidates) {
+            Path path = Paths.get(candidate);
+            if (Files.exists(path)) {
+                log.debug("✅ Trouvé : {}", candidate);
+                return path.toAbsolutePath().toString();
             }
-            
-            return "soffice.exe";
         }
-
-        return "soffice";
+        
+        log.debug("❌ Aucun chemin Windows standard trouvé");
+        return null;
     }
+
+    /**
+     * Détection Linux - Chemins standards (Docker Alpine/Debian)
+     */
+    private String detectLinux() {
+        List<String> candidates = List.of(
+            "/usr/bin/soffice",              // Alpine / Debian standard
+            "/usr/local/bin/soffice",        // Installation manuelle
+            "/opt/libreoffice/program/soffice",  // Installation custom
+            "/usr/lib/libreoffice/program/soffice"  // Debian alternatif
+        );
+        
+        for (String candidate : candidates) {
+            Path path = Paths.get(candidate);
+            if (Files.exists(path) && Files.isExecutable(path)) {
+                log.debug("✅ Trouvé : {}", candidate);
+                return path.toAbsolutePath().toString();
+            }
+        }
+        
+        log.debug("❌ Aucun chemin Linux standard trouvé");
+        return null;
+    }
+
+    /**
+     * Détection macOS - Chemins standards
+     */
+    private String detectMac() {
+        List<String> candidates = List.of(
+            "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+            "/usr/local/bin/soffice"
+        );
+        
+        for (String candidate : candidates) {
+            Path path = Paths.get(candidate);
+            if (Files.exists(path) && Files.isExecutable(path)) {
+                log.debug("✅ Trouvé : {}", candidate);
+                return path.toAbsolutePath().toString();
+            }
+        }
+        
+        log.debug("❌ Aucun chemin macOS standard trouvé");
+        return null;
+    }
+
     
+
+    // ========================================================================
+    // UTILITAIRES
+    // ========================================================================
     private String readAll(InputStream in) {
         try (in) {
             return new String(in.readAllBytes());

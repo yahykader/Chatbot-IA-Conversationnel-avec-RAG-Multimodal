@@ -21,12 +21,12 @@ app:
     
   libreoffice:
     enabled: true
-    sofficePath: "C:\\Program Files\\LibreOffice\\program\\soffice.exe"               # Auto-détection si vide
+    soffice-path: "C:\\Program Files\\LibreOffice\\program\\soffice.exe"               # Auto-détection si vide
     timeoutSeconds: 60
 
   pdf:
     save-generated: true
-    generated-pdf-dir: "${IMAGES_STORAGE_PATH:D:/Formation-DATA-2024/extracted-images}"
+    generated-pdf-dir: "${IMAGES_STORAGE_PATH:${user.home}/extracted-images}"
     analyze-with-vision: true
     render-dpi: 300
 
@@ -55,7 +55,6 @@ pgvector:
     table: text_embeddings
   image:
     table: image_embeddings
-    
 # ============================================================================
 # SPRING
 # ============================================================================
@@ -274,7 +273,7 @@ document:
   max-pdf-pages-to-analyze: 100
   
   images:
-    storage-path: "${IMAGES_STORAGE_PATH:D:/extracted-images}"
+    storage-path: "${IMAGES_STORAGE_PATH:${user.home}/extracted-images}"
     min-width: 10
     max-width: 4096
     min-height: 10
