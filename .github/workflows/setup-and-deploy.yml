@@ -1,0 +1,463 @@
+# =============================================================================
+# .github/workflows/setup-and-deploy.yml
+# Workflow MASTER — Bootstrap → Terraform → Build → Deploy
+#
+# Secrets GitHub à configurer AVANT de lancer ce workflow :
+#   GCP_BILLING_ACCOUNT  : ID du compte billing (ex: 01AB23-4CD567-89EF01)
+#   GCP_OWNER_SA_KEY     : Clé JSON d'un compte GCP avec droits Owner
+#   OPENAI_API_KEY       : Clé OpenAI
+#   POSTGRES_PASSWORD    : Mot de passe PostgreSQL
+#   REDIS_PASSWORD       : Mot de passe Redis
+#   GRAFANA_PASSWORD     : Mot de passe Grafana
+#
+# Ordre d'exécution garanti par "needs" :
+#   1. bootstrap     → crée projet GCP, bucket, SA Terraform
+#   2. terraform     → init + apply l'infra (VM, registry, network)
+#   3. build-push    → build et push les images Docker
+#   4. deploy        → déploie les containers sur la VM
+# =============================================================================
+
+name: 🎯 Setup & Deploy (Bootstrap → Terraform → Deploy)
+
+on:
+  # Push auto sur factorisation → skip_bootstrap=true implicite, utilise GCP_SA_KEY
+  push:
+    branches: [factorisation]
+
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: 'GCP Project ID (ex: rag-app-upload)'
+        required: true
+        type: string
+      zone:
+        description: 'GCP Zone'
+        required: true
+        default: 'europe-west1-b'
+        type: choice
+        options:
+          - europe-west1-b
+          - europe-west1-c
+          - europe-west2-a
+          - us-central1-a
+      environment:
+        description: 'Environnement cible'
+        required: true
+        default: 'prod'
+        type: choice
+        options:
+          - dev
+          - prod
+      skip_bootstrap:
+        description: 'Skip bootstrap ? (true si projet GCP déjà créé)'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+env:
+  GCP_REGION: europe-west1
+  REGISTRY: europe-west1-docker.pkg.dev
+
+# =============================================================================
+# JOB 1 — BOOTSTRAP
+# Crée le projet GCP, le bucket state, le SA Terraform et ses droits IAM
+# =============================================================================
+jobs:
+  bootstrap:
+    name: 🏗️ 1. Bootstrap GCP
+    runs-on: ubuntu-latest
+    if: github.event.inputs.skip_bootstrap == 'false'
+    outputs:
+      sa-key-b64: ${{ steps.sa-key.outputs.sa-key-b64 }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Auth avec le compte Owner ─────────────────────────────────────────
+      - name: Authenticate to GCP (Owner account)
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_OWNER_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      # ── 1. Créer le projet GCP ────────────────────────────────────────────
+      - name: Create GCP Project
+        run: |
+          PROJECT_ID="${{ github.event.inputs.project_id }}"
+          if gcloud projects describe "$PROJECT_ID" >/dev/null 2>&1; then
+            echo "⚠️ Projet $PROJECT_ID existe déjà — on continue"
+          else
+            gcloud projects create "$PROJECT_ID" \
+              --name="RAG App" \
+              --labels="env=rag-app,managed-by=terraform"
+            echo "✅ Projet créé : $PROJECT_ID"
+          fi
+
+      # ── 2. Lier le compte de facturation ──────────────────────────────────
+      - name: Link Billing Account
+        run: |
+          gcloud billing projects link "${{ github.event.inputs.project_id }}" \
+            --billing-account="${{ secrets.GCP_BILLING_ACCOUNT }}"
+          echo "✅ Billing lié : ${{ secrets.GCP_BILLING_ACCOUNT }}"
+
+      # ── 3. Activer les APIs ───────────────────────────────────────────────
+      - name: Enable GCP APIs
+        run: |
+          gcloud services enable \
+            cloudresourcemanager.googleapis.com \
+            compute.googleapis.com \
+            artifactregistry.googleapis.com \
+            iam.googleapis.com \
+            iamcredentials.googleapis.com \
+            storage.googleapis.com \
+            storage-component.googleapis.com \
+            oslogin.googleapis.com \
+            --project="${{ github.event.inputs.project_id }}"
+          echo "✅ APIs activées"
+
+      # ── 4. Créer le bucket GCS pour le state Terraform ───────────────────
+      - name: Create Terraform State Bucket
+        run: |
+          BUCKET="terraform-state-${{ github.event.inputs.project_id }}"
+          PROJECT_ID="${{ github.event.inputs.project_id }}"
+
+          if gcloud storage buckets describe "gs://$BUCKET" >/dev/null 2>&1; then
+            echo "⚠️ Bucket gs://$BUCKET existe déjà — on continue"
+          else
+            gcloud storage buckets create "gs://$BUCKET" \
+              --project="$PROJECT_ID" \
+              --location="${{ env.GCP_REGION }}" \
+              --uniform-bucket-level-access
+            echo "✅ Bucket créé : gs://$BUCKET"
+          fi
+          gcloud storage buckets update "gs://$BUCKET" --versioning
+          echo "✅ Versioning activé"
+
+      # ── 5. Créer le Service Account Terraform ────────────────────────────
+      - name: Create Terraform Service Account
+        run: |
+          PROJECT_ID="${{ github.event.inputs.project_id }}"
+          TF_SA_EMAIL="terraform-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+
+          if gcloud iam service-accounts describe "$TF_SA_EMAIL" \
+              --project="$PROJECT_ID" >/dev/null 2>&1; then
+            echo "⚠️ SA $TF_SA_EMAIL existe déjà — on continue"
+          else
+            gcloud iam service-accounts create "terraform-sa" \
+              --display-name="Terraform Bootstrap SA" \
+              --project="$PROJECT_ID"
+            echo "✅ Service Account créé"
+          fi
+
+      # ── 6. Assigner les rôles IAM ─────────────────────────────────────────
+      - name: Assign IAM Roles to Terraform SA
+        run: |
+          PROJECT_ID="${{ github.event.inputs.project_id }}"
+          TF_SA_EMAIL="terraform-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+
+          ROLES=(
+            "roles/compute.admin"
+            "roles/iam.serviceAccountAdmin"
+            "roles/iam.serviceAccountKeyAdmin"
+            "roles/iam.serviceAccountUser"
+            "roles/artifactregistry.admin"
+            "roles/storage.admin"
+            "roles/resourcemanager.projectIamAdmin"
+          )
+
+          for ROLE in "${ROLES[@]}"; do
+            gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+              --member="serviceAccount:$TF_SA_EMAIL" \
+              --role="$ROLE" \
+              --quiet
+            echo "  + $ROLE"
+          done
+          echo "✅ Rôles assignés"
+
+      # ── 7. Générer la clé SA ──────────────────────────────────────────────
+      - name: Generate Terraform SA Key
+        id: sa-key
+        run: |
+          PROJECT_ID="${{ github.event.inputs.project_id }}"
+          TF_SA_EMAIL="terraform-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+
+          gcloud iam service-accounts keys create /tmp/terraform-sa-key.json \
+            --iam-account="$TF_SA_EMAIL" \
+            --project="$PROJECT_ID"
+
+          # Encodé en base64 pour passer au job terraform via output
+          SA_KEY_B64=$(base64 -w 0 /tmp/terraform-sa-key.json)
+          echo "sa-key-b64=$SA_KEY_B64" >> $GITHUB_OUTPUT
+          rm /tmp/terraform-sa-key.json
+          echo "✅ Clé SA générée et transmise"
+
+      # ── 8. Mettre à jour le bucket name dans versions.tf ─────────────────
+      - name: Update bucket name in versions.tf
+        run: |
+          BUCKET="terraform-state-${{ github.event.inputs.project_id }}"
+          sed -i "s/terraform-state-rag-app/${BUCKET}/g" \
+            terraform/environments/dev/versions.tf \
+            terraform/environments/prod/versions.tf
+          echo "✅ versions.tf mis à jour → bucket = $BUCKET"
+
+      # ── 9. Terraform Init dev + prod ──────────────────────────────────────
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.0"
+          terraform_wrapper: false
+
+      - name: Terraform Init — Dev
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GCP_OWNER_SA_KEY }}
+        run: |
+          cd terraform/environments/dev
+          terraform init
+          echo "✅ Terraform dev initialisé"
+
+      - name: Terraform Init — Prod
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GCP_OWNER_SA_KEY }}
+        run: |
+          cd terraform/environments/prod
+          terraform init
+          echo "✅ Terraform prod initialisé"
+
+      # ── Résumé Bootstrap ──────────────────────────────────────────────────
+      - name: Bootstrap Summary
+        run: |
+          PROJECT_ID="${{ github.event.inputs.project_id }}"
+          BUCKET="terraform-state-${PROJECT_ID}"
+
+          echo "## ✅ 1. Bootstrap terminé !" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource | Valeur |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🪣 Bucket state | gs://$BUCKET |" >> $GITHUB_STEP_SUMMARY
+          echo "| 👤 SA Terraform | terraform-sa@${PROJECT_ID}.iam.gserviceaccount.com |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🌍 Region       | ${{ env.GCP_REGION }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Secret | Statut |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| \`GCP_SA_KEY\` | ✅ Transmis automatiquement au job Terraform |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`OPENAI_API_KEY\` | ✅ Lu depuis GitHub Secrets |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`POSTGRES_PASSWORD\` | ✅ Lu depuis GitHub Secrets |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`REDIS_PASSWORD\` | ✅ Lu depuis GitHub Secrets |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`GRAFANA_PASSWORD\` | ✅ Lu depuis GitHub Secrets |" >> $GITHUB_STEP_SUMMARY
+
+# =============================================================================
+# JOB 2 — TERRAFORM
+# Init + Apply l'infra GCP (VM, network, artifact registry)
+# S'exécute si bootstrap OK OU si bootstrap skippé (skip_bootstrap=true)
+# =============================================================================
+  terraform:
+    name: 🏗️ 2. Terraform Apply
+    runs-on: ubuntu-latest
+    needs: bootstrap
+    if: always() && (needs.bootstrap.result == 'success' || needs.bootstrap.result == 'skipped')
+    outputs:
+      vm-name:  ${{ steps.tf-outputs.outputs.vm-name }}
+      vm-ip:    ${{ steps.tf-outputs.outputs.vm-ip }}
+      registry: ${{ steps.tf-outputs.outputs.registry }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Auth : clé du bootstrap OU secret GCP_SA_KEY si skip ─────────────
+      - name: Prepare SA Key
+        run: |
+          if [ "${{ needs.bootstrap.result }}" = "success" ] && \
+             [ -n "${{ needs.bootstrap.outputs.sa-key-b64 }}" ]; then
+            echo "${{ needs.bootstrap.outputs.sa-key-b64 }}" | base64 -d > /tmp/sa-key.json
+            echo "✅ Clé SA depuis bootstrap"
+          else
+            echo '${{ secrets.GCP_SA_KEY }}' > /tmp/sa-key.json
+            echo "✅ Clé SA depuis secret GCP_SA_KEY"
+          fi
+          echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa-key.json" >> $GITHUB_ENV
+
+      - name: Authenticate to GCP
+        run: |
+          gcloud auth activate-service-account --key-file=/tmp/sa-key.json
+          gcloud config set project "${{ github.event.inputs.project_id }}"
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.0"
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: terraform/environments/${{ github.event.inputs.environment }}
+        run: |
+          terraform init -reconfigure
+          echo "✅ Init terminé"
+
+      - name: Terraform Validate
+        working-directory: terraform/environments/${{ github.event.inputs.environment }}
+        run: |
+          terraform validate
+          echo "✅ Configuration valide"
+
+      - name: Terraform Plan
+        working-directory: terraform/environments/${{ github.event.inputs.environment }}
+        run: |
+          terraform plan \
+            -var="project_id=${{ github.event.inputs.project_id }}" \
+            -var="zone=${{ github.event.inputs.zone }}" \
+            -out=tfplan
+          echo "✅ Plan terminé"
+
+      - name: Terraform Apply
+        working-directory: terraform/environments/${{ github.event.inputs.environment }}
+        run: |
+          terraform apply -auto-approve tfplan
+          echo "✅ Apply terminé"
+
+      - name: Get Terraform Outputs
+        id: tf-outputs
+        working-directory: terraform/environments/${{ github.event.inputs.environment }}
+        run: |
+          echo "vm-name=$(terraform output -raw vm_name)"                >> $GITHUB_OUTPUT
+          echo "vm-ip=$(terraform output -raw vm_external_ip)"           >> $GITHUB_OUTPUT
+          echo "registry=$(terraform output -raw artifact_registry_url)" >> $GITHUB_OUTPUT
+
+      - name: Terraform Summary
+        working-directory: terraform/environments/${{ github.event.inputs.environment }}
+        run: |
+          echo "## ✅ 2. Terraform terminé" >> $GITHUB_STEP_SUMMARY
+          echo "| | |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🖥️ VM Name      | $(terraform output -raw vm_name) |"              >> $GITHUB_STEP_SUMMARY
+          echo "| 🌐 Frontend URL | $(terraform output -raw frontend_url) |"          >> $GITHUB_STEP_SUMMARY
+          echo "| 📊 Grafana URL  | $(terraform output -raw grafana_url) |"           >> $GITHUB_STEP_SUMMARY
+          echo "| 🐳 Registry     | $(terraform output -raw artifact_registry_url) |" >> $GITHUB_STEP_SUMMARY
+
+# =============================================================================
+# JOB 3 — BUILD & PUSH
+# Build les images Docker et les pousse sur Artifact Registry
+# =============================================================================
+  build-and-push:
+    name: 🐳 3. Build & Push Docker
+    runs-on: ubuntu-latest
+    needs: terraform
+    if: always() && needs.terraform.result == 'success'
+    outputs:
+      image-tag: ${{ steps.tag.outputs.tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker → Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+
+      - name: Image tag
+        id: tag
+        run: echo "tag=${GITHUB_SHA::8}" >> $GITHUB_OUTPUT
+
+      - name: Build & Push backend
+        working-directory: ./transaction-service
+        run: |
+          IMAGE=${{ needs.terraform.outputs.registry }}/rag-backend
+          docker build -t $IMAGE:${{ steps.tag.outputs.tag }} -t $IMAGE:latest .
+          docker push $IMAGE:${{ steps.tag.outputs.tag }}
+          docker push $IMAGE:latest
+
+      - name: Build & Push frontend
+        working-directory: ./agentic-rag-ui
+        run: |
+          IMAGE=${{ needs.terraform.outputs.registry }}/rag-frontend
+          docker build -t $IMAGE:${{ steps.tag.outputs.tag }} -t $IMAGE:latest .
+          docker push $IMAGE:${{ steps.tag.outputs.tag }}
+          docker push $IMAGE:latest
+
+# =============================================================================
+# JOB 4 — DEPLOY
+# Copie les configs et démarre les containers sur la VM
+# =============================================================================
+  deploy:
+    name: 🚀 4. Deploy
+    runs-on: ubuntu-latest
+    needs: [terraform, build-and-push]
+    if: always() && needs.build-and-push.result == 'success'
+    environment: ${{ github.event.inputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Wait for VM startup
+        run: sleep 60
+
+      - name: Copy configs to VM
+        run: |
+          gcloud compute scp docker-compose.prod.yml \
+            ${{ needs.terraform.outputs.vm-name }}:/opt/rag-app/docker-compose.prod.yml \
+            --zone=${{ github.event.inputs.zone }} --quiet
+
+          gcloud compute scp --recurse prometheus/ \
+            ${{ needs.terraform.outputs.vm-name }}:/opt/rag-app/prometheus \
+            --zone=${{ github.event.inputs.zone }} --quiet
+
+          gcloud compute scp --recurse grafana/ \
+            ${{ needs.terraform.outputs.vm-name }}:/opt/rag-app/grafana \
+            --zone=${{ github.event.inputs.zone }} --quiet
+
+      - name: Deploy on VM
+        run: |
+          gcloud compute ssh ${{ needs.terraform.outputs.vm-name }} \
+            --zone=${{ github.event.inputs.zone }} --quiet \
+            --command="
+              set -e
+              cd /opt/rag-app
+
+              cat > .env << 'ENVEOF'
+          REGISTRY=${{ env.REGISTRY }}
+          GCP_PROJECT_ID=${{ github.event.inputs.project_id }}
+          REPOSITORY=rag-app-${{ github.event.inputs.environment }}
+          IMAGE_TAG=${{ needs.build-and-push.outputs.image-tag }}
+          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          POSTGRES_USER=admin
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
+          GRAFANA_PASSWORD=${{ secrets.GRAFANA_PASSWORD }}
+          ENVEOF
+
+              gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+              docker compose -f docker-compose.prod.yml pull backend frontend
+              docker compose -f docker-compose.prod.yml up -d --remove-orphans
+              docker image prune -f
+              docker compose -f docker-compose.prod.yml ps
+            "
+
+      - name: Final Summary
+        run: |
+          echo "## 🚀 4. Deployment terminé [${{ github.event.inputs.environment }}]" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| | |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🌐 Frontend      | http://${{ needs.terraform.outputs.vm-ip }} |"      >> $GITHUB_STEP_SUMMARY
+          echo "| 📊 Grafana       | http://${{ needs.terraform.outputs.vm-ip }}:3000 |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🏷️ Image Tag     | ${{ needs.build-and-push.outputs.image-tag }} |"    >> $GITHUB_STEP_SUMMARY
+          echo "| 🌍 Environnement | ${{ github.event.inputs.environment }} |"            >> $GITHUB_STEP_SUMMARY
+          echo "| 🗺️ Zone          | ${{ github.event.inputs.zone }} |"                   >> $GITHUB_STEP_SUMMARY
+          echo "| 📦 Project       | ${{ github.event.inputs.project_id }} |"             >> $GITHUB_STEP_SUMMARY

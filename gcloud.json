@@ -1,0 +1,23 @@
+installer gcloud en local : winget install --id Google.CloudSDK -e
+ajouter dans le path : C:\Program Files\Google\Cloud SDK\google-cloud-sdk\bin\
+
+gcloud init
+gcloud auth login
+
+
+# Via CLI
+gcloud projects create rag-app-prod-2025 --name="RAG App"
+
+# Vérifier
+gcloud projects list
+
+* Vérifier que le projet est bien lié à la facturation
+gcloud billing accounts list
+
+ACCOUNT_ID            NAME                       OPEN  MASTER_ACCOUNT_ID
+01F80C-1FDAC0-51A224  Mon compte de facturation  True
+
+
+gcloud billing projects link rag-app-prod-2025 --billing-account=01F80C-1FDAC0-51A224
+billingAccountName: billingAccounts/01F80C-1FDAC0-51A224
+billingEnabled: true

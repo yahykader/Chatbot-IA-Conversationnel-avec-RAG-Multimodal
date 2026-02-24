@@ -1,0 +1,177 @@
+# # =============================================================================
+# # .github/workflows/terraform.yml
+# # Terraform Init + Plan + Apply pour dev et prod
+# #
+# # Secrets GitHub nécessaires (configurés après le bootstrap) :
+# #   GCP_PROJECT_ID   : ID du projet GCP
+# #   GCP_SA_KEY       : Clé JSON du SA Terraform (généré par bootstrap)
+# #   GCP_VM_ZONE      : europe-west1-b
+# # =============================================================================
+
+# name: 🏗️ Terraform
+
+# on:
+#   workflow_dispatch:
+#     inputs:
+#       environment:
+#         description: 'Environnement cible'
+#         required: true
+#         default: 'dev'
+#         type: choice
+#         options:
+#           - dev
+#           - prod
+#           - both
+#       action:
+#         description: 'Action Terraform'
+#         required: true
+#         default: 'plan'
+#         type: choice
+#         options:
+#           - plan       # Dry-run — voir ce qui va changer
+#           - apply      # Créer / mettre à jour les ressources
+#           - destroy    # ⚠️ Supprimer toutes les ressources
+
+#   # Lancement automatique quand les fichiers terraform changent
+#   push:
+#     branches: [factorisation, main]
+#     paths:
+#       - 'terraform/**'
+
+# jobs:
+#   # ===========================================================================
+#   # Détermine les environments à traiter
+#   # ===========================================================================
+#   setup:
+#     name: 🔧 Setup
+#     runs-on: ubuntu-latest
+#     outputs:
+#       environments: ${{ steps.envs.outputs.list }}
+#       action: ${{ steps.action.outputs.value }}
+
+#     steps:
+#       - name: Resolve environments
+#         id: envs
+#         run: |
+#           INPUT="${{ github.event.inputs.environment }}"
+#           # Sur push automatique → plan sur dev uniquement
+#           if [ -z "$INPUT" ]; then
+#             echo 'list=["dev"]' >> $GITHUB_OUTPUT
+#           elif [ "$INPUT" = "both" ]; then
+#             echo 'list=["dev","prod"]' >> $GITHUB_OUTPUT
+#           else
+#             echo "list=[\"$INPUT\"]" >> $GITHUB_OUTPUT
+#           fi
+
+#       - name: Resolve action
+#         id: action
+#         run: |
+#           INPUT="${{ github.event.inputs.action }}"
+#           # Sur push automatique → toujours plan (jamais apply auto)
+#           if [ -z "$INPUT" ]; then
+#             echo "value=plan" >> $GITHUB_OUTPUT
+#           else
+#             echo "value=$INPUT" >> $GITHUB_OUTPUT
+#           fi
+
+#   # ===========================================================================
+#   # Terraform — matrix sur les environments
+#   # ===========================================================================
+#   terraform:
+#     name: 🏗️ Terraform ${{ matrix.environment }} — ${{ needs.setup.outputs.action }}
+#     runs-on: ubuntu-latest
+#     needs: setup
+#     environment: ${{ matrix.environment }}
+
+#     strategy:
+#       matrix:
+#         environment: ${{ fromJson(needs.setup.outputs.environments) }}
+#       fail-fast: false  # Si dev échoue, prod continue quand même
+
+#     steps:
+#       - uses: actions/checkout@v4
+
+#       # ── Auth GCP ────────────────────────────────────────────────────────
+#       - name: Authenticate to GCP
+#         uses: google-github-actions/auth@v2
+#         with:
+#           credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+#       - uses: google-github-actions/setup-gcloud@v2
+
+#       # ── Setup Terraform ──────────────────────────────────────────────────
+#       - name: Setup Terraform
+#         uses: hashicorp/setup-terraform@v3
+#         with:
+#           terraform_version: "1.7.0"
+#           terraform_wrapper: false
+
+#       # ── Terraform Init ───────────────────────────────────────────────────
+#       - name: Terraform Init
+#         working-directory: terraform/environments/${{ matrix.environment }}
+#         run: |
+#           terraform init -reconfigure
+#           echo "✅ Init terminé"
+
+#       # ── Terraform Validate ───────────────────────────────────────────────
+#       - name: Terraform Validate
+#         working-directory: terraform/environments/${{ matrix.environment }}
+#         run: |
+#           terraform validate
+#           echo "✅ Configuration valide"
+
+#       # ── Terraform Plan ───────────────────────────────────────────────────
+#       - name: Terraform Plan
+#         working-directory: terraform/environments/${{ matrix.environment }}
+#         run: |
+#           terraform plan \
+#             -var="project_id=${{ secrets.GCP_PROJECT_ID }}" \
+#             -var="zone=${{ secrets.GCP_VM_ZONE }}" \
+#             -out=tfplan \
+#             -detailed-exitcode
+#         continue-on-error: true  # exit code 2 = changes detected, pas une erreur
+
+#       # ── Terraform Apply ──────────────────────────────────────────────────
+#       - name: Terraform Apply
+#         if: needs.setup.outputs.action == 'apply'
+#         working-directory: terraform/environments/${{ matrix.environment }}
+#         run: |
+#           terraform apply -auto-approve tfplan
+#           echo "✅ Apply terminé"
+
+#       # ── Terraform Destroy ────────────────────────────────────────────────
+#       - name: Terraform Destroy
+#         if: needs.setup.outputs.action == 'destroy'
+#         working-directory: terraform/environments/${{ matrix.environment }}
+#         run: |
+#           terraform destroy -auto-approve \
+#             -var="project_id=${{ secrets.GCP_PROJECT_ID }}" \
+#             -var="zone=${{ secrets.GCP_VM_ZONE }}"
+#           echo "✅ Destroy terminé"
+
+#       # ── Outputs (seulement après apply) ──────────────────────────────────
+#       - name: Show Outputs
+#         if: needs.setup.outputs.action == 'apply'
+#         working-directory: terraform/environments/${{ matrix.environment }}
+#         run: |
+#           echo "## 📦 Outputs [${{ matrix.environment }}]" >> $GITHUB_STEP_SUMMARY
+#           echo "" >> $GITHUB_STEP_SUMMARY
+#           echo "| | |" >> $GITHUB_STEP_SUMMARY
+#           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+#           echo "| 🖥️ VM Name       | $(terraform output -raw vm_name) |" >> $GITHUB_STEP_SUMMARY
+#           echo "| 🌐 Frontend URL  | $(terraform output -raw frontend_url) |" >> $GITHUB_STEP_SUMMARY
+#           echo "| 📊 Grafana URL   | $(terraform output -raw grafana_url) |" >> $GITHUB_STEP_SUMMARY
+#           echo "| 🐳 Registry      | $(terraform output -raw artifact_registry_url) |" >> $GITHUB_STEP_SUMMARY
+
+#       # ── Récupérer la clé SA GitHub Actions (seulement après apply) ───────
+#       - name: Export GitHub Actions SA Key
+#         if: needs.setup.outputs.action == 'apply'
+#         working-directory: terraform/environments/${{ matrix.environment }}
+#         run: |
+#           echo "## 🔑 GCP_SA_KEY pour l'env ${{ matrix.environment }}" >> $GITHUB_STEP_SUMMARY
+#           echo "" >> $GITHUB_STEP_SUMMARY
+#           echo "Copier cette clé dans le secret GitHub \`GCP_SA_KEY\` (env: ${{ matrix.environment }}) :" >> $GITHUB_STEP_SUMMARY
+#           echo "" >> $GITHUB_STEP_SUMMARY
+#           echo '```json' >> $GITHUB_STEP_SUMMARY
+#           terraform output -raw github_actions_sa_key >> $GITHUB_STEP_SUMMARY
+#           echo '```' >> $GITHUB_STEP_SUMMARY
