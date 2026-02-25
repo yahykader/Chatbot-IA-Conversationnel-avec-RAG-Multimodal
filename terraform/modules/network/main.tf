@@ -52,6 +52,21 @@ resource "google_compute_firewall" "allow_ssh_iap" {
   target_tags   = ["ssh-server"]
 }
 
+# Port 22 — SSH direct (GitHub Actions)
+resource "google_compute_firewall" "allow_ssh_direct" {
+  name    = "allow-ssh-direct-${var.env}"
+  network = google_compute_network.vpc.name
+  project = var.project_id
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+
+  source_ranges = ["0.0.0.0/0"]
+  target_tags   = ["ssh-server"]
+}
+
 # Port 3000 — Grafana (restreint)
 resource "google_compute_firewall" "allow_grafana" {
   name    = "allow-grafana-${var.env}"
