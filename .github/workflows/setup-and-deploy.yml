@@ -206,15 +206,25 @@ jobs:
           PROJECT_ID="${{ github.event.inputs.project_id }}"
           TF_SA_EMAIL="terraform-sa@${PROJECT_ID}.iam.gserviceaccount.com"
 
-          gcloud iam service-accounts keys create /tmp/terraform-sa-key.json \
+          # Vérifie si une clé USER_MANAGED existe déjà
+          EXISTING_KEYS=$(gcloud iam service-accounts keys list \
             --iam-account="$TF_SA_EMAIL" \
-            --project="$PROJECT_ID"
+            --project="$PROJECT_ID" \
+            --filter="keyType=USER_MANAGED" \
+            --format="value(name)" 2>/dev/null)
 
-          # Encodé en base64 pour passer au job terraform via output
-          SA_KEY_B64=$(base64 -w 0 /tmp/terraform-sa-key.json)
-          echo "sa-key-b64=$SA_KEY_B64" >> $GITHUB_OUTPUT
-          rm /tmp/terraform-sa-key.json
-          echo "✅ Clé SA générée et transmise"
+          if [ -n "$EXISTING_KEYS" ]; then
+            echo "⚠️ Clé SA existe déjà — on passe la création"
+            echo "sa-key-b64=" >> $GITHUB_OUTPUT
+          else
+            gcloud iam service-accounts keys create /tmp/terraform-sa-key.json \
+              --iam-account="$TF_SA_EMAIL" \
+              --project="$PROJECT_ID"
+            SA_KEY_B64=$(base64 -w 0 /tmp/terraform-sa-key.json)
+            echo "sa-key-b64=$SA_KEY_B64" >> $GITHUB_OUTPUT
+            rm /tmp/terraform-sa-key.json
+            echo "✅ Clé SA générée et transmise"
+          fi
 
       # ── 8. Mettre à jour le bucket name dans versions.tf ─────────────────
       - name: Update bucket name in versions.tf
