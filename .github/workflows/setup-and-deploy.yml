@@ -84,15 +84,19 @@ jobs:
       # ── 1. Créer le projet GCP ────────────────────────────────────────────
       - name: Create GCP Project
         run: |
-          PROJECT_ID="${{ github.event.inputs.project_id }}"
-          if gcloud projects describe "$PROJECT_ID" >/dev/null 2>&1; then
+            PROJECT_ID="${{ github.event.inputs.project_id }}"
+            if gcloud projects describe "$PROJECT_ID" --quiet >/dev/null 2>&1; then
             echo "⚠️ Projet $PROJECT_ID existe déjà — on continue"
-          else
-            echo "⚠️ Projet inexistant — veuillez le créer manuellement sur GCP Console"
-            echo "➡️ https://console.cloud.google.com/projectcreate"
-            echo "Puis relancez avec skip_bootstrap=false"
-            exit 1
-          fi
+            else
+            echo "⚠️ Projet non trouvé ou droits insuffisants — on tente la création..."
+            if gcloud projects create "$PROJECT_ID" \
+                --name="RAG App" \
+                --labels="env=rag-app,managed-by=terraform" 2>/dev/null; then
+                echo "✅ Projet créé : $PROJECT_ID"
+            else
+                echo "⚠️ Création impossible (peut-être déjà existant) — on continue"
+            fi
+            fi
 
       # ── 2. Lier le compte de facturation ──────────────────────────────────
       - name: Link Billing Account
