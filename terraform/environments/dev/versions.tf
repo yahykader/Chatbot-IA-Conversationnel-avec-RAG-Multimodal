@@ -9,7 +9,7 @@ terraform {
   }
 
   backend "gcs" {
-    bucket = "terraform-state-rag-app"
+    bucket = "terraform-state-rag-app-upload"
     prefix = "dev/state"
   }
 }
