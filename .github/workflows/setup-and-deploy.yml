@@ -242,18 +242,18 @@ jobs:
 
             # Attendre la propagation du bucket GCS
             echo "⏳ Attente propagation du bucket..."
-            for i in {1..5}; do
+            for i in {1..15}; do
                 if gsutil ls gs://terraform-state-${{ github.event.inputs.project_id }} >/dev/null 2>&1; then
                 echo "✅ Bucket accessible"
                 break
                 fi
-                echo "⏳ Tentative $i/5 — attente 10s..."
+                echo "⏳ Tentative $i/15 — attente 20s..."
                 sleep 10
             done
 
             # Init Terraform avec reconfigure pour s'assurer que le backend est correct
             cd terraform/environments/dev
-            terraform init -reconfigure
+            terraform init -reconfigure -backend-config="credentials=/tmp/gha-creds.json" -backend-config="bucket=terraform-state-${{ github.event.inputs.project_id }}" -backend-config="prefix=dev"
             echo "✅ Terraform dev initialisé"
 
       # ── 11. Terraform Init Prod ─────────────────────────────────────────
@@ -267,18 +267,18 @@ jobs:
 
             # Attendre la propagation du bucket GCS
             echo "⏳ Attente propagation du bucket..."
-            for i in {1..5}; do
+            for i in {1..15}; do
             if gsutil ls gs://terraform-state-${{ github.event.inputs.project_id }} >/dev/null 2>&1; then
                 echo "✅ Bucket accessible"
                 break
             fi
-            echo "⏳ Tentative $i/5 — attente 10s..."
+            echo "⏳ Tentative $i/15 — attente 20s..."
             sleep 10
             done
 
             # Init Terraform avec reconfigure pour s'assurer que le backend est correct
             cd terraform/environments/prod
-            terraform init -reconfigure
+            terraform init -reconfigure -backend-config="credentials=/tmp/gha-creds.json" -backend-config="bucket=terraform-state-${{ github.event.inputs.project_id }}" -backend-config="prefix=prod"
             echo "✅ Terraform prod initialisé"
 
       # ── 12. Résumé Bootstrap ──────────────────────────────────────────────────
