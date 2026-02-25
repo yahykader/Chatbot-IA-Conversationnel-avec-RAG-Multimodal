@@ -440,6 +440,10 @@ jobs:
           gcloud compute scp --recurse grafana/ \
             ${{ needs.terraform.outputs.vm-name }}:/opt/rag-app/grafana \
             --zone=${{ github.event.inputs.zone }} --quiet
+            
+          gcloud compute scp --recurse alertmanager/ \
+            ${{ needs.terraform.outputs.vm-name }}:/opt/rag-app/alertmanager \
+            --zone=${{ github.event.inputs.zone }} --quiet
 
       - name: Deploy on VM
         run: |
