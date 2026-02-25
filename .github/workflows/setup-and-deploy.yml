@@ -233,9 +233,38 @@ jobs:
           terraform_wrapper: false
       # ── 10. Terraform Init Dev ──────────────────────────────────────────
       - name: Terraform Init — Dev
-        env:
-            GOOGLE_CREDENTIALS: ${{ steps.sa-key.outputs.sa-key-b64 }}
+        # env:
+        #     GOOGLE_CREDENTIALS: ${{ steps.sa-key.outputs.sa-key-b64 }}
         run: |
+            # Créer le fichier de credentials à partir de la variable
+            echo "${{ steps.sa-key.outputs.sa-key-b64 }}" | base64 --decode > /tmp/gha-creds.json
+            export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gha-creds.json
+
+            # Attendre la propagation du bucket GCS
+            echo "⏳ Attente propagation du bucket..."
+            for i in {1..5}; do
+                if gsutil ls gs://terraform-state-${{ github.event.inputs.project_id }} >/dev/null 2>&1; then
+                echo "✅ Bucket accessible"
+                break
+                fi
+                echo "⏳ Tentative $i/5 — attente 10s..."
+                sleep 10
+            done
+
+            # Init Terraform avec reconfigure pour s'assurer que le backend est correct
+            cd terraform/environments/dev
+            terraform init -reconfigure
+            echo "✅ Terraform dev initialisé"
+
+      # ── 11. Terraform Init Prod ─────────────────────────────────────────
+      - name: Terraform Init — Prod
+        # env:
+        #     GOOGLE_CREDENTIALS: ${{ steps.sa-key.outputs.sa-key-b64 }}
+        run: |
+            # Créer le fichier de credentials à partir de la variable
+            echo "${{ steps.sa-key.outputs.sa-key-b64 }}" | base64 --decode > /tmp/gha-creds.json
+            export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gha-creds.json
+
             # Attendre la propagation du bucket GCS
             echo "⏳ Attente propagation du bucket..."
             for i in {1..5}; do
@@ -248,26 +277,6 @@ jobs:
             done
 
             # Init Terraform avec reconfigure pour s'assurer que le backend est correct
-            cd terraform/environments/dev
-            terraform init -reconfigure
-            echo "✅ Terraform dev initialisé"
-
-      # ── 11. Terraform Init Prod ─────────────────────────────────────────
-      - name: Terraform Init — Prod
-        env:
-            GOOGLE_CREDENTIALS: ${{ steps.sa-key.outputs.sa-key-b64 }}
-        run: |
-            # Clé SA décodée automatiquement par Terraform via GOOGLE_CREDENTIALS
-            echo "⏳ Attente propagation du bucket..."
-            for i in {1..5}; do
-            if gsutil ls gs://terraform-state-${{ github.event.inputs.project_id }} >/dev/null 2>&1; then
-                echo "✅ Bucket accessible"
-                break
-            fi
-            echo "⏳ Tentative $i/5 — attente 10s..."
-            sleep 10
-            done
-
             cd terraform/environments/prod
             terraform init -reconfigure
             echo "✅ Terraform prod initialisé"
