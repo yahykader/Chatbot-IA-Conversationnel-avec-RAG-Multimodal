@@ -461,7 +461,7 @@ jobs:
           GRAFANA_PASSWORD=${{ secrets.GRAFANA_PASSWORD }}
           ENVEOF
 
-              gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+              sudo gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
               sudo docker compose -f docker-compose.prod.yml pull backend frontend
               sudo docker compose -f docker-compose.prod.yml up -d --remove-orphans
               sudo docker image prune -f
