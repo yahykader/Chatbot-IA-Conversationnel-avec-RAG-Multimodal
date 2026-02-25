@@ -148,18 +148,31 @@ jobs:
       # ── 5. Créer le Service Account Terraform ────────────────────────────
       - name: Create Terraform Service Account
         run: |
-          PROJECT_ID="${{ github.event.inputs.project_id }}"
-          TF_SA_EMAIL="terraform-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+            PROJECT_ID="${{ github.event.inputs.project_id }}"
+            TF_SA_EMAIL="terraform-sa@${PROJECT_ID}.iam.gserviceaccount.com"
 
-          if gcloud iam service-accounts describe "$TF_SA_EMAIL" \
-              --project="$PROJECT_ID" >/dev/null 2>&1; then
+            if gcloud iam service-accounts describe "$TF_SA_EMAIL" \
+                --project="$PROJECT_ID" >/dev/null 2>&1; then
             echo "⚠️ SA $TF_SA_EMAIL existe déjà — on continue"
-          else
+            else
             gcloud iam service-accounts create "terraform-sa" \
-              --display-name="Terraform Bootstrap SA" \
-              --project="$PROJECT_ID"
+                --display-name="Terraform Bootstrap SA" \
+                --project="$PROJECT_ID"
             echo "✅ Service Account créé"
-          fi
+            echo "⏳ Attente propagation IAM..."
+            sleep 30
+            fi
+
+            # Vérification que le SA est bien accessible
+            for i in {1..5}; do
+            if gcloud iam service-accounts describe "$TF_SA_EMAIL" \
+                --project="$PROJECT_ID" >/dev/null 2>&1; then
+                echo "✅ SA vérifié et accessible"
+                break
+            fi
+            echo "⏳ Tentative $i/5 — attente 10s..."
+            sleep 10
+            done
 
       # ── 6. Assigner les rôles IAM ─────────────────────────────────────────
       - name: Assign IAM Roles to Terraform SA
