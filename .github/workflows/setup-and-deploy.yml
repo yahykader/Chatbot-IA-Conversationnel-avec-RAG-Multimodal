@@ -424,6 +424,11 @@ jobs:
 
       - name: Copy configs to VM
         run: |
+          # Créer le dossier sur la VM avant de copier
+          gcloud compute ssh ${{ needs.terraform.outputs.vm-name }} \
+            --zone=${{ github.event.inputs.zone }} --quiet \
+            --command="sudo mkdir -p /opt/rag-app && sudo chown -R \$USER:\$USER /opt/rag-app"
+
           gcloud compute scp docker-compose.prod.yml \
             ${{ needs.terraform.outputs.vm-name }}:/opt/rag-app/docker-compose.prod.yml \
             --zone=${{ github.event.inputs.zone }} --quiet
