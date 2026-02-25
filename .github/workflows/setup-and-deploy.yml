@@ -101,9 +101,16 @@ jobs:
       # ── 2. Lier le compte de facturation ──────────────────────────────────
       - name: Link Billing Account
         run: |
-          gcloud billing projects link "${{ github.event.inputs.project_id }}" \
-            --billing-account="${{ secrets.GCP_BILLING_ACCOUNT }}"
-          echo "✅ Billing lié : ${{ secrets.GCP_BILLING_ACCOUNT }}"
+            PROJECT_ID="${{ github.event.inputs.project_id }}"
+            BILLING=$(gcloud billing projects describe "$PROJECT_ID" \
+            --format="value(billingEnabled)" 2>/dev/null)
+            if [ "$BILLING" = "True" ]; then
+            echo "⚠️ Billing déjà lié — on continue"
+            else
+            gcloud billing projects link "$PROJECT_ID" \
+                --billing-account="${{ secrets.GCP_BILLING_ACCOUNT }}"
+            echo "✅ Billing lié"
+            fi
 
       # ── 3. Activer les APIs ───────────────────────────────────────────────
       - name: Enable GCP APIs
