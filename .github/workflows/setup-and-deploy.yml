@@ -90,7 +90,7 @@ jobs:
           else
             echo "⚠️ Projet inexistant — veuillez le créer manuellement sur GCP Console"
             echo "➡️ https://console.cloud.google.com/projectcreate"
-            echo "Puis relancez avec skip_bootstrap=true"
+            echo "Puis relancez avec skip_bootstrap=false"
             exit 1
           fi
 
