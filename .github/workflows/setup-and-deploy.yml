@@ -88,10 +88,10 @@ jobs:
           if gcloud projects describe "$PROJECT_ID" >/dev/null 2>&1; then
             echo "⚠️ Projet $PROJECT_ID existe déjà — on continue"
           else
-            gcloud projects create "$PROJECT_ID" \
-              --name="RAG App" \
-              --labels="env=rag-app,managed-by=terraform"
-            echo "✅ Projet créé : $PROJECT_ID"
+            echo "⚠️ Projet inexistant — veuillez le créer manuellement sur GCP Console"
+            echo "➡️ https://console.cloud.google.com/projectcreate"
+            echo "Puis relancez avec skip_bootstrap=true"
+            exit 1
           fi
 
       # ── 2. Lier le compte de facturation ──────────────────────────────────
