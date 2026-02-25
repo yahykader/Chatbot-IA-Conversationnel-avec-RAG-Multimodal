@@ -235,63 +235,7 @@ jobs:
             terraform/environments/prod/versions.tf
           echo "✅ versions.tf mis à jour → bucket = $BUCKET"
 
-      # ── 9. Setup Terraform ──────────────────────────────────────
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: "1.7.0"
-          terraform_wrapper: false
-      # ── 10. Terraform Init Dev ──────────────────────────────────────────
-      - name: Terraform Init — Dev
-        # env:
-        #     GOOGLE_CREDENTIALS: ${{ steps.sa-key.outputs.sa-key-b64 }}
-        run: |
-            # Créer le fichier de credentials à partir de la variable
-            echo "${{ steps.sa-key.outputs.sa-key-b64 }}" | base64 --decode > /tmp/gha-creds.json
-            export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gha-creds.json
-
-            # Attendre la propagation du bucket GCS
-            echo "⏳ Attente propagation du bucket..."
-            for i in {1..15}; do
-                if gsutil ls gs://terraform-state-${{ github.event.inputs.project_id }} >/dev/null 2>&1; then
-                echo "✅ Bucket accessible"
-                break
-                fi
-                echo "⏳ Tentative $i/15 — attente 20s..."
-                sleep 10
-            done
-
-            # Init Terraform avec reconfigure pour s'assurer que le backend est correct
-            cd terraform/environments/dev
-            terraform init -reconfigure -backend-config="credentials=/tmp/gha-creds.json" -backend-config="bucket=terraform-state-${{ github.event.inputs.project_id }}" -backend-config="prefix=dev"
-            echo "✅ Terraform dev initialisé"
-
-      # ── 11. Terraform Init Prod ─────────────────────────────────────────
-      - name: Terraform Init — Prod
-        # env:
-        #     GOOGLE_CREDENTIALS: ${{ steps.sa-key.outputs.sa-key-b64 }}
-        run: |
-            # Créer le fichier de credentials à partir de la variable
-            echo "${{ steps.sa-key.outputs.sa-key-b64 }}" | base64 --decode > /tmp/gha-creds.json
-            export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gha-creds.json
-
-            # Attendre la propagation du bucket GCS
-            echo "⏳ Attente propagation du bucket..."
-            for i in {1..15}; do
-            if gsutil ls gs://terraform-state-${{ github.event.inputs.project_id }} >/dev/null 2>&1; then
-                echo "✅ Bucket accessible"
-                break
-            fi
-            echo "⏳ Tentative $i/15 — attente 20s..."
-            sleep 10
-            done
-
-            # Init Terraform avec reconfigure pour s'assurer que le backend est correct
-            cd terraform/environments/prod
-            terraform init -reconfigure -backend-config="credentials=/tmp/gha-creds.json" -backend-config="bucket=terraform-state-${{ github.event.inputs.project_id }}" -backend-config="prefix=prod"
-            echo "✅ Terraform prod initialisé"
-
-      # ── 12. Résumé Bootstrap ──────────────────────────────────────────────────
+      # ── 9. Résumé Bootstrap ───────────────────────────────────────────────
       - name: Bootstrap Summary
         run: |
           PROJECT_ID="${{ github.event.inputs.project_id }}"
