@@ -22,9 +22,11 @@ public class CorsConfig {
         
         // Allowed origins
         config.setAllowedOriginPatterns(List.of(
+            "http://localhost",
             "http://localhost:4200",
             "http://localhost:3000",
-            "https://yourdomain.com"
+            "https://*.run.app",        // ✅ Cloud Run prod
+            "https://*"                 // ✅ tous les HTTPS
         ));
         
         // Allowed methods
