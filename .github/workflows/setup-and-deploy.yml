@@ -419,66 +419,17 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      # ══════════════════════════════════════════════════════
-      # PROD → Cloud Run backend + frontend
-      # ══════════════════════════════════════════════════════
-      - name: Deploy to Cloud Run (prod)
-        if: github.event.inputs.environment == 'prod'
-        run: |
-          # Backend — avec toutes les variables pointant vers la VM
-          gcloud run deploy rag-backend-prod \
-            --image=${{ needs.terraform.outputs.registry }}/rag-backend:${{ needs.build-and-push.outputs.image-tag }} \
-            --region=${{ env.GCP_REGION }} \
-            --project=${{ github.event.inputs.project_id }} \
-            --platform=managed \
-            --allow-unauthenticated \
-            --memory=2Gi \
-            --cpu=2 \
-            --set-env-vars="SPRING_PROFILES_ACTIVE=docker" \
-            --set-env-vars="PGVECTOR_HOST=${{ needs.terraform.outputs.vm-ip }}" \
-            --set-env-vars="PGVECTOR_PORT=5432" \
-            --set-env-vars="PGVECTOR_DATABASE=vectordb" \
-            --set-env-vars="PGVECTOR_USER=admin" \
-            --set-env-vars="PGVECTOR_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" \
-            --set-env-vars="SPRING_DATASOURCE_URL=jdbc:postgresql://${{ needs.terraform.outputs.vm-ip }}:5432/vectordb" \
-            --set-env-vars="SPRING_DATASOURCE_USERNAME=admin" \
-            --set-env-vars="SPRING_DATASOURCE_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" \
-            --set-env-vars="SPRING_REDIS_HOST=${{ needs.terraform.outputs.vm-ip }}" \
-            --set-env-vars="SPRING_REDIS_PORT=6379" \
-            --set-env-vars="SPRING_REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}" \
-            --set-env-vars="ANTIVIRUS_ENABLED=true" \
-            --set-env-vars="CLAMAV_HOST=${{ needs.terraform.outputs.vm-ip }}" \
-            --set-env-vars="CLAMAV_PORT=3310" \
-            --set-env-vars="MANAGEMENT_TRACING_SAMPLING_PROBABILITY=1.0" \
-            --set-env-vars="MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://${{ needs.terraform.outputs.vm-ip }}:9411/api/v2/spans" \
-            --port=8090 \
-            --set-env-vars="SERVER_PORT=8090" \
-            --set-env-vars="OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" \
-            --set-env-vars="IMAGES_STORAGE_PATH=/app/uploads/extracted-images" \
-            --set-env-vars="JAVA_OPTS=-Xmx2g -Xms512m" \
-            --quiet
-          echo "✅ Backend déployé sur Cloud Run"
+      # ══════════════════════════════════════════════════════════════════════
+      # DEV — Tous les services sur la VM via docker-compose.dev.yml
+      # ══════════════════════════════════════════════════════════════════════
 
-          # Frontend — simple, pas de variables
-          gcloud run deploy rag-frontend-prod \
-            --image=${{ needs.terraform.outputs.registry }}/rag-frontend:${{ needs.build-and-push.outputs.image-tag }} \
-            --region=${{ env.GCP_REGION }} \
-            --project=${{ github.event.inputs.project_id }} \
-            --platform=managed \
-            --allow-unauthenticated \
-            --memory=512Mi \
-            --cpu=1 \
-            --quiet
-          echo "✅ Frontend déployé sur Cloud Run"
-
-      # ══════════════════════════════════════════════════════
-      # DEV → VM (tous les services via docker compose)
-      # ══════════════════════════════════════════════════════
-      - name: Wait for VM startup (dev)
+      - name: "[DEV] Wait for VM startup"
         if: github.event.inputs.environment == 'dev'
-        run: sleep 60
+        run: |
+          echo "⏳ Attente démarrage VM..."
+          sleep 60
 
-      - name: Copy configs to VM (dev)
+      - name: "[DEV] Copy configs to VM"
         if: github.event.inputs.environment == 'dev'
         run: |
           gcloud compute ssh ${{ needs.terraform.outputs.vm-name }} \
@@ -501,7 +452,7 @@ jobs:
             ${{ needs.terraform.outputs.vm-name }}:/opt/rag-app/alertmanager \
             --zone=${{ github.event.inputs.zone }} --quiet
 
-      - name: Deploy on VM (dev)
+      - name: "[DEV] Deploy all services on VM"
         if: github.event.inputs.environment == 'dev'
         run: |
           gcloud compute ssh ${{ needs.terraform.outputs.vm-name }} \
@@ -529,10 +480,18 @@ jobs:
               sudo docker compose -f docker-compose.dev.yml ps
             "
 
-      # ══════════════════════════════════════════════════════
-      # PROD → VM (services stateful uniquement)
-      # ══════════════════════════════════════════════════════
-      - name: Copy configs to VM (prod)
+      # ══════════════════════════════════════════════════════════════════════
+      # PROD — Étape 1 : Services stateful sur la VM
+      #         PgVector, Redis, ClamAV, Zipkin, Prometheus, Grafana
+      # ══════════════════════════════════════════════════════════════════════
+
+      - name: "[PROD] Wait for VM startup"
+        if: github.event.inputs.environment == 'prod'
+        run: |
+          echo "⏳ Attente démarrage VM..."
+          sleep 60
+
+      - name: "[PROD] Copy configs to VM"
         if: github.event.inputs.environment == 'prod'
         run: |
           gcloud compute ssh ${{ needs.terraform.outputs.vm-name }} \
@@ -555,7 +514,7 @@ jobs:
             ${{ needs.terraform.outputs.vm-name }}:/opt/rag-app/alertmanager \
             --zone=${{ github.event.inputs.zone }} --quiet
 
-      - name: Deploy services on VM (prod)
+      - name: "[PROD] Deploy stateful services on VM"
         if: github.event.inputs.environment == 'prod'
         run: |
           gcloud compute ssh ${{ needs.terraform.outputs.vm-name }} \
@@ -576,9 +535,71 @@ jobs:
               sudo docker compose -f docker-compose.prod.yml ps
             "
 
-      # ══════════════════════════════════════════════════════
+      - name: "[PROD] Wait for stateful services to be ready"
+        if: github.event.inputs.environment == 'prod'
+        run: |
+          echo "⏳ Attente démarrage PgVector, Redis, ClamAV..."
+          sleep 60
+
+      # ══════════════════════════════════════════════════════════════════════
+      # PROD — Étape 2 : Backend + Frontend sur Cloud Run
+      #         Les services VM sont prêts avant de démarrer Cloud Run
+      # ══════════════════════════════════════════════════════════════════════
+
+      - name: "[PROD] Deploy Backend to Cloud Run"
+        if: github.event.inputs.environment == 'prod'
+        run: |
+          gcloud run deploy rag-backend-prod \
+            --image=${{ needs.terraform.outputs.registry }}/rag-backend:${{ needs.build-and-push.outputs.image-tag }} \
+            --region=${{ env.GCP_REGION }} \
+            --project=${{ github.event.inputs.project_id }} \
+            --platform=managed \
+            --allow-unauthenticated \
+            --memory=2Gi \
+            --cpu=2 \
+            --port=8090 \
+            --set-env-vars="SPRING_PROFILES_ACTIVE=docker" \
+            --set-env-vars="PGVECTOR_HOST=${{ needs.terraform.outputs.vm-ip }}" \
+            --set-env-vars="PGVECTOR_PORT=5432" \
+            --set-env-vars="PGVECTOR_DATABASE=vectordb" \
+            --set-env-vars="PGVECTOR_USER=admin" \
+            --set-env-vars="PGVECTOR_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" \
+            --set-env-vars="SPRING_DATASOURCE_URL=jdbc:postgresql://${{ needs.terraform.outputs.vm-ip }}:5432/vectordb" \
+            --set-env-vars="SPRING_DATASOURCE_USERNAME=admin" \
+            --set-env-vars="SPRING_DATASOURCE_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" \
+            --set-env-vars="SPRING_REDIS_HOST=${{ needs.terraform.outputs.vm-ip }}" \
+            --set-env-vars="SPRING_REDIS_PORT=6379" \
+            --set-env-vars="SPRING_REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}" \
+            --set-env-vars="ANTIVIRUS_ENABLED=true" \
+            --set-env-vars="CLAMAV_HOST=${{ needs.terraform.outputs.vm-ip }}" \
+            --set-env-vars="CLAMAV_PORT=3310" \
+            --set-env-vars="MANAGEMENT_TRACING_SAMPLING_PROBABILITY=1.0" \
+            --set-env-vars="MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://${{ needs.terraform.outputs.vm-ip }}:9411/api/v2/spans" \
+            --set-env-vars="SERVER_PORT=8090" \
+            --set-env-vars="OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" \
+            --set-env-vars="IMAGES_STORAGE_PATH=/app/uploads/extracted-images" \
+            --set-env-vars="JAVA_OPTS=-Xmx2g -Xms512m" \
+            --quiet
+          echo "✅ Backend déployé sur Cloud Run"
+
+      - name: "[PROD] Deploy Frontend to Cloud Run"
+        if: github.event.inputs.environment == 'prod'
+        run: |
+          gcloud run deploy rag-frontend-prod \
+            --image=${{ needs.terraform.outputs.registry }}/rag-frontend:${{ needs.build-and-push.outputs.image-tag }} \
+            --region=${{ env.GCP_REGION }} \
+            --project=${{ github.event.inputs.project_id }} \
+            --platform=managed \
+            --allow-unauthenticated \
+            --memory=512Mi \
+            --cpu=1 \
+            --quiet
+          echo "✅ Frontend déployé sur Cloud Run"
+
+      # ══════════════════════════════════════════════════════════════════════
       # SUMMARY
-      # ══════════════════════════════════════════════════════
+      # ══════════════════════════════════════════════════════════════════════
+
       - name: Final Summary
         run: |
           echo "## 🚀 4. Deployment terminé [${{ github.event.inputs.environment }}]" >> $GITHUB_STEP_SUMMARY
@@ -594,13 +615,14 @@ jobs:
               --region=${{ env.GCP_REGION }} \
               --project=${{ github.event.inputs.project_id }} \
               --format="value(status.url)" 2>/dev/null || echo "N/A")
-            echo "| 🌐 Frontend  | $FRONTEND_URL |" >> $GITHUB_STEP_SUMMARY
-            echo "| ⚙️ Backend   | $BACKEND_URL |"  >> $GITHUB_STEP_SUMMARY
+            echo "| 🌐 Frontend      | $FRONTEND_URL |"                                    >> $GITHUB_STEP_SUMMARY
+            echo "| ⚙️ Backend       | $BACKEND_URL |"                                     >> $GITHUB_STEP_SUMMARY
+            echo "| 📊 Grafana       | http://${{ needs.terraform.outputs.vm-ip }}:3000 |" >> $GITHUB_STEP_SUMMARY
           else
-            echo "| 🌐 Frontend  | http://${{ needs.terraform.outputs.vm-ip }} |"      >> $GITHUB_STEP_SUMMARY
-            echo "| ⚙️ Backend   | http://${{ needs.terraform.outputs.vm-ip }}:8090 |" >> $GITHUB_STEP_SUMMARY
+            echo "| 🌐 Frontend      | http://${{ needs.terraform.outputs.vm-ip }} |"      >> $GITHUB_STEP_SUMMARY
+            echo "| ⚙️ Backend       | http://${{ needs.terraform.outputs.vm-ip }}:8090 |" >> $GITHUB_STEP_SUMMARY
+            echo "| 📊 Grafana       | http://${{ needs.terraform.outputs.vm-ip }}:3000 |" >> $GITHUB_STEP_SUMMARY
           fi
-          echo "| 📊 Grafana       | http://${{ needs.terraform.outputs.vm-ip }}:3000 |" >> $GITHUB_STEP_SUMMARY
           echo "| 🏷️ Image Tag     | ${{ needs.build-and-push.outputs.image-tag }} |"    >> $GITHUB_STEP_SUMMARY
           echo "| 🌍 Environnement | ${{ github.event.inputs.environment }} |"            >> $GITHUB_STEP_SUMMARY
           echo "| 🗺️ Zone          | ${{ github.event.inputs.zone }} |"                   >> $GITHUB_STEP_SUMMARY
