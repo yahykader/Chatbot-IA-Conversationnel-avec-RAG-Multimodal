@@ -571,8 +571,8 @@ jobs:
             --set-env-vars="SPRING_REDIS_PORT=6379" \
             --set-env-vars="SPRING_REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}" \
             --set-env-vars="ANTIVIRUS_ENABLED=true" \
-            --set-env-vars="CLAMAV_HOST=${{ needs.terraform.outputs.vm-ip }}" \
-            --set-env-vars="CLAMAV_PORT=3310" \
+            --set-env-vars="ANTIVIRUS_HOST=${{ needs.terraform.outputs.vm-ip }}" \
+            --set-env-vars="ANTIVIRUS_PORT=3310" \
             --set-env-vars="MANAGEMENT_TRACING_SAMPLING_PROBABILITY=1.0" \
             --set-env-vars="MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://${{ needs.terraform.outputs.vm-ip }}:9411/api/v2/spans" \
             --set-env-vars="SERVER_PORT=8090" \
