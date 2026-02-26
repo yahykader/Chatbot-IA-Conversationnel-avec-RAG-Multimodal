@@ -70,3 +70,125 @@ module "database" {
   region     = var.region
   env        = local.env
 }
+
+# ── Activer API Cloud Run ─────────────────────────────────────────────────────
+resource "google_project_service" "cloud_run" {
+  project = var.project_id
+  service = "run.googleapis.com"
+  disable_on_destroy = false
+}
+
+# ── Rôle Cloud Run pour le SA GitHub Actions ──────────────────────────────────
+resource "google_project_iam_member" "cloud_run_admin" {
+  project = var.project_id
+  role    = "roles/run.admin"
+  member  = "serviceAccount:${google_service_account.github_actions.email}"
+}
+
+# ── Cloud Run Backend ─────────────────────────────────────────────────────────
+resource "google_cloud_run_service" "backend" {
+  name     = "rag-backend-${local.env}"
+  location = var.region
+  project  = var.project_id
+
+  depends_on = [google_project_service.cloud_run]
+
+  template {
+    spec {
+      containers {
+        image = "${var.region}-docker.pkg.dev/${var.project_id}/rag-app-${local.env}/rag-backend:latest"
+
+        env {
+          name  = "SPRING_PROFILES_ACTIVE"
+          value = "docker"
+        }
+        env {
+          name  = "PGVECTOR_HOST"
+          value = module.network.vm_ip
+        }
+        env {
+          name  = "SPRING_DATASOURCE_URL"
+          value = "jdbc:postgresql://${module.network.vm_ip}:5432/vectordb"
+        }
+        env {
+          name  = "SPRING_REDIS_HOST"
+          value = module.network.vm_ip
+        }
+        env {
+          name  = "CLAMAV_HOST"
+          value = module.network.vm_ip
+        }
+        env {
+          name  = "MANAGEMENT_ZIPKIN_TRACING_ENDPOINT"
+          value = "http://${module.network.vm_ip}:9411/api/v2/spans"
+        }
+        env {
+          name  = "IMAGES_STORAGE_PATH"
+          value = "gs://rag-app-uploads-prod"  # bucket GCS au lieu du volume local
+        }
+        env {
+          name  = "OPENAI_API_KEY"
+          value = var.openai_api_key
+        }
+
+        resources {
+          limits = {
+            cpu    = "2"
+            memory = "2Gi"
+          }
+        }
+      }
+    }
+  }
+
+  traffic {
+    percent         = 100
+    latest_revision = true
+  }
+}
+
+# ── Cloud Run Frontend ────────────────────────────────────────────────────────
+resource "google_cloud_run_service" "frontend" {
+  name     = "rag-frontend-${local.env}"
+  location = var.region
+  project  = var.project_id
+
+  depends_on = [google_project_service.cloud_run]
+
+  template {
+    spec {
+      containers {
+        image = "${var.region}-docker.pkg.dev/${var.project_id}/rag-app-${local.env}/rag-frontend:latest"
+
+        resources {
+          limits = {
+            cpu    = "1"
+            memory = "512Mi"
+          }
+        }
+      }
+    }
+  }
+
+  traffic {
+    percent         = 100
+    latest_revision = true
+  }
+}
+
+# ── Accès public Cloud Run ────────────────────────────────────────────────────
+resource "google_cloud_run_service_iam_member" "backend_public" {
+  service  = google_cloud_run_service.backend.name
+  location = var.region
+  project  = var.project_id
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
+resource "google_cloud_run_service_iam_member" "frontend_public" {
+  service  = google_cloud_run_service.frontend.name
+  location = var.region
+  project  = var.project_id
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}

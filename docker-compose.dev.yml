@@ -257,96 +257,96 @@ services:
   # ============================================================================
   # INIT STORAGE
   # ============================================================================
-  # init-storage:
-  #   image: alpine:latest
-  #   container_name: rag-init-storage
-  #   volumes:
-  #     - uploads_data:/uploads
-  #     - logs_data:/logs
-  #   command: >
-  #     sh -c "
-  #       mkdir -p /uploads/extracted-images &&
-  #       mkdir -p /logs &&
-  #       echo '✅ Dossiers initialisés'
-  #     "
-  #   networks:
-  #     - agentic-chatbot-net
+  init-storage:
+    image: alpine:latest
+    container_name: rag-init-storage
+    volumes:
+      - uploads_data:/uploads
+      - logs_data:/logs
+    command: >
+      sh -c "
+        mkdir -p /uploads/extracted-images &&
+        mkdir -p /logs &&
+        echo '✅ Dossiers initialisés'
+      "
+    networks:
+      - agentic-chatbot-net
 
   # ============================================================================
   # BACKEND SPRING BOOT
   # ============================================================================
-  # backend:
-  #   image: ${REGISTRY}/${GCP_PROJECT_ID}/${REPOSITORY}/rag-backend:${IMAGE_TAG}
-  #   container_name: rag-backend
-  #   ports:
-  #     - "8090:8090"
-  #   depends_on:
-  #     init-storage:
-  #       condition: service_completed_successfully
-  #     pgvector:
-  #       condition: service_healthy
-  #     redis:
-  #       condition: service_healthy
-  #     clamav:
-  #       condition: service_healthy
-  #     zipkin:
-  #       condition: service_healthy
-  #   environment:
-  #     - PGVECTOR_HOST=pgvector
-  #     - PGVECTOR_PORT=5432
-  #     - PGVECTOR_DATABASE=vectordb
-  #     - PGVECTOR_USER=${POSTGRES_USER}
-  #     - PGVECTOR_PASSWORD=${POSTGRES_PASSWORD}
-  #     - SPRING_DATASOURCE_URL=jdbc:postgresql://pgvector:5432/vectordb
-  #     - SPRING_DATASOURCE_USERNAME=${POSTGRES_USER}
-  #     - SPRING_DATASOURCE_PASSWORD=${POSTGRES_PASSWORD}
-  #     - SPRING_REDIS_HOST=redis
-  #     - SPRING_REDIS_PORT=6379
-  #     - SPRING_REDIS_PASSWORD=${REDIS_PASSWORD}
-  #     - ANTIVIRUS_ENABLED=true
-  #     - CLAMAV_HOST=clamav
-  #     - CLAMAV_PORT=3310
-  #     - ANTIVIRUS_TIMEOUT=30000
-  #     - ANTIVIRUS_CHUNK_SIZE=8192
-  #     - ANTIVIRUS_MAX_FILE_SIZE=104857600
-  #     - MANAGEMENT_TRACING_SAMPLING_PROBABILITY=1.0
-  #     - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
-  #     - SERVER_PORT=8090
-  #     - OPENAI_API_KEY=${OPENAI_API_KEY}
-  #     - SPRING_PROFILES_ACTIVE=docker
-  #     - IMAGES_STORAGE_PATH=/app/uploads/extracted-images
-  #     - JAVA_OPTS=-Xmx2g -Xms512m
-  #   volumes:
-  #     - uploads_data:/app/uploads
-  #     - logs_data:/app/logs
-  #   networks:
-  #     - agentic-chatbot-net
-  #   restart: unless-stopped
-  #   healthcheck:
-  #     test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8090/actuator/health"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 3
-  #     start_period: 60s
+  backend:
+    image: ${REGISTRY}/${GCP_PROJECT_ID}/${REPOSITORY}/rag-backend:${IMAGE_TAG}
+    container_name: rag-backend
+    ports:
+      - "8090:8090"
+    depends_on:
+      init-storage:
+        condition: service_completed_successfully
+      pgvector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+      zipkin:
+        condition: service_healthy
+    environment:
+      - PGVECTOR_HOST=pgvector
+      - PGVECTOR_PORT=5432
+      - PGVECTOR_DATABASE=vectordb
+      - PGVECTOR_USER=${POSTGRES_USER}
+      - PGVECTOR_PASSWORD=${POSTGRES_PASSWORD}
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://pgvector:5432/vectordb
+      - SPRING_DATASOURCE_USERNAME=${POSTGRES_USER}
+      - SPRING_DATASOURCE_PASSWORD=${POSTGRES_PASSWORD}
+      - SPRING_REDIS_HOST=redis
+      - SPRING_REDIS_PORT=6379
+      - SPRING_REDIS_PASSWORD=${REDIS_PASSWORD}
+      - ANTIVIRUS_ENABLED=true
+      - CLAMAV_HOST=clamav
+      - CLAMAV_PORT=3310
+      - ANTIVIRUS_TIMEOUT=30000
+      - ANTIVIRUS_CHUNK_SIZE=8192
+      - ANTIVIRUS_MAX_FILE_SIZE=104857600
+      - MANAGEMENT_TRACING_SAMPLING_PROBABILITY=1.0
+      - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
+      - SERVER_PORT=8090
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - SPRING_PROFILES_ACTIVE=docker
+      - IMAGES_STORAGE_PATH=/app/uploads/extracted-images
+      - JAVA_OPTS=-Xmx2g -Xms512m
+    volumes:
+      - uploads_data:/app/uploads
+      - logs_data:/app/logs
+    networks:
+      - agentic-chatbot-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8090/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   # ============================================================================
   # FRONTEND ANGULAR + NGINX
   # ============================================================================
-  # frontend:
-  #   image: ${REGISTRY}/${GCP_PROJECT_ID}/${REPOSITORY}/rag-frontend:${IMAGE_TAG}
-  #   container_name: rag-frontend
-  #   ports:
-  #     - "80:80"
-  #   depends_on:
-  #     - backend
-  #   networks:
-  #     - agentic-chatbot-net
-  #   restart: unless-stopped
-  #   healthcheck:
-  #     test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
-  #     interval: 30s
-  #     timeout: 5s
-  #     retries: 3
+  frontend:
+    image: ${REGISTRY}/${GCP_PROJECT_ID}/${REPOSITORY}/rag-frontend:${IMAGE_TAG}
+    container_name: rag-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - agentic-chatbot-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 # ==============================================================================
 # VOLUMES

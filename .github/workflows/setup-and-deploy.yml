@@ -323,6 +323,7 @@ jobs:
           terraform plan \
             -var="project_id=${{ github.event.inputs.project_id }}" \
             -var="zone=${{ github.event.inputs.zone }}" \
+            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
             -out=tfplan
           echo "✅ Plan terminé"
 
@@ -411,7 +412,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ✅ FIX 2 — GCP_SA_KEY remplacé par GCP_OWNER_SA_KEY
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
         with:
@@ -419,15 +419,95 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Wait for VM startup
+      # ══════════════════════════════════════════════════════
+      # PROD → Cloud Run (backend + frontend)
+      # ══════════════════════════════════════════════════════
+      - name: Deploy to Cloud Run (prod)
+        if: github.event.inputs.environment == 'prod'
+        run: |
+          gcloud run deploy rag-backend-prod \
+            --image=${{ needs.terraform.outputs.registry }}/rag-backend:${{ needs.build-and-push.outputs.image-tag }} \
+            --region=${{ env.GCP_REGION }} \
+            --project=${{ github.event.inputs.project_id }} \
+            --platform=managed \
+            --allow-unauthenticated \
+            --quiet
+
+          gcloud run deploy rag-frontend-prod \
+            --image=${{ needs.terraform.outputs.registry }}/rag-frontend:${{ needs.build-and-push.outputs.image-tag }} \
+            --region=${{ env.GCP_REGION }} \
+            --project=${{ github.event.inputs.project_id }} \
+            --platform=managed \
+            --allow-unauthenticated \
+            --quiet
+
+      # ══════════════════════════════════════════════════════
+      # DEV → VM (tous les services via docker compose)
+      # ══════════════════════════════════════════════════════
+      - name: Wait for VM startup (dev)
+        if: github.event.inputs.environment == 'dev'
         run: sleep 60
 
-      - name: Copy configs to VM
+      - name: Copy configs to VM (dev)
+        if: github.event.inputs.environment == 'dev'
         run: |
-          # Créer le dossier sur la VM avant de copier
           gcloud compute ssh ${{ needs.terraform.outputs.vm-name }} \
             --zone=${{ github.event.inputs.zone }} --quiet \
-            --command="sudo mkdir -p /opt/rag-app && sudo chown -R \$USER:\$USER /opt/rag-app"
+            --command="sudo mkdir -p /opt/rag-app && sudo chown -R \$USER:\$USER /opt/rag-app && sudo rm -rf /opt/rag-app/alertmanager"
+
+          gcloud compute scp docker-compose.dev.yml \
+            ${{ needs.terraform.outputs.vm-name }}:/opt/rag-app/docker-compose.dev.yml \
+            --zone=${{ github.event.inputs.zone }} --quiet
+
+          gcloud compute scp --recurse prometheus/ \
+            ${{ needs.terraform.outputs.vm-name }}:/opt/rag-app/prometheus \
+            --zone=${{ github.event.inputs.zone }} --quiet
+
+          gcloud compute scp --recurse grafana/ \
+            ${{ needs.terraform.outputs.vm-name }}:/opt/rag-app/grafana \
+            --zone=${{ github.event.inputs.zone }} --quiet
+
+          gcloud compute scp --recurse alertmanager/ \
+            ${{ needs.terraform.outputs.vm-name }}:/opt/rag-app/alertmanager \
+            --zone=${{ github.event.inputs.zone }} --quiet
+
+      - name: Deploy on VM (dev)
+        if: github.event.inputs.environment == 'dev'
+        run: |
+          gcloud compute ssh ${{ needs.terraform.outputs.vm-name }} \
+            --zone=${{ github.event.inputs.zone }} --quiet \
+            --command="
+              set -e
+              cd /opt/rag-app
+
+              cat > .env << 'ENVEOF'
+          REGISTRY=${{ env.REGISTRY }}
+          GCP_PROJECT_ID=${{ github.event.inputs.project_id }}
+          REPOSITORY=rag-app-dev
+          IMAGE_TAG=${{ needs.build-and-push.outputs.image-tag }}
+          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          POSTGRES_USER=admin
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
+          GRAFANA_PASSWORD=${{ secrets.GRAFANA_PASSWORD }}
+          ENVEOF
+
+              sudo gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+              sudo docker compose -f docker-compose.dev.yml pull
+              sudo docker compose -f docker-compose.dev.yml up -d --remove-orphans
+              sudo docker image prune -f
+              sudo docker compose -f docker-compose.dev.yml ps
+            "
+
+      # ══════════════════════════════════════════════════════
+      # PROD → VM (services stateful uniquement)
+      # ══════════════════════════════════════════════════════
+      - name: Copy configs to VM (prod)
+        if: github.event.inputs.environment == 'prod'
+        run: |
+          gcloud compute ssh ${{ needs.terraform.outputs.vm-name }} \
+            --zone=${{ github.event.inputs.zone }} --quiet \
+            --command="sudo mkdir -p /opt/rag-app && sudo chown -R \$USER:\$USER /opt/rag-app && sudo rm -rf /opt/rag-app/alertmanager"
 
           gcloud compute scp docker-compose.prod.yml \
             ${{ needs.terraform.outputs.vm-name }}:/opt/rag-app/docker-compose.prod.yml \
@@ -440,12 +520,13 @@ jobs:
           gcloud compute scp --recurse grafana/ \
             ${{ needs.terraform.outputs.vm-name }}:/opt/rag-app/grafana \
             --zone=${{ github.event.inputs.zone }} --quiet
-            
+
           gcloud compute scp --recurse alertmanager/ \
             ${{ needs.terraform.outputs.vm-name }}:/opt/rag-app/alertmanager \
             --zone=${{ github.event.inputs.zone }} --quiet
 
-      - name: Deploy on VM
+      - name: Deploy services on VM (prod)
+        if: github.event.inputs.environment == 'prod'
         run: |
           gcloud compute ssh ${{ needs.terraform.outputs.vm-name }} \
             --zone=${{ github.event.inputs.zone }} --quiet \
@@ -454,31 +535,33 @@ jobs:
               cd /opt/rag-app
 
               cat > .env << 'ENVEOF'
-          REGISTRY=${{ env.REGISTRY }}
-          GCP_PROJECT_ID=${{ github.event.inputs.project_id }}
-          REPOSITORY=rag-app-${{ github.event.inputs.environment }}
-          IMAGE_TAG=${{ needs.build-and-push.outputs.image-tag }}
-          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
           POSTGRES_USER=admin
           POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
           REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
           GRAFANA_PASSWORD=${{ secrets.GRAFANA_PASSWORD }}
           ENVEOF
 
-              sudo gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
-              sudo docker compose -f docker-compose.prod.yml pull backend frontend
               sudo docker compose -f docker-compose.prod.yml up -d --remove-orphans
               sudo docker image prune -f
               sudo docker compose -f docker-compose.prod.yml ps
             "
 
+      # ══════════════════════════════════════════════════════
+      # SUMMARY
+      # ══════════════════════════════════════════════════════
       - name: Final Summary
         run: |
           echo "## 🚀 4. Deployment terminé [${{ github.event.inputs.environment }}]" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| | |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
-          echo "| 🌐 Frontend      | http://${{ needs.terraform.outputs.vm-ip }} |"      >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event.inputs.environment }}" = "prod" ]; then
+            echo "| 🌐 Frontend  | Cloud Run |" >> $GITHUB_STEP_SUMMARY
+            echo "| ⚙️ Backend   | Cloud Run |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| 🌐 Frontend  | http://${{ needs.terraform.outputs.vm-ip }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| ⚙️ Backend   | http://${{ needs.terraform.outputs.vm-ip }}:8090 |" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "| 📊 Grafana       | http://${{ needs.terraform.outputs.vm-ip }}:3000 |" >> $GITHUB_STEP_SUMMARY
           echo "| 🏷️ Image Tag     | ${{ needs.build-and-push.outputs.image-tag }} |"    >> $GITHUB_STEP_SUMMARY
           echo "| 🌍 Environnement | ${{ github.event.inputs.environment }} |"            >> $GITHUB_STEP_SUMMARY

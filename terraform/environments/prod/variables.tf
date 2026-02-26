@@ -21,3 +21,8 @@ variable "machine_type" {
   type    = string
   default = "e2-standard-4" # 4 vCPU, 16GB
 }
+
+variable "openai_api_key" {
+  type      = string
+  sensitive = true
+}
