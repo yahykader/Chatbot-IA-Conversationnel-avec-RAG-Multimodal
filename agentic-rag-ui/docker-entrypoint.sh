@@ -7,14 +7,13 @@
 # =============================================================================
 
 # Valeur par défaut pour le dev
+#!/bin/sh
 BACKEND_URL=${BACKEND_URL:-http://backend:8090}
 
 echo "🔧 BACKEND_URL = $BACKEND_URL"
 
-# Remplace ${BACKEND_URL} dans le template et génère nginx.conf
-envsubst '${BACKEND_URL}' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf
+sed "s|BACKEND_URL_PLACEHOLDER|${BACKEND_URL}|g" \
+  /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf
 
 echo "✅ nginx.conf généré"
-
-# Démarre Nginx en foreground
 nginx -g 'daemon off;'
