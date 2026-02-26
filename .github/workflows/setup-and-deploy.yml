@@ -451,6 +451,7 @@ jobs:
             --set-env-vars="CLAMAV_PORT=3310" \
             --set-env-vars="MANAGEMENT_TRACING_SAMPLING_PROBABILITY=1.0" \
             --set-env-vars="MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://${{ needs.terraform.outputs.vm-ip }}:9411/api/v2/spans" \
+            --port=8090 \
             --set-env-vars="SERVER_PORT=8090" \
             --set-env-vars="OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" \
             --set-env-vars="IMAGES_STORAGE_PATH=/app/uploads/extracted-images" \
