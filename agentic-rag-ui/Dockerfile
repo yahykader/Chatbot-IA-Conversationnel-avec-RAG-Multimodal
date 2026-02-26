@@ -24,14 +24,21 @@ RUN npm run build -- --configuration=production --output-path=dist
 # =========================
 FROM nginx:alpine
 
-# Copier la configuration Nginx
-COPY nginx.conf /etc/nginx/nginx.conf
+# Installer gettext pour envsubst
+RUN apk add --no-cache gettext
+
+# Copier le template nginx (avec ${BACKEND_URL})
+COPY nginx.conf /etc/nginx/nginx.conf.template
+
+# Copier le script d'entrée
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
 
 # Copier le build Angular depuis l'étape précédente
 COPY --from=build /app/dist/browser /usr/share/nginx/html
 
 # Exposer le port
-EXPOSE 80
+EXPOSE 8080
 
-# Lancer Nginx en mode foreground
-CMD ["nginx", "-g", "daemon off;"]
+# Lancer Nginx via le script d'entrée (injecte BACKEND_URL)
+CMD ["/docker-entrypoint.sh"]

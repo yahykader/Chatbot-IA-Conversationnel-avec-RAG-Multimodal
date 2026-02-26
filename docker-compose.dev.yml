@@ -336,7 +336,7 @@ services:
     image: ${REGISTRY}/${GCP_PROJECT_ID}/${REPOSITORY}/rag-frontend:${IMAGE_TAG}
     container_name: rag-frontend
     ports:
-      - "80:80"
+      - "8080:8080"
     depends_on:
       - backend
     networks:

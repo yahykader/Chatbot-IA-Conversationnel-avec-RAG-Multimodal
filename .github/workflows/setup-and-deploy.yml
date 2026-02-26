@@ -593,7 +593,7 @@ jobs:
             --allow-unauthenticated \
             --memory=512Mi \
             --cpu=1 \
-            --port=80 \
+            --port=8080 \
             --quiet
           echo "✅ Frontend déployé sur Cloud Run"
 
