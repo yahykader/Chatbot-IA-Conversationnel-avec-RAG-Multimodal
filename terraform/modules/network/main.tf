@@ -82,7 +82,7 @@ resource "google_compute_firewall" "allow_grafana" {
   target_tags   = ["grafana-server"]
 }
 
-# Ports applicatifs — Backend, Redis Commander, Zipkin, Prometheus, Cadvisor
+# Ports applicatifs — Backend, Redis Commander, Zipkin, Prometheus, Cadvisor + DB/Cache pour Cloud Run
 resource "google_compute_firewall" "allow_app_ports" {
   name    = "allow-app-ports-${var.env}"
   network = google_compute_network.vpc.name
@@ -90,7 +90,7 @@ resource "google_compute_firewall" "allow_app_ports" {
 
   allow {
     protocol = "tcp"
-    ports    = ["8081", "8090", "9090", "9411", "9093"]
+    ports    = ["8081", "8090", "9090", "9411", "9093", "5432", "6379", "3310"]
   }
 
   source_ranges = ["0.0.0.0/0"]
