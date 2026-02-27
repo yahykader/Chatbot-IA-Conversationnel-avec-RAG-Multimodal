@@ -1,0 +1,15 @@
+
+scrape_configs:
+  # ============================================================================
+  # APPLICATION SPRING BOOT RAG
+  # ============================================================================
+  - job_name: 'spring-boot-rag'
+    metrics_path: '/actuator/prometheus'
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['BACKEND_URL_PLACEHOLDER']
+        labels:
+          application: 'rag-system'
+          service: 'transaction-service'
+          environment: 'development'
+          type: 'spring-boot'

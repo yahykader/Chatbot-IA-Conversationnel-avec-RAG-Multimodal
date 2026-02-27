@@ -440,8 +440,21 @@ jobs:
             ${{ needs.terraform.outputs.vm-name }}:/opt/rag-app/docker-compose.dev.yml \
             --zone=${{ github.event.inputs.zone }} --quiet
 
+          # ✅ Copie tout le dossier prometheus
           gcloud compute scp --recurse prometheus/ \
             ${{ needs.terraform.outputs.vm-name }}:/opt/rag-app/prometheus \
+            --zone=${{ github.event.inputs.zone }} --quiet
+
+          # ✅ Génère prometheus.yml avec l'IP de la VM dev
+          VM_IP=$(gcloud compute instances describe ${{ needs.terraform.outputs.vm-name }} \
+            --zone=${{ github.event.inputs.zone }} \
+            --project=${{ github.event.inputs.project_id }} \
+            --format="value(networkInterfaces[0].accessConfigs[0].natIP)")
+          echo "🔧 VM_IP = $VM_IP"
+          sed "s|BACKEND_URL_PLACEHOLDER|${VM_IP}:8090|g" \
+            prometheus/prometheus-dev.yml > /tmp/prometheus-dev-final.yml
+          gcloud compute scp /tmp/prometheus-dev-final.yml \
+            ${{ needs.terraform.outputs.vm-name }}:/opt/rag-app/prometheus/prometheus.yml \
             --zone=${{ github.event.inputs.zone }} --quiet
 
           gcloud compute scp --recurse grafana/ \
@@ -502,8 +515,21 @@ jobs:
             ${{ needs.terraform.outputs.vm-name }}:/opt/rag-app/docker-compose.prod.yml \
             --zone=${{ github.event.inputs.zone }} --quiet
 
+          # ✅ Copie tout le dossier prometheus
           gcloud compute scp --recurse prometheus/ \
             ${{ needs.terraform.outputs.vm-name }}:/opt/rag-app/prometheus \
+            --zone=${{ github.event.inputs.zone }} --quiet
+
+          # ✅ Génère prometheus.yml avec l'URL du backend Cloud Run
+          BACKEND_URL=$(gcloud run services describe rag-backend-prod \
+            --region=${{ env.GCP_REGION }} \
+            --project=${{ github.event.inputs.project_id }} \
+            --format="value(status.url)" | sed 's|https://||')
+          echo "🔧 BACKEND_URL = $BACKEND_URL"
+          sed "s|BACKEND_URL_PLACEHOLDER|${BACKEND_URL}|g" \
+            prometheus/prometheus-prod.yml > /tmp/prometheus-prod-final.yml
+          gcloud compute scp /tmp/prometheus-prod-final.yml \
+            ${{ needs.terraform.outputs.vm-name }}:/opt/rag-app/prometheus/prometheus.yml \
             --zone=${{ github.event.inputs.zone }} --quiet
 
           gcloud compute scp --recurse grafana/ \
