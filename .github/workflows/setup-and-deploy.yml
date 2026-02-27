@@ -323,7 +323,6 @@ jobs:
           terraform plan \
             -var="project_id=${{ github.event.inputs.project_id }}" \
             -var="zone=${{ github.event.inputs.zone }}" \
-            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
             -out=tfplan
           echo "✅ Plan terminé"
 
