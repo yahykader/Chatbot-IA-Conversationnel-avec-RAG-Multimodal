@@ -75,6 +75,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer, WebSoc
                 "http://localhost",
                 "http://localhost:8080",       // nginx port 80
                 "http://localhost:4200",      // ✅ Angular dev server
+                "http://34.53.187.62:8080",   // ✅ VM dev
                 "https://*.run.app",         // ✅ Cloud Run prod
                 "https://*"               // ✅ tous les HTTPS
             );
@@ -114,6 +115,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer, WebSoc
                 "http://localhost",    // ✅ tous les localhost 
                 "http://localhost:8080", // nginx port 80
                 "http://localhost:4200", // ✅ Angular dev server
+                "http://34.53.187.62:8080",   // ✅ VM dev
                 "https://*.run.app", // ✅ Cloud Run prod
                 "https://*" // ✅ tous les HTTPS
             );
