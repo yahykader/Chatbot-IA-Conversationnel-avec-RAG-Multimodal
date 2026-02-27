@@ -27,7 +27,7 @@ scrape_configs:
         labels:
           application: 'rag-system'
           service: 'transaction-service'
-          environment: 'production'
+          environment: 'local'
           type: 'spring-boot'
 
   # ============================================================================
