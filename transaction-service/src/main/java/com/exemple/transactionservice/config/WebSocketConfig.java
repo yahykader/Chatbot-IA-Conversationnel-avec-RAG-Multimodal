@@ -71,14 +71,15 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer, WebSoc
         // ENDPOINT 1: WebSocket natif (RECOMMANDÉ)
         // ========================================================================
         registry.addEndpoint("/ws")
-            .setAllowedOriginPatterns("*");
-                // "http://localhost",
-                // "http://localhost:8080",       // nginx port 80
-                // "http://localhost:4200",      // ✅ Angular dev server
-                // "http://34.53.187.62:8080",   // ✅ VM dev
-                // "https://*.run.app",         // ✅ Cloud Run prod
-                // "https://*"               // ✅ tous les HTTPS
-            //);
+            .setAllowedOriginPatterns(
+                "http://localhost",
+                "http://localhost:8080",       // nginx port 80
+                "http://localhost:4200",      // ✅ Angular dev server
+                "http://34.53.187.62",
+                "http://34.53.187.62:8080",   // ✅ VM dev
+                "https://*.run.app",         // ✅ Cloud Run prod
+                "https://*"               // ✅ tous les HTTPS
+            );
         
         log.info("✅ STOMP endpoint registered: /ws (native WebSocket)");
         
@@ -111,14 +112,15 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer, WebSoc
         // RAW WEBSOCKET: Native
         // ========================================================================
         registry.addHandler(handler, "/ws/assistant")
-            .setAllowedOrigins("*");
-            //     "http://localhost",    // ✅ tous les localhost 
-            //     "http://localhost:8080", // nginx port 80
-            //     "http://localhost:4200", // ✅ Angular dev server
-            //     "http://34.53.187.62:8080",   // ✅ VM dev
-            //     "https://*.run.app", // ✅ Cloud Run prod
-            //     "https://*" // ✅ tous les HTTPS
-            // );
+            .setAllowedOrigins(
+                "http://localhost",    // ✅ tous les localhost 
+                "http://localhost:8080", // nginx port 80
+                "http://localhost:4200", // ✅ Angular dev server
+                "http://34.53.187.62",   // ✅ VM dev
+                "http://34.53.187.62:8080",   // ✅ VM dev
+                "https://*.run.app", // ✅ Cloud Run prod
+                "https://*" // ✅ tous les HTTPS
+            );
         
         log.info("✅ Raw WebSocket handler registered: /ws/assistant (native)");
         
