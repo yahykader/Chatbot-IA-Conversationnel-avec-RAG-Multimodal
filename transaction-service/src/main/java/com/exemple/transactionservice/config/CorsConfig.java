@@ -25,6 +25,8 @@ public class CorsConfig {
             "http://localhost",
             "http://localhost:4200",
             "http://localhost:3000",
+            "http://34.53.187.62",   // ✅ VM dev
+            "http://34.53.187.62:8080",   // ✅ VM dev
             "https://*.run.app",        // ✅ Cloud Run prod
             "https://*"                 // ✅ tous les HTTPS
         ));
