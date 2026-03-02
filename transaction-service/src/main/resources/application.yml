@@ -135,6 +135,12 @@ spring:
       - llm-responses
       - vision-analysis
 
+  cloud:
+    gcp:
+      storage:
+        enabled: false
+      # optionnel, évite le warning sur le project-id
+      project-id: local-dev
 # ===========================================================================
 # Embedding Compressor avec Int8 Quantization
 # ===========================================================================

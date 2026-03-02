@@ -73,7 +73,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer, WebSoc
         registry.addEndpoint("/ws")
             .setAllowedOriginPatterns(
                 "http://localhost",
-                "http://localhost:8080",       // nginx port 80
+                "http://localhost:8080",       // nginx port 80 Docker en local
                 "http://localhost:4200",      // ✅ Angular dev server
                 "http://34.53.187.62",
                 "http://34.53.187.62:8080",   // ✅ VM dev
