@@ -1,0 +1,69 @@
+<!-- features/chat/components/message-item/message-item.component.html -->
+
+<div 
+  class="message-item"
+  [class.user-message]="message.role === 'user'"
+  [class.assistant-message]="message.role === 'assistant'"
+  [class.streaming]="isStreaming && message.status === 'streaming'">
+  
+  <div class="message-avatar">
+    <i 
+      class="bi"
+      [class.bi-person-circle]="message.role === 'user'"
+      [class.bi-robot]="message.role === 'assistant'">
+    </i>
+  </div>
+  
+  <div class="message-content">
+    
+    <div class="message-header">
+      <span class="message-role">
+        {{ message.role === 'user' ? 'Vous' : 'Assistant' }}
+      </span>
+      <span class="message-time">
+        {{ message.timestamp | date:'HH:mm' }}
+      </span>
+    </div>
+    
+    <div class="message-body">
+      <div markdown [data]="message.content"></div>
+      
+      <span 
+        class="streaming-cursor" 
+        *ngIf="isStreaming && message.status === 'streaming'">
+        ▊
+      </span>
+    </div>
+    
+    <!-- ✅ SOURCES -->
+    <div class="message-sources" *ngIf="groupedCitations.length > 0">
+      <div class="sources-title">
+        <i class="bi bi-file-text me-2"></i>
+        Sources
+      </div>
+      <div class="sources-list">
+        <a 
+          *ngFor="let citation of groupedCitations" 
+          href="javascript:void(0)"
+          class="source-item"
+          (click)="onSourceClick(citation)">
+          
+          <i class="bi bi-file-pdf-fill"></i>
+          <span class="source-filename">{{ citation.fileName }}</span>
+          <span class="source-indices-badge">
+            {{ citation.indices.join(', ') }}
+          </span>
+        </a>
+      </div>
+    </div>
+    
+    <div class="message-metadata" *ngIf="message.metadata && message.metadata.tokens">
+      <small class="text-muted">
+        <i class="bi bi-info-circle me-1"></i>
+        {{ message.metadata.tokens }} tokens
+      </small>
+    </div>
+    
+  </div>
+  
+</div>

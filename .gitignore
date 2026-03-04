@@ -1,56 +1,86 @@
-target/
-!.mvn/wrapper/maven-wrapper.jar
-!**/src/main/**/target/
-!**/src/test/**/target/
+# =============================================================================
+# .gitignore — RAG App (Terraform + Spring Boot + Angular + Docker)
+# =============================================================================
 
-### IntelliJ IDEA ###
-.idea/modules.xml
-.idea/jarRepositories.xml
-.idea/compiler.xml
-.idea/libraries/
-*.iws
-*.iml
-*.ipr
+# =============================================================================
+# TERRAFORM
+# =============================================================================
+**/.terraform/
+**/.terraform.lock.hcl
+**/terraform.tfvars          # ⚠️ contient les secrets (project_id, IPs)
+**/*.tfstate
+**/*.tfstate.backup
+**/tfplan
+**/override.tf
+**/override.tf.json
 
-### Eclipse ###
-.apt_generated
-.classpath
-.factorypath
-.project
-.settings
-.springBeans
-.sts4-cache
+# Clés Service Account générées par Terraform
+sa-key*.json
+*-sa-key.json
 
-### NetBeans ###
-/nbproject/private/
-/nbbuild/
-/dist/
-/nbdist/
-/.nb-gradle/
-build/
-!**/src/main/**/build/
-!**/src/test/**/build/
-/nbbuild/
-/dist/
-/nbdist/
-/.nb-gradle/
-### Maven ###
-log/
-target/
-pom.xml.tag
-pom.xml.releaseBackup
-pom.xml.versionsBackup
-pom.xml.next
-release.properties
-dependency-reduced-pom.xml
-buildNumber.properties
-.mvn/timing.properties
-
-*.env
+# =============================================================================
+# SECRETS & VARIABLES D'ENVIRONNEMENT
+# =============================================================================
+.env
 .env.*
+!.env.example               # garder l'example committé
+*.pem
+*.key
+*.p12
+*.pfx
 
-### VS Code ###
+# =============================================================================
+# SPRING BOOT / JAVA
+# =============================================================================
+transaction-service/target/
+transaction-service/*.jar
+transaction-service/*.war
+transaction-service/.mvn/wrapper/maven-wrapper.jar
+transaction-service/.classpath
+transaction-service/.project
+transaction-service/.settings/
+transaction-service/.idea/
+transaction-service/*.iml
+
+# Logs Spring Boot
+logs/
+*.log
+*.log.*
+
+# =============================================================================
+# ANGULAR / NODE
+# =============================================================================
+agentic-rag-ui/node_modules/
+agentic-rag-ui/dist/
+agentic-rag-ui/.angular/
+agentic-rag-ui/.sass-cache/
+agentic-rag-ui/coverage/
+
+# =============================================================================
+# DOCKER
+# =============================================================================
+uploads/                    # fichiers uploadés par les users
+docker-data/                # volumes Docker locaux
+
+# =============================================================================
+# IDE
+# =============================================================================
+.idea/
+*.iml
 .vscode/
-
-### Mac OS ###
+*.swp
+*.swo
 .DS_Store
+Thumbs.db
+
+# =============================================================================
+# OS
+# =============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+EOF

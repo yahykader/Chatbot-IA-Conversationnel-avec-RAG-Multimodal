@@ -1,0 +1,456 @@
+version: '3.8'
+
+services:
+  # ============================================================================
+  # BASE DE DONNÉES PGVECTOR
+  # ============================================================================
+  pgvector:
+    container_name: rag-agpgdb
+    image: 'pgvector/pgvector:pg16'
+    environment:
+      - 'POSTGRES_DB=vectordb'
+      - 'POSTGRES_PASSWORD=1234'
+      - 'POSTGRES_USER=admin'
+    volumes:
+      - agentic_rag_chatbot_data:/var/lib/postgresql/data
+    ports:
+      - '5432:5432'
+    networks:
+      - agentic-chatbot-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d vectordb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================================
+  # REDIS CACHE
+  # ============================================================================
+  redis:
+    image: redis:7.2-alpine
+    container_name: dev-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --requirepass "dev_password_123"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - agentic-chatbot-net
+
+  # ============================================================================
+  # REDIS COMMANDER (Interface Web)
+  # ============================================================================
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: redis-commander
+    environment:
+      - REDIS_HOSTS=local:redis:6379:0:dev_password_123
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    restart: unless-stopped
+    networks:
+      - agentic-chatbot-net
+
+  # ============================================================================
+  # ZIPKIN - DISTRIBUTED TRACING 📊
+  # ============================================================================
+  zipkin:
+    image: openzipkin/zipkin:latest
+    container_name: rag-zipkin
+    ports:
+      - "9411:9411"
+    depends_on:
+      pgvector:
+        condition: service_healthy
+    environment:
+      STORAGE_TYPE: mem
+      #POSTGRES_HOST: pgvector
+      #POSTGRES_PORT: 5432
+      #POSTGRES_DB: zipkin
+      #POSTGRES_USER: admin
+      #POSTGRES_PASSWORD: 1234
+      JAVA_OPTS: -Xms256m -Xmx512m
+    networks:
+      - agentic-chatbot-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9411/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ============================================================================
+  # CLAMAV ANTIVIRUS 🛡️
+  # ============================================================================
+  clamav:
+    image: clamav/clamav:latest
+    container_name: rag-clamav
+    ports:
+      - "3310:3310"
+    volumes:
+      - clamav_data:/var/lib/clamav
+    environment:
+      - CLAMAV_NO_FRESHCLAM=false
+      - CLAMD_CONF_MaxThreads=2
+      - CLAMD_CONF_MaxConnectionQueueLength=15
+      - CLAMD_CONF_StreamMaxLength=104857600  # 100 MB
+    healthcheck:
+      test: ["CMD", "clamdscan", "--ping", "1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5m
+    restart: unless-stopped
+    networks:
+      - agentic-chatbot-net
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+
+  # ============================================================================
+  # PROMETHEUS - METRICS COLLECTION 📊
+  # ============================================================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: rag-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+      - '--storage.tsdb.retention.time=30d'
+    networks:
+      - agentic-chatbot-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ============================================================================
+  # GRAFANA - VISUALIZATION 📈
+  # ============================================================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: rag-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_INSTALL_PLUGINS=redis-datasource,grafana-clock-panel,grafana-simple-json-datasource
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus
+    networks:
+      - agentic-chatbot-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ========================================================================
+  # ALERTMANAGER - Alerts (optional)
+  # ========================================================================
+  alertmanager:
+    image: prom/alertmanager:v0.26.0
+    container_name: rag-alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      -  ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - alertmanager_data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    networks:
+      - agentic-chatbot-net
+    restart: unless-stopped
+  # ============================================================================
+  # REDIS EXPORTER - Métriques Redis pour Prometheus
+  # ============================================================================
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: rag-redis-exporter
+    ports:
+      - "9121:9121"
+    environment:
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=dev_password_123
+    depends_on:
+      - redis
+    networks:
+      - agentic-chatbot-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9121/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ============================================================================
+  # POSTGRES EXPORTER - Métriques PostgreSQL pour Prometheus
+  # ============================================================================
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: rag-postgres-exporter
+    ports:
+      - "9187:9187"
+    environment:
+      - DATA_SOURCE_NAME=postgresql://admin:1234@pgvector:5432/vectordb?sslmode=disable
+    depends_on:
+      pgvector:
+        condition: service_healthy
+    networks:
+      - agentic-chatbot-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9187/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ============================================================================
+  # NODE EXPORTER - Métriques système (CPU, RAM, Disk)
+  # ============================================================================
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: rag-node-exporter
+    ports:
+      - "9100:9100"
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    networks:
+      - agentic-chatbot-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9100/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ============================================================================
+  # CADVISOR - Métriques Docker containers
+  # ============================================================================
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: rag-cadvisor
+    ports:
+      - "8082:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    privileged: true
+    devices:
+      - /dev/kmsg
+    networks:
+      - agentic-chatbot-net
+    restart: unless-stopped
+
+  # ═══════════════════════════════════════════════════════════════════
+  # SERVICE INIT : Crée automatiquement les dossiers sur l'hôte
+  # ═══════════════════════════════════════════════════════════════════
+  init-storage:
+    image: alpine:latest
+    container_name: rag-init-storage
+    volumes:
+      - ${HOME:-${USERPROFILE}}/Downloads/uploads:/uploads
+      - ${HOME:-${USERPROFILE}}/Downloads/logs:/logs
+    command: >
+      sh -c "
+        echo '════════════════════════════════════════' &&
+        echo '🚀 RAG Application - Storage Init' &&
+        echo '════════════════════════════════════════' &&
+        echo '' &&
+        echo '📁 Création des dossiers de stockage...' &&
+        mkdir -p /uploads/extracted-images &&
+        mkdir -p /logs &&
+        echo '   ✅ /uploads/extracted-images' &&
+        echo '   ✅ /logs' &&
+        echo '' &&
+        echo '🔍 Vérification des permissions...' &&
+        if [ -w /uploads ]; then
+          echo '   ✅ /uploads est accessible en écriture'
+        else
+          echo '   ❌ /uploads n est pas accessible en écriture' && exit 1
+        fi &&
+        if [ -w /logs ]; then
+          echo '   ✅ /logs est accessible en écriture'
+        else
+          echo '   ❌ /logs n est pas accessible en écriture' && exit 1
+        fi &&
+        echo '' &&
+        echo '📊 Contenu des dossiers :' &&
+        echo '   Uploads:' && ls -la /uploads &&
+        echo '   Logs:' && ls -la /logs &&
+        echo '' &&
+        echo '✅ Initialisation terminée avec succès !' &&
+        echo '════════════════════════════════════════'
+      "
+    networks:
+      - agentic-chatbot-net
+
+  # ============================================================================
+  # 🆕 BACKEND SPRING BOOT
+  # ============================================================================
+  # backend:
+  #   build:
+  #     context: ./transaction-service
+  #     dockerfile: Dockerfile
+  #   container_name: rag-backend
+  #   ports:
+  #     - "8090:8090"
+  #   depends_on:
+  #     init-storage:
+  #       condition: service_completed_successfully
+  #     pgvector:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #     clamav:
+  #       condition: service_healthy
+  #     zipkin:
+  #       condition: service_healthy
+  #   environment:
+
+  #     # Variables d'environnement pour Docker
+  #     - PGVECTOR_HOST=pgvector
+  #     - PGVECTOR_PORT=5432
+  #     - PGVECTOR_DATABASE=vectordb
+  #     - PGVECTOR_USER=admin
+  #     - PGVECTOR_PASSWORD=1234
+
+  #     # Database
+  #     - SPRING_DATASOURCE_URL=jdbc:postgresql://pgvector:5432/vectordb
+  #     - SPRING_DATASOURCE_USERNAME=admin
+  #     - SPRING_DATASOURCE_PASSWORD=1234
+      
+  #     # Redis
+  #     - SPRING_REDIS_HOST=redis
+  #     - SPRING_REDIS_PORT=6379
+  #     - SPRING_REDIS_PASSWORD=dev_password_123
+      
+  #     # ClamAV Antivirus
+  #     - ANTIVIRUS_ENABLED=true
+  #     - CLAMAV_HOST=clamav
+  #     - CLAMAV_PORT=3310
+  #     - ANTIVIRUS_TIMEOUT=30000
+  #     - ANTIVIRUS_CHUNK_SIZE=8192
+  #     - ANTIVIRUS_MAX_FILE_SIZE=104857600
+      
+  #     # Zipkin Tracing
+  #     - MANAGEMENT_TRACING_SAMPLING_PROBABILITY=1.0
+  #     - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
+      
+  #     # Server Port
+  #     - SERVER_PORT=8090
+
+  #     # OpenAI
+  #     - OPENAI_API_KEY=${OPENAI_API_KEY}
+      
+  #     # Spring Profile
+  #     - SPRING_PROFILES_ACTIVE=docker
+  #     - IMAGES_STORAGE_PATH=/app/uploads/extracted-images
+      
+  #     # JVM Options
+  #     - JAVA_OPTS=-Xmx2g -Xms512m
+  #   volumes:
+  #     # ✅ Utilise $HOME (Linux/Mac) ou $USERPROFILE (Windows) automatiquement
+  #     - ${HOME:-$USERPROFILE}/Downloads/uploads:/app/uploads
+  #     - ${HOME:-$USERPROFILE}/Downloads/logs:/app/logs
+  #   networks:
+  #     - agentic-chatbot-net
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8090/actuator/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 60s
+
+  # ============================================================================
+  # 🆕 FRONTEND ANGULAR + NGINX
+  # ============================================================================
+  # frontend:
+  #   build:
+  #     context: ./agentic-rag-ui
+  #     dockerfile: Dockerfile
+  #   container_name: rag-frontend
+  #   ports:
+  #     - "8080:8080"
+  #   environment:
+  #     - BACKEND_URL=http://backend:8090   # ← nom du service Docker + port backend
+  #   depends_on:
+  #     - backend
+  #   networks:
+  #     - agentic-chatbot-net
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+  #     interval: 30s
+  #     timeout: 5s
+  #     retries: 3
+
+# ==============================================================================
+# VOLUMES
+# ==============================================================================
+volumes:
+  agentic_rag_chatbot_data:
+    driver: local
+  redis_data:
+    driver: local
+  clamav_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  alertmanager_data:
+    driver: local
+
+# ==============================================================================
+# NETWORKS
+# ==============================================================================
+networks:
+  agentic-chatbot-net:
+    driver: bridge

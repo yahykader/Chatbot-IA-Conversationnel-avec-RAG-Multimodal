@@ -1,0 +1,99 @@
+<div class="chat-page">
+  
+  <!-- Sidebar - Conversations List -->
+  <div 
+    class="chat-sidebar"
+    [class.collapsed]="sidebarCollapsed">
+    
+    <!-- Header -->
+    <div class="sidebar-header">
+      <h5 class="mb-0" *ngIf="!sidebarCollapsed">
+        <i class="bi bi-chat-left-text me-2"></i>
+        Conversations
+      </h5>
+      
+      <button 
+        class="btn btn-sm btn-primary"
+        [class.btn-icon]="sidebarCollapsed"
+        (click)="onNewConversation()"
+        [title]="sidebarCollapsed ? 'Nouvelle conversation' : ''">
+        <i class="bi bi-plus-lg"></i>
+        <span *ngIf="!sidebarCollapsed" class="ms-1">Nouveau</span>
+      </button>
+    </div>
+    
+    <!-- Conversations List -->
+    <div class="conversations-list">
+      <div
+        *ngFor="let conv of conversations$ | async; trackBy: trackByConversationId"
+        class="conversation-item"
+        [class.active]="(activeConversationId$ | async) === conv.id"
+        (click)="onSelectConversation(conv.id)">
+        
+        <div class="conversation-icon">
+          <i class="bi bi-chat-dots"></i>
+        </div>
+        
+        <div class="conversation-content" *ngIf="!sidebarCollapsed">
+          <div class="conversation-title">
+            {{ conv.title }}
+          </div>
+          <div class="conversation-meta">
+            <small class="text-muted">
+              {{ conv.messages.length }} messages
+            </small>
+            <small class="text-muted">
+              {{ conv.updatedAt | date:'dd/MM HH:mm' }}
+            </small>
+          </div>
+        </div>
+        
+        <button
+          *ngIf="!sidebarCollapsed"
+          class="btn btn-sm btn-link conversation-delete"
+          (click)="onDeleteConversation(conv.id, $event)"
+          title="Supprimer">
+          <i class="bi bi-trash"></i>
+        </button>
+      </div>
+      
+      <!-- Empty State -->
+      <div class="empty-conversations" *ngIf="(conversations$ | async)?.length === 0">
+        <i class="bi bi-inbox display-6 text-muted"></i>
+        <p class="text-muted small mt-2">Aucune conversation</p>
+      </div>
+    </div>
+    
+    <!-- Toggle Button -->
+    <button 
+      class="btn btn-sm btn-light sidebar-toggle"
+      (click)="toggleSidebar()">
+      <i 
+        class="bi"
+        [class.bi-chevron-left]="!sidebarCollapsed"
+        [class.bi-chevron-right]="sidebarCollapsed">
+      </i>
+    </button>
+    
+  </div>
+  
+  <!-- Main Chat Area -->
+  <div class="chat-main">
+    
+    <!-- Header -->
+    <div class="chat-header">
+      <h4 class="mb-0">
+        <i class="bi bi-robot me-2"></i>
+        Assistant RAG
+      </h4>
+      <small class="text-muted">
+        Posez des questions sur vos documents
+      </small>
+    </div>
+    
+    <!-- Chat Interface -->
+    <app-chat-interface></app-chat-interface>
+    
+  </div>
+  
+</div>

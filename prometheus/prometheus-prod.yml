@@ -1,0 +1,96 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'rag-system'
+    environment: 'production'
+
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+rule_files:
+  - "/etc/prometheus/alerts.yml"
+
+scrape_configs:
+  # ============================================================================
+  # APPLICATION SPRING BOOT RAG
+  # ============================================================================
+  - job_name: 'spring-boot-rag'
+    scheme: https
+    metrics_path: '/actuator/prometheus'
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['BACKEND_URL_PLACEHOLDER']
+        labels:
+          application: 'rag-system'
+          service: 'transaction-service'
+          environment: 'production'
+          type: 'spring-boot'
+    tls_config:
+      insecure_skip_verify: false
+
+
+  # ============================================================================
+  # REDIS EXPORTER
+  # ============================================================================
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+        labels:
+          application: 'rag-system'
+          service: 'redis-cache'
+
+  # ============================================================================
+  # POSTGRESQL EXPORTER
+  # ============================================================================
+  - job_name: 'postgresql'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+        labels:
+          application: 'rag-system'
+          service: 'pgvector-db'
+
+  # ============================================================================
+  # ZIPKIN METRICS
+  # ============================================================================
+  - job_name: 'zipkin'
+    metrics_path: '/prometheus'
+    static_configs:
+      - targets: ['zipkin:9411']
+        labels:
+          application: 'rag-system'
+          service: 'zipkin-tracing'
+
+  # ============================================================================
+  # NODE EXPORTER (Métriques système)
+  # ============================================================================
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+        labels:
+          application: 'monitoring'
+          service: 'node-exporter'
+
+  # ============================================================================
+  # CADVISOR (Métriques Docker)
+  # ============================================================================
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+        labels:
+          application: 'monitoring'
+          service: 'cadvisor'
+
+  # ============================================================================
+  # PROMETHEUS SELF-MONITORING
+  # ============================================================================
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          application: 'monitoring'
+          service: 'prometheus'

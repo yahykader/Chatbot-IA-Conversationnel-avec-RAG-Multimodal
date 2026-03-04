@@ -1,5 +1,18 @@
 # ============================================================================
-# APPLICATION.YML - Configuration Complète Corrigée
+# APPLICATION.YML - Configuration Complète Finale (ARCHITECTURE 100%)
+# ============================================================================
+
+# ============================================================================
+# SERVER
+# ============================================================================
+server:
+  port: 8090
+  error:
+    include-message: always
+    include-stacktrace: always
+
+# ============================================================================
+# APPLICATION
 # ============================================================================
 app:
   cors:
@@ -8,208 +21,22 @@ app:
     
   libreoffice:
     enabled: true
-    sofficePath: ""   # si vide, on tente auto-détection Windows, sinon on utilise ce chemin
+    soffice-path: "C:\\Program Files\\LibreOffice\\program\\soffice.exe"               # Auto-détection si vide
     timeoutSeconds: 60
 
-server:
-  port: 8090
-  error:
-    include-message: always
-    include-stacktrace: always
+  pdf:
+    save-generated: true
+    generated-pdf-dir: "${IMAGES_STORAGE_PATH:${user.home}/extracted-images}"
+    analyze-with-vision: true
+    render-dpi: 300
 
+repository:
+  delete:
+    truncate-threshold: 10000  # Seuil DELETE/TRUNCATE
 
-spring:
-  application:
-    name: transaction-service
-
-  # ===========================================================================
-  # File Upload (Multipart)
-  # ===========================================================================
-  servlet:
-    multipart:
-      enabled: true
-      max-file-size: 50MB
-      max-request-size: 50MB
-      resolve-lazily: false
-
-  # ===========================================================================
-  # POSTGRESQL + PGVECTOR (DataSource + JPA)
-  # ===========================================================================
-  datasource:
-    url: jdbc:postgresql://${PGVECTOR_HOST:localhost}:${PGVECTOR_PORT:5432}/${PGVECTOR_DATABASE:vectordb}
-    username: ${PGVECTOR_USER:admin}
-    password: ${PGVECTOR_PASSWORD:1234}
-    driver-class-name: org.postgresql.Driver
-    hikari:
-      maximum-pool-size: 10
-      connection-timeout: 30000
-      idle-timeout: 600000
-      max-lifetime: 1800000
-
-  jpa:
-    hibernate:
-      ddl-auto: update  # ✅ CORRECTION: 'update' au lieu de 'create' (préserve données)
-    show-sql: false
-    properties:
-      hibernate:
-        dialect: org.hibernate.dialect.PostgreSQLDialect
-        format_sql: true
-        jdbc:
-          batch_size: 20
-        order_inserts: true
-        order_updates: true
-        cache:
-          use_second_level_cache: false
-          use_query_cache: false
-      javax:
-        persistence:
-          sharedCache:
-            mode: NONE
-
-  # ===========================================================================
-  # Redis (Spring Data Redis + Cache)
-  # ===========================================================================
-  data:
-    redis:
-      host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
-      password: ${REDIS_PASSWORD:dev_password_123}
-      database: 0
-      timeout: 5000ms
-      lettuce:
-        pool:
-          max-active: 8
-          max-idle: 8
-          min-idle: 2
-          max-wait: 3000ms
-        shutdown-timeout: 100ms
-
-  # ===========================================================================
-  # Cache Configuration (Spring Cache)
-  # ===========================================================================
-  cache:
-    type: redis
-    redis:
-      time-to-live: 1h           # TTL par défaut: 1 heure
-      cache-null-values: false   # Ne pas cacher les valeurs nulles
-      key-prefix: "rag-cache:"   # Préfixe pour toutes les clés Redis
-      use-key-prefix: true       # Activer l'utilisation du préfixe
-    cache-names:
-      - multimodal-rag-search    # Cache recherches RAG (1h)
-      - llm-responses            # Cache réponses LLM (1h par défaut)
-      - embeddings               # Cache embeddings (1h par défaut)
-      - vision-analysis          # Cache Vision AI (1h par défaut)
-
-# ===========================================================================
-# OpenAI Configuration
-# ===========================================================================
-openai:
-  api:
-    key: ${OPEN_AI_API_KEY}
-  
-  embedding:
-    model: text-embedding-3-small
-  
-  chat:
-    model: gpt-4o
-    temperature: 0.7
-    max-tokens: 2000
-    timeout-seconds: 60
-    max-retries: 3
-    log-requests: false
-    log-responses: false
-
-# ===========================================================================
-# Configuration Documents & Images
-# ===========================================================================
-document:
-  images:
-    storage-path: ${IMAGES_STORAGE_PATH:D:/Formation-DATA-2024/extracted-images} 
-  # Limites fichiers
-  max-file-size-mb: 25
-  max-pages: 100
-  max-images-per-file: 100
-  
-  # Cache Vision AI
-  enable-vision-cache: true
-
-# ===========================================================================
-# Configuration RAG Multimodal
-# ===========================================================================
-rag:
-  # Recherche
-  min-score: 0.7
-  default-max-results: 5
-  max-allowed-results: 50
-  search-timeout-seconds: 30
-  
-  # Parallélisme
-  parallel-search-threads: 4
-  
-  # Retry
-  max-retries: 3
-  retry-delay-ms: 1000
-  
-  # Cache
-  cache-ttl-hours: 24
-  cache-eviction-interval-hours: 1
-  
-  # Embeddings
-  max-query-length: 1000
-  embedding-batch-size: 100
-  
-  # Monitoring
-  verbose-logging: false
-  enable-metrics: true
-  
-  # Tools
-  tools:
-    max-document-results: 5
-    max-image-results: 3
-    max-multimodal-results: 4
-    max-allowed-results: 50 
-    min-query-length: 3
-    max-query-length: 500
-    max-result-text-length: 1000
-    show-metrics: true
-    filter-by-document-type: true
-    include-metadata: true
-
-# ===========================================================================
-# Assistant Configuration
-# ===========================================================================
-assistant:
-  stream:
-    timeout-seconds: 120
-    heartbeat-interval-seconds: 30
-  
-  chat:
-    max-message-length: 5000
-    min-message-length: 1
-    timeout-seconds: 120
-
-  # Configuration contexte
-  context:
-    max-exchanges: 5                  # Max échanges conservés
-    max-tokens: 4000                  # Max tokens contexte
-    ttl-hours: 24 
-  rag:
-    low-quality-threshold: 0.5  # Seuil scores faibles
-  metrics:
-    enabled: true  # Activer métriques enrichies                    # Durée vie Redis
-  
-  # Rate limiting
-  rate-limit:
-    requests-per-minute: 10           # Limite par utilisateur
-  
-  upload:
-    max-file-size: 20971520  # 20 MB
-    max-concurrent: 3 # Uploads simultanés par user
-    allowed-extensions: pdf,png,jpg,jpeg,gif,bmp,webp,tiff,txt,md,csv,json,xml,html,docx,doc,pptx,ppt,xlsx,xls,log,java,py,js,ts,cpp,c,h
-
-# ===========================================================================
-# PGVector Configuration (Variables d'environnement)
-# ===========================================================================
+# ============================================================================
+# PGVECTOR
+# ============================================================================
 pgvector:
   host: ${PGVECTOR_HOST:localhost}
   port: ${PGVECTOR_PORT:5432}
@@ -223,50 +50,454 @@ pgvector:
     timeout: 30
   validation:
     enabled: true
-
-# ===========================================================================
-# Logging
-# ===========================================================================
-logging:
-  file:
-    name: logs/transaction-service.log
-  level:
-    root: INFO
-    com.exemple: DEBUG
-    com.exemple.transactionservice: DEBUG
-    com.exemple.transactionservice.controller: DEBUG
-    com.exemple.transactionservice.service.MultimodalRAGService: INFO
-    com.exemple.transactionservice.service.MultimodalIngestionService: INFO
-    dev.langchain4j: INFO
-    dev.ai4j.openai4j: INFO
-    ai.djl: OFF
-    org.springframework.web: INFO
-    org.springframework.cache: INFO
-    org.springframework.data.redis: WARN
-    reactor.netty: WARN
-    org.postgresql: WARN
-    org.apache.poi: DEBUG
   
-  pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{50} - %msg%n"
+  text:
+    table: text_embeddings
+  image:
+    table: image_embeddings
+# ============================================================================
+# SPRING
+# ============================================================================
+spring:
+  application:
+    name: transaction-service
+
+  # ==========================================================================
+  # FILE UPLOAD (Multipart)
+  # ==========================================================================
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 100MB        # ✨ Augmenté pour gros fichiers
+      max-request-size: 100MB
+      resolve-lazily: false
+      file-size-threshold: 10MB
+
+  # ==========================================================================
+  # POSTGRESQL + PGVECTOR
+  # ==========================================================================
+  datasource:
+    url: jdbc:postgresql://${PGVECTOR_HOST:localhost}:${PGVECTOR_PORT:5432}/${PGVECTOR_DATABASE:vectordb}
+    username: ${PGVECTOR_USER:admin}
+    password: ${PGVECTOR_PASSWORD:1234}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  jpa:
+    hibernate:
+      ddl-auto: update            # ✅ Préserve données
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        jdbc:
+          batch_size: 20
+        order_inserts: true
+        order_updates: true
+        cache:
+          use_second_level_cache: false
+          use_query_cache: false
+
+  # ==========================================================================
+  # REDIS (Principal)
+  # ==========================================================================
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:6379}
+    password: ${REDIS_PASSWORD:dev_password_123}
+    database: 0
+    timeout: 5000ms
+    lettuce:
+      pool:
+        max-active: 8
+        max-idle: 8
+        min-idle: 2
+        max-wait: 3000ms
+      shutdown-timeout: 100ms
+
+  # ==========================================================================
+  # SPRING CACHE (Général - TTL: 1h)
+  # ==========================================================================
+  cache:
+    type: redis
+    redis:
+      time-to-live: 1h            # Cache général : 1 heure
+      cache-null-values: false
+      key-prefix: "rag-cache:"
+      use-key-prefix: true
+    cache-names:
+      - multimodal-rag-search
+      - llm-responses
+      - vision-analysis
+
+  cloud:
+    gcp:
+      storage:
+        enabled: false
+      # optionnel, évite le warning sur le project-id
+      project-id: local-dev
+# ===========================================================================
+# Embedding Compressor avec Int8 Quantization
+# ===========================================================================
+# Configuration complète
+embedding:
+  text:
+    dimension: 1536  # ✅ text-embedding-3-large ou ada-002
+  image:
+    dimension: 512   # ✅ CLIP ou autre modèle image
+
+  compression:
+    # Active/désactive compression
+    enabled: true
+    
+    # Méthode: INT8, INT16, ou NONE
+    method: INT8
+    
+    # Dimensions des embeddings (OpenAI: 1536)
+    dimensions: 1536
+    
+    # Compression par batch (plus rapide)
+    batch-compression: true
+    
+    # Seuil qualité minimal (0-1)
+    quality-threshold: 0.98
+    
+    # Logging détaillé
+    verbose-logging: false
+    
+    # Cache (MB)
+    cache-size-mb: 100
+
+# ============================================================================
+# CACHE EMBEDDINGS (Spécialisé - TTL: 7 jours) ✨ NOUVEAU
+# ============================================================================
+cache:
+  embeddings:
+    enabled: true
+    ttl-days: 7                   # Cache long pour embeddings
+    key-prefix: "embedding:cache:"
+    compression-enabled: false
+
+# ============================================================================
+# RateLimit Config Limites par endpoint (requêtes par minute)
+# ============================================================================
+rate-limit:
+  upload:
+    requests-per-minute: 10      # Upload fichier unique
+  batch:
+    requests-per-minute: 5       # Upload batch
+  delete:
+    requests-per-minute: 20      # Suppression
+  search:
+    requests-per-minute: 50      # Recherche
+  default:
+    requests-per-minute: 30      # Autres endpoints
+
+# ============================================================================
+# REDIS - Deduplication ✨ NOUVEAU
+# ============================================================================
+redis:
+  deduplication:
+    ttl-days: 30
+    key-prefix: "ingestion:hash:"
+
+# Déduplication des textes
+deduplication:
+  text:
+    enabled: true                    # Activer déduplication
+    redis-prefix: "text:dedup:"      # Préfixe Redis
+    ttl-days: 30                     # TTL des hashes (30 jours)
+    batch-id-scope: false            # false = dédup globale, true = par batch
+
+# ============================================================================
+# SECURITY - ANTIVIRUS ClamAV
+# ============================================================================
+security:
+  antivirus:
+    enabled: true
+    clamd-host: localhost
+    clamd-port: 3310
+    timeout-seconds: 30
+    stream-max-length: 104857600  # 100 MB
+    retry-attempts: 2
+    retry-delay-ms: 1000
+
+# Ancienne config antivirus (compatible)
+antivirus:
+  enabled: ${security.antivirus.enabled:true}
+  host: ${security.antivirus.clamd-host:localhost}
+  port: ${security.antivirus.clamd-port:3310}
+  timeout: 45000
+  chunk-size: 8192
+  max-file-size: 104857600
+  health-check:
+    enabled: true
+    interval: 120000
+
+# ============================================================================
+# OPENAI
+# ============================================================================
+openai:
+  enabled: true
+  api:
+    key: ${OPENAI_API_KEY:}
+  
+  embedding:
+    model: text-embedding-3-small
+    dimension: 1536
+  
+  chat:
+    model: gpt-4o
+    temperature: 0.7
+    max-tokens: 2000
+    timeout-seconds: 60
+    max-retries: 3
+    log-requests: false
+    log-responses: false
+
+# ============================================================================
+# VISION AI
+# ============================================================================
+vision:
+  max-tokens: 500
+  image-quality: auto
+  timeout-seconds: 30
+  prompt: "Analysez cette image et fournissez une description détaillée de son contenu, y compris tout texte, objet, personne et contexte de la scène."
+
+# ============================================================================
+# DOCUMENTS - Configuration Ingestion
+# ============================================================================
+document:
+  max-file-size: 104857600        # 100 MB
+  max-images-per-file: 100
+  max-pages-per-document: 500  
+  max-pdf-pages-to-analyze: 100
+  
+  images:
+    storage-path: "${IMAGES_STORAGE_PATH:${user.home}/extracted-images}"
+    min-width: 10
+    max-width: 4096
+    min-height: 10
+    max-height: 4096
+  
+  pdf:
+    render-dpi: 150
+    extract-embedded-images: true
+    text-extraction-strategy: "auto"
+  
+  docx:
+    open-timeout-ms: 10000
+    extract-headers-footers: true
+  
+  xlsx:
+    evaluate-formulas: true
+    detect-charts: true             # ✨ Nouveau
+
+  streaming:
+    threshold-mb: 100        # Activer streaming si > 100MB
+    chunk-size-mb: 10        # Taille chunks par défaut
+
+  enable-vision-cache: true
+
+# ============================================================================
+# INGESTION - Configuration Async + Retry ✨ NOUVEAU
+# ============================================================================
+ingestion:
+  # Async
+  async:
+    core-pool-size: 4
+    max-pool-size: 8
+    queue-capacity: 50
+    thread-name-prefix: "ingestion-"
+    keep-alive-seconds: 60
+    await-termination-seconds: 60
+  
+  # Retry
+  retry:
+    max-attempts: 3
+    initial-delay: 1000
+    multiplier: 2.0
+    max-delay: 10000
+  
+  # Cache (legacy)
+  cache:
+    ttl-hours: 24
+
+# Ancienne config (compatible)
+async:
+  executor:
+    core-pool-size: ${ingestion.async.core-pool-size:4}
+    max-pool-size: ${ingestion.async.max-pool-size:8}
+    queue-capacity: ${ingestion.async.queue-capacity:50}
+    thread-name-prefix: ${ingestion.async.thread-name-prefix:ingestion-}
+    keep-alive-seconds: ${ingestion.async.keep-alive-seconds:60}
+
+retry:
+  max-attempts: ${ingestion.retry.max-attempts:3}
+  initial-interval-ms: ${ingestion.retry.initial-delay:1000}
+  multiplier: ${ingestion.retry.multiplier:2.0}
+  max-interval-ms: ${ingestion.retry.max-delay:10000}
+
+# ============================================================================
+# CIRCUIT BREAKER - Resilience4j
+# ============================================================================
+resilience4j:
+  circuitbreaker:
+    health-indicator:
+      enabled: true
+    
+    metrics:
+      enabled: true
+    
+    instances:
+      custom:
+        minimumNumberOfCalls: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 5
+        slidingWindowSize: 20
+
+      visionAI:
+        minimumNumberOfCalls: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 5
+        slidingWindowSize: 20
+        slidingWindowType: COUNT_BASED
+        recordExceptions:
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+      
+      redis:
+        minimumNumberOfCalls: 5
+        failureRateThreshold: 70
+        waitDurationInOpenState: 10s
+        permittedNumberOfCallsInHalfOpenState: 3
+        slidingWindowSize: 10
+      
+      clamAV:
+        minimumNumberOfCalls: 5
+        failureRateThreshold: 60
+        waitDurationInOpenState: 20s
+        permittedNumberOfCallsInHalfOpenState: 3
+        slidingWindowSize: 15
+
+  # TimeLimiter
+  timelimiter:
+    instances:
+      visionAI:
+        timeoutDuration: 30s
+        cancelRunningFuture: true
+
+# ============================================================================
+# RAG - Configuration
+# ============================================================================
+rag:
+  min-score: 0.7
+  default-max-results: 5
+  max-allowed-results: 50
+  search-timeout-seconds: 30
+  
+  parallel-search-threads: 4
+  
+  max-retries: 3
+  retry-delay-ms: 1000
+  
+  cache-ttl-hours: 24
+  cache-eviction-interval-hours: 1
+  
+  max-query-length: 1000
+  embedding-batch-size: 100
+  
+  verbose-logging: false
+  enable-metrics: true
+  
+  tools:
+    max-document-results: 5
+    max-image-results: 3
+    max-multimodal-results: 4
+    max-allowed-results: 50
+    min-query-length: 3
+    max-query-length: 500
+    max-result-text-length: 1000
+    show-metrics: true
+    filter-by-document-type: true
+    include-metadata: true
+
+# ============================================================================
+# ASSISTANT
+# ============================================================================
+assistant:
+  stream:
+    timeout-seconds: 120
+    heartbeat-interval-seconds: 30
+  
+  chat:
+    max-message-length: 5000
+    min-message-length: 1
+    timeout-seconds: 120
+
+  context:
+    max-exchanges: 5
+    max-tokens: 4000
+    ttl-hours: 24
+  
+  rag:
+    low-quality-threshold: 0.5
+  
+  metrics:
+    enabled: true
+  
+  rate-limit:
+    requests-per-minute: 10
+  
+  upload:
+    max-file-size: 20971520      # 20 MB
+    max-concurrent: 3
+    allowed-extensions: pdf,png,jpg,jpeg,gif,bmp,webp,tiff,txt,md,csv,json,xml,html,docx,doc,pptx,ppt,xlsx,xls,log,java,py,js,ts,cpp,c,h
 
 
-# ===========================================================================
-# Actuator / Management
-# ===========================================================================
+# ============================================================================
+# MANAGEMENT / ACTUATOR / METRICS ✨ AMÉLIORÉ
+# ============================================================================
 management:
   endpoints:
     web:
       exposure:
         include: health,info,metrics,caches,prometheus
+      base-path: /actuator
   
   endpoint:
     health:
       show-details: always
     caches:
       enabled: true
-  
+    metrics:
+      enabled: true
+    prometheus:
+      enabled: true
+
+  # Distributed Tracing
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: http://localhost:9411/api/v2/spans
+
   metrics:
+        # ✅ AJOUT CRITIQUE : active la collecte automatique des métriques HTTP
+    web:
+      server:
+        request:
+          autotime:
+            enabled: true
+            
     enable:
       cache: true
       jvm: true
@@ -274,7 +505,162 @@ management:
     export:
       prometheus:
         enabled: true
+        step: 10s
+    tags:
+      application: ${spring.application.name}
+      environment: ${SPRING_PROFILES_ACTIVE:dev}
+      antivirus: clamav
+    
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+        ingestion.duration: true
+        rag.query.duration: true
+        rag.retrieval.duration: true
+        rag.generation.duration: true
+        rag.generation.ttft: true
   
   health:
     defaults:
       enabled: true
+    clamav:
+      enabled: ${security.antivirus.enabled:true}
+
+
+
+# ============================================================================
+# LOGGING AMÉLIORÉ
+# ============================================================================
+logging:
+  charset:
+    console: UTF-8
+    file: UTF-8
+  file:
+    name: logs/transaction-service.log
+    max-size: 10MB
+    max-history: 30
+
+  level:
+    root: INFO
+    com.exemple: DEBUG
+    com.exemple.transactionservice: DEBUG
+    com.exemple.transactionservice.service.rag.ingestion: DEBUG
+    com.exemple.transactionservice.controller: DEBUG
+    com.exemple.transactionservice.service.MultimodalRAGService: INFO
+    com.exemple.transactionservice.service.IngestionOrchestrator: INFO
+    com.example.rag.service.rag.ingestion.security: INFO
+    
+    # LangChain4j
+    dev.langchain4j: INFO
+    dev.ai4j.openai4j: INFO
+    ai.djl: OFF
+
+    # Metrics
+    io.micrometer: INFO
+
+    # Spring
+    org.springframework.web: INFO
+    org.springframework.cache: INFO
+    org.springframework.retry: DEBUG
+    org.springframework.data.redis: INFO
+
+    # ✨ Resilience4j
+    io.github.resilience4j: DEBUG
+
+    # Database
+    reactor.netty: WARN
+    org.postgresql: WARN
+    org.apache.poi: ERROR
+
+    # ✅ AJOUT : Masquer warnings PDFBox
+    org.apache.fontbox: ERROR
+    org.apache.fontbox.cff.Type1CharString: ERROR
+    org.apache.pdfbox: ERROR
+    
+    org.hibernate: WARN
+  
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+
+# ============================================================================
+# INFO (Actuator)
+# ============================================================================
+info:
+  app:
+    name: ${spring.application.name}
+    description: Transaction Service with Multimodal Ingestion - Architecture 100%
+    version: 3.0.0
+    encoding: UTF-8
+    java:
+      version: ${java.version}
+    features:
+      - Multimodal Ingestion (6 strategies)
+      - Circuit Breaker (Resilience4j)
+      - Antivirus ClamAV
+      - Embedding Cache (Redis)
+      - Distributed Tracing
+      - Async Processing
+      - Vision AI Integration
+
+
+# ============================================================================
+# Configuration Retrieval Augmentor
+# ============================================================================
+retrieval:
+  # Query Transformer
+  query-transformer:
+    enabled: true
+    method: llm  # llm | rule-based | hybrid
+    model: gpt-4o-mini
+    max-variants: 5
+    timeout-ms: 2000
+    enable-synonyms: true
+    enable-temporal-context: true
+  
+  # Query Router
+  query-router:
+    enabled: true
+    default-strategy: HYBRID  # TEXT_ONLY | IMAGE_ONLY | HYBRID | STRUCTURED
+    confidence-threshold: 0.7
+  
+  # Retrievers
+  retrievers:
+    parallel-timeout: 5000
+    text:
+      enabled: true
+      top-k: 20
+      similarity-threshold: 0.7
+    image:
+      enabled: true
+      top-k: 5
+      similarity-threshold: 0.6
+    bm25:
+      enabled: true
+      top-k: 10
+      language: french
+  
+  # Aggregator
+  aggregator:
+    fusion-method: rrf  # rrf | weighted
+    rrf-k: 60
+    text-weight: 0.5
+    image-weight: 0.3
+    bm25-weight: 0.2
+    max-candidates: 30
+    final-top-k: 10
+  
+  # Reranker
+  reranker:
+    enabled: true
+    model: cross-encoder/ms-marco-MiniLM-L-6-v2
+    top-k: 10
+    batch-size: 32
+  
+  # Content Injector
+  content-injector:
+    max-tokens: 200000
+    system-prompt-tokens: 200
+    instructions-tokens: 250
+    enable-citations: true
+    citation-format: "<cite index=\"{index}\">{content}</cite>"

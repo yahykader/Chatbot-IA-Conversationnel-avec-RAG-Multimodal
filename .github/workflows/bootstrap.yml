@@ -1,0 +1,230 @@
+# # =============================================================================
+# # .github/workflows/bootstrap.yml
+# # À lancer UNE SEULE FOIS pour initialiser le projet GCP depuis zéro
+# #
+# # Secrets GitHub à configurer AVANT de lancer ce workflow :
+# #   GCP_BILLING_ACCOUNT  : ID du compte billing (ex: 01AB23-4CD567-89EF01)
+# #   GCP_OWNER_SA_KEY     : Clé JSON d'un compte GCP avec droits Owner/Editor
+# #                          (votre compte perso ou un SA existant)
+# #
+# # Comment obtenir GCP_OWNER_SA_KEY :
+# #   1. Aller sur https://console.cloud.google.com/iam-admin/serviceaccounts
+# #   2. Ou utiliser un compte existant avec droits suffisants
+# #   3. Créer une clé JSON et la coller dans le secret GitHub
+# # =============================================================================
+
+# name: 🚀 Bootstrap GCP Project
+
+# on:
+#   workflow_dispatch:
+#     inputs:
+#       project_id:
+#         description: 'GCP Project ID (ex: mon-rag-app-prod)'
+#         required: true
+#         type: string
+#       region:
+#         description: 'GCP Region'
+#         required: true
+#         default: 'europe-west1'
+#         type: choice
+#         options:
+#           - europe-west1
+#           - europe-west2
+#           - us-central1
+#       create_dev_env:
+#         description: 'Créer aussi l environnement dev ?'
+#         required: true
+#         default: 'true'
+#         type: choice
+#         options:
+#           - 'true'
+#           - 'false'
+
+# jobs:
+#   bootstrap:
+#     name: 🏗️ Bootstrap GCP
+#     runs-on: ubuntu-latest
+
+#     steps:
+#       - uses: actions/checkout@v4
+
+#       # ── Authentification avec le compte Owner ────────────────────────────
+#       - name: Authenticate to GCP (Owner account)
+#         uses: google-github-actions/auth@v2
+#         with:
+#           credentials_json: ${{ secrets.GCP_OWNER_SA_KEY }}
+
+#       - uses: google-github-actions/setup-gcloud@v2
+
+#       # ── 1. Créer le projet GCP ───────────────────────────────────────────
+#       - name: Create GCP Project
+#         run: |
+#           PROJECT_ID="${{ github.event.inputs.project_id }}"
+
+#           if gcloud projects describe "$PROJECT_ID" >/dev/null 2>&1; then
+#             echo "⚠️ Projet $PROJECT_ID existe déjà — on continue"
+#           else
+#             gcloud projects create "$PROJECT_ID" \
+#               --name="RAG App" \
+#               --labels="env=rag-app,managed-by=terraform"
+#             echo "✅ Projet créé : $PROJECT_ID"
+#           fi
+
+#       # ── 2. Lier le compte de facturation ─────────────────────────────────
+#       - name: Link Billing Account
+#         run: |
+#           gcloud billing projects link "${{ github.event.inputs.project_id }}" \
+#             --billing-account="${{ secrets.GCP_BILLING_ACCOUNT }}"
+#           echo "✅ Billing lié : ${{ secrets.GCP_BILLING_ACCOUNT }}"
+
+#       # ── 3. Activer les APIs ───────────────────────────────────────────────
+#       - name: Enable GCP APIs
+#         run: |
+#           gcloud services enable \
+#             cloudresourcemanager.googleapis.com \
+#             compute.googleapis.com \
+#             artifactregistry.googleapis.com \
+#             iam.googleapis.com \
+#             iamcredentials.googleapis.com \
+#             storage.googleapis.com \
+#             storage-component.googleapis.com \
+#             oslogin.googleapis.com \
+#             --project="${{ github.event.inputs.project_id }}"
+#           echo "✅ APIs activées"
+
+#       # ── 4. Créer le bucket GCS pour le state Terraform ───────────────────
+#       - name: Create Terraform State Bucket
+#         run: |
+#           BUCKET="terraform-state-${{ github.event.inputs.project_id }}"
+#           REGION="${{ github.event.inputs.region }}"
+#           PROJECT_ID="${{ github.event.inputs.project_id }}"
+
+#           if gcloud storage buckets describe "gs://$BUCKET" >/dev/null 2>&1; then
+#             echo "⚠️ Bucket gs://$BUCKET existe déjà — on continue"
+#           else
+#             gcloud storage buckets create "gs://$BUCKET" \
+#               --project="$PROJECT_ID" \
+#               --location="$REGION" \
+#               --uniform-bucket-level-access
+#             echo "✅ Bucket créé : gs://$BUCKET"
+#           fi
+
+#           gcloud storage buckets update "gs://$BUCKET" --versioning
+#           echo "✅ Versioning activé"
+
+#       # ── 5. Créer le Service Account Terraform ────────────────────────────
+#       - name: Create Terraform Service Account
+#         run: |
+#           PROJECT_ID="${{ github.event.inputs.project_id }}"
+#           TF_SA_EMAIL="terraform-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+
+#           if gcloud iam service-accounts describe "$TF_SA_EMAIL" \
+#               --project="$PROJECT_ID" >/dev/null 2>&1; then
+#             echo "⚠️ SA $TF_SA_EMAIL existe déjà — on continue"
+#           else
+#             gcloud iam service-accounts create "terraform-sa" \
+#               --display-name="Terraform Bootstrap SA" \
+#               --project="$PROJECT_ID"
+#             echo "✅ Service Account créé"
+#           fi
+
+#       # ── 6. Assigner les rôles IAM ─────────────────────────────────────────
+#       - name: Assign IAM Roles to Terraform SA
+#         run: |
+#           PROJECT_ID="${{ github.event.inputs.project_id }}"
+#           TF_SA_EMAIL="terraform-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+
+#           ROLES=(
+#             "roles/compute.admin"
+#             "roles/iam.serviceAccountAdmin"
+#             "roles/iam.serviceAccountKeyAdmin"
+#             "roles/iam.serviceAccountUser"
+#             "roles/artifactregistry.admin"
+#             "roles/storage.admin"
+#             "roles/resourcemanager.projectIamAdmin"
+#           )
+
+#           for ROLE in "${ROLES[@]}"; do
+#             gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+#               --member="serviceAccount:$TF_SA_EMAIL" \
+#               --role="$ROLE" \
+#               --quiet
+#             echo "  + $ROLE"
+#           done
+#           echo "✅ Rôles assignés"
+
+#       # ── 7. Générer la clé SA et l'enregistrer en output ──────────────────
+#       - name: Generate Terraform SA Key
+#         id: sa-key
+#         run: |
+#           PROJECT_ID="${{ github.event.inputs.project_id }}"
+#           TF_SA_EMAIL="terraform-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+
+#           gcloud iam service-accounts keys create /tmp/terraform-sa-key.json \
+#             --iam-account="$TF_SA_EMAIL" \
+#             --project="$PROJECT_ID"
+
+#           # Encoder en base64 pour l'affichage dans le summary
+#           SA_KEY_B64=$(base64 -w 0 /tmp/terraform-sa-key.json)
+#           echo "sa-key-b64=$SA_KEY_B64" >> $GITHUB_OUTPUT
+#           echo "✅ Clé SA générée"
+
+#       # ── 8. Terraform Init (dev) ───────────────────────────────────────────
+#       - name: Setup Terraform
+#         uses: hashicorp/setup-terraform@v3
+#         with:
+#           terraform_version: "1.7.0"
+#           terraform_wrapper: false
+
+#       - name: Terraform Init — Dev
+#         env:
+#           GOOGLE_CREDENTIALS: ${{ secrets.GCP_OWNER_SA_KEY }}
+#         run: |
+#           # Mettre à jour le bucket name dans versions.tf
+#           BUCKET="terraform-state-${{ github.event.inputs.project_id }}"
+#           sed -i "s/terraform-state-rag-app/${BUCKET}/g" \
+#             terraform/environments/dev/versions.tf \
+#             terraform/environments/prod/versions.tf
+
+#           cd terraform/environments/dev
+#           terraform init
+#           echo "✅ Terraform dev initialisé"
+
+#       - name: Terraform Init — Prod
+#         if: ${{ github.event.inputs.create_dev_env == 'true' }}
+#         env:
+#           GOOGLE_CREDENTIALS: ${{ secrets.GCP_OWNER_SA_KEY }}
+#         run: |
+#           cd terraform/environments/prod
+#           terraform init
+#           echo "✅ Terraform prod initialisé"
+
+#       # ── Résumé final ──────────────────────────────────────────────────────
+#       - name: Summary
+#         run: |
+#           PROJECT_ID="${{ github.event.inputs.project_id }}"
+#           BUCKET="terraform-state-${PROJECT_ID}"
+
+#           echo "## ✅ Bootstrap terminé !" >> $GITHUB_STEP_SUMMARY
+#           echo "" >> $GITHUB_STEP_SUMMARY
+#           echo "| Resource | Valeur |" >> $GITHUB_STEP_SUMMARY
+#           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+#           echo "| 🪣 Bucket state | gs://$BUCKET |" >> $GITHUB_STEP_SUMMARY
+#           echo "| 👤 SA Terraform | terraform-sa@${PROJECT_ID}.iam.gserviceaccount.com |" >> $GITHUB_STEP_SUMMARY
+#           echo "| 🌍 Region | ${{ github.event.inputs.region }} |" >> $GITHUB_STEP_SUMMARY
+#           echo "" >> $GITHUB_STEP_SUMMARY
+#           echo "## 🔑 Prochaine étape — Configurer les GitHub Secrets" >> $GITHUB_STEP_SUMMARY
+#           echo "" >> $GITHUB_STEP_SUMMARY
+#           echo "Ajouter ces secrets dans **GitHub → Settings → Secrets** :" >> $GITHUB_STEP_SUMMARY
+#           echo "" >> $GITHUB_STEP_SUMMARY
+#           echo "| Secret | Valeur |" >> $GITHUB_STEP_SUMMARY
+#           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+#           echo "| \`GCP_PROJECT_ID\` | \`$PROJECT_ID\` |" >> $GITHUB_STEP_SUMMARY
+#           echo "| \`GCP_SA_KEY\` | *(voir clé dans les logs — étape 'Generate Terraform SA Key')* |" >> $GITHUB_STEP_SUMMARY
+#           echo "| \`GCP_VM_ZONE\` | \`${{ github.event.inputs.region }}-b\` |" >> $GITHUB_STEP_SUMMARY
+#           echo "| \`OPENAI_API_KEY\` | *(votre clé OpenAI)* |" >> $GITHUB_STEP_SUMMARY
+#           echo "| \`POSTGRES_PASSWORD\` | *(mot de passe fort)* |" >> $GITHUB_STEP_SUMMARY
+#           echo "| \`REDIS_PASSWORD\` | *(mot de passe fort)* |" >> $GITHUB_STEP_SUMMARY
+#           echo "| \`GRAFANA_PASSWORD\` | *(mot de passe fort)* |" >> $GITHUB_STEP_SUMMARY
+#           echo "" >> $GITHUB_STEP_SUMMARY
+#           echo "Ensuite lancer le workflow **Deploy to GCP** 🚀" >> $GITHUB_STEP_SUMMARY

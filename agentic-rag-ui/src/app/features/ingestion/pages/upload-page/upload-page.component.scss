@@ -1,0 +1,74 @@
+// upload-page.component.scss - VERSION GRID
+
+.stats-container {
+  display: grid;
+  gap: 0.5rem;
+  
+  // Mobile: 2 colonnes
+  grid-template-columns: repeat(2, 1fr);
+  
+  // Tablet: 3 colonnes
+  @media (min-width: 576px) {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  
+  // Desktop: 5 colonnes ✅ GARANTIT 5 cards alignées
+  @media (min-width: 992px) {
+    grid-template-columns: repeat(5, 1fr);
+  }
+}
+
+.stats-card-wrapper {
+  // Plus besoin de flex, Grid gère tout
+  min-width: 0;  // Fix overflow
+  
+  // Rate Limits prend toute la largeur sur mobile/tablet si 5ème
+  &:nth-child(5) {
+    @media (max-width: 575px) {
+      grid-column: 1 / -1;  // Pleine largeur mobile
+    }
+    
+    @media (min-width: 576px) and (max-width: 991px) {
+      grid-column: span 2;  // 2 colonnes sur tablet
+    }
+  }
+}
+
+.stats-card {
+  height: 100%;
+  transition: all 0.3s ease;
+  
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  }
+  
+  .card-body {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    min-height: 80px;
+  }
+  
+  .stats-value {
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1;
+    margin-bottom: 0.25rem;
+  }
+  
+  .stats-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #6c757d;
+    font-weight: 500;
+  }
+}
+
+@media (max-width: 575px) {
+  .stats-card .stats-value {
+    font-size: 1.5rem;
+  }
+}

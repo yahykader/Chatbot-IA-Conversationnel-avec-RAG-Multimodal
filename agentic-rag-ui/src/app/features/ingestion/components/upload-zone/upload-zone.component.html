@@ -1,0 +1,91 @@
+<!-- features/ingestion/components/upload-zone/upload-zone.component.html -->
+
+<!-- ✅ MODIFIER: Ajouter isRateLimited$ au disabled -->
+<div 
+  class="upload-zone"
+  [class.dragging]="isDragging"
+  [class.disabled]="disabled || (isRateLimited$ | async)"
+  [class.rate-limited]="isRateLimited$ | async"
+  (dragover)="onDragOver($event)"
+  (dragleave)="onDragLeave($event)"
+  (drop)="onDrop($event)"
+  (click)="triggerFileInput()">
+  
+  <div class="upload-zone-content">
+    
+    <!-- Icon avec animation - ✅ MODIFIER pour rate limit -->
+    <div class="upload-icon mb-3">
+      <i 
+        class="bi display-1"
+        [class.bi-cloud-arrow-up]="!disabled && !(isRateLimited$ | async)"
+        [class.bi-lock]="disabled && !(isRateLimited$ | async)"
+        [class.bi-hourglass-split]="isRateLimited$ | async"
+        [class.text-primary]="!disabled && !(isRateLimited$ | async)"
+        [class.text-muted]="disabled && !(isRateLimited$ | async)"
+        [class.text-warning]="isRateLimited$ | async"
+        [class.pulse-animation]="isRateLimited$ | async"></i>
+    </div>
+    
+    <!-- Main Text - ✅ MODIFIER pour rate limit -->
+    <h5 class="mb-2" 
+        [class.text-muted]="disabled"
+        [class.text-warning]="isRateLimited$ | async">
+      <ng-container *ngIf="isRateLimited$ | async">
+        ⏳ Limite d'upload atteinte
+      </ng-container>
+      <ng-container *ngIf="!(isRateLimited$ | async) && disabled">
+        🔒 Upload désactivé
+      </ng-container>
+      <ng-container *ngIf="!(isRateLimited$ | async) && !disabled">
+        📤 Glissez-déposez vos fichiers ici
+      </ng-container>
+    </h5>
+    
+    <!-- Secondary Text - ✅ MODIFIER pour rate limit -->
+    <p class="text-muted mb-3">
+      <ng-container *ngIf="isRateLimited$ | async">
+        Veuillez patienter avant d'uploader d'autres fichiers
+      </ng-container>
+      <ng-container *ngIf="!(isRateLimited$ | async) && !disabled">
+        ou cliquez pour sélectionner
+      </ng-container>
+    </p>
+    
+    <!-- ✅ CACHER les infos si rate limited -->
+    <ng-container *ngIf="!(isRateLimited$ | async) && !disabled">
+      <!-- Supported Formats Badge -->
+      <div class="supported-formats">
+        <small class="text-muted">
+          <i class="bi bi-check-circle text-success me-1"></i>
+          PDF, DOCX, XLSX, Images, Texte et 1000+ formats
+        </small>
+      </div>
+      
+      <!-- File Size Info -->
+      <div class="file-size-info mt-2">
+        <small class="text-muted">
+          <i class="bi bi-info-circle me-1"></i>
+          Taille max: {{ formatMaxSize() }}
+        </small>
+      </div>
+      
+      <!-- Multiple Files Info -->
+      <div class="multiple-info mt-2" *ngIf="multiple">
+        <small class="badge bg-info">
+          <i class="bi bi-files me-1"></i>
+          Sélection multiple
+        </small>
+      </div>
+    </ng-container>
+  </div>
+  
+  <!-- Hidden File Input - ✅ MODIFIER disabled -->
+  <input
+    type="file"
+    id="fileInput"
+    class="d-none"
+    [multiple]="multiple"
+    [accept]="acceptedFormats"
+    [disabled]="disabled || (isRateLimited$ | async)"
+    (change)="onFileSelected($event)">
+</div>

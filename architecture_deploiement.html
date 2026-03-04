@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Architecture CI/CD — RAG App</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@400;700;800&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0a0e1a;
+    color: #e2e8f0;
+    font-family: 'JetBrains Mono', monospace;
+    min-height: 100vh;
+    padding: 40px 20px;
+  }
+
+  h1 {
+    font-family: 'Syne', sans-serif;
+    font-size: 2rem;
+    font-weight: 800;
+    text-align: center;
+    margin-bottom: 8px;
+    background: linear-gradient(135deg, #60a5fa, #a78bfa, #34d399);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .subtitle {
+    text-align: center;
+    color: #64748b;
+    font-size: 0.8rem;
+    margin-bottom: 48px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+
+  .pipeline {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+
+  /* ── GITHUB SECTION ── */
+  .section-label {
+    font-size: 0.7rem;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: #475569;
+    margin-bottom: 12px;
+    padding-left: 4px;
+  }
+
+  .github-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 32px;
+  }
+
+  .trigger-box {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+  }
+
+  .trigger-box .icon { font-size: 1.4rem; }
+  .trigger-box .label { font-size: 0.85rem; color: #94a3b8; }
+  .trigger-box .value { font-size: 0.75rem; color: #60a5fa; margin-top: 2px; }
+
+  .secrets-box {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    padding: 16px 20px;
+    flex: 1;
+  }
+
+  .secrets-box .title { font-size: 0.75rem; color: #94a3b8; margin-bottom: 10px; }
+  .secret-tag {
+    display: inline-block;
+    background: #0f172a;
+    border: 1px solid #1e3a5f;
+    color: #60a5fa;
+    font-size: 0.65rem;
+    padding: 3px 8px;
+    border-radius: 4px;
+    margin: 3px 3px 3px 0;
+  }
+
+  /* ── JOBS ── */
+  .jobs-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 32px;
+    position: relative;
+  }
+
+  .job {
+    border-radius: 14px;
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .job::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+  }
+
+  .job-bootstrap { background: #1a1f2e; border: 1px solid #2d3748; }
+  .job-bootstrap::before { background: #f59e0b; }
+
+  .job-terraform { background: #1a1f2e; border: 1px solid #2d3748; }
+  .job-terraform::before { background: #a78bfa; }
+
+  .job-build { background: #1a1f2e; border: 1px solid #2d3748; }
+  .job-build::before { background: #60a5fa; }
+
+  .job-deploy { background: #1a1f2e; border: 1px solid #2d3748; }
+  .job-deploy::before { background: #34d399; }
+
+  .job-num {
+    font-size: 0.65rem;
+    color: #475569;
+    margin-bottom: 6px;
+    letter-spacing: 1px;
+  }
+
+  .job-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 1rem;
+    font-weight: 700;
+    margin-bottom: 14px;
+  }
+
+  .job-bootstrap .job-title { color: #fbbf24; }
+  .job-terraform .job-title { color: #a78bfa; }
+  .job-build .job-title { color: #60a5fa; }
+  .job-deploy .job-title { color: #34d399; }
+
+  .job-steps { list-style: none; }
+  .job-steps li {
+    font-size: 0.7rem;
+    color: #94a3b8;
+    padding: 4px 0;
+    padding-left: 14px;
+    position: relative;
+    border-bottom: 1px solid #1e293b;
+  }
+  .job-steps li:last-child { border-bottom: none; }
+  .job-steps li::before {
+    content: '›';
+    position: absolute;
+    left: 0;
+    color: #475569;
+  }
+
+  .arrow-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-bottom: 0;
+    padding: 0 calc(12.5% + 8px);
+    margin-top: -8px;
+    margin-bottom: 8px;
+  }
+
+  .arrow {
+    text-align: center;
+    color: #334155;
+    font-size: 1.2rem;
+  }
+
+  /* ── GCP INFRA ── */
+  .gcp-section {
+    background: #0d1117;
+    border: 1px solid #1e3a5f;
+    border-radius: 16px;
+    padding: 24px;
+    margin-bottom: 32px;
+  }
+
+  .gcp-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: #3b82f6;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .gcp-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
+
+  .gcp-card {
+    background: #0a0e1a;
+    border: 1px solid #1e293b;
+    border-radius: 10px;
+    padding: 14px;
+  }
+
+  .gcp-card-title {
+    font-size: 0.7rem;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 10px;
+  }
+
+  .gcp-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.72rem;
+    color: #94a3b8;
+    padding: 4px 0;
+  }
+
+  .gcp-item .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .dot-blue { background: #3b82f6; }
+  .dot-purple { background: #8b5cf6; }
+  .dot-green { background: #10b981; }
+  .dot-orange { background: #f59e0b; }
+  .dot-red { background: #ef4444; }
+  .dot-cyan { background: #06b6d4; }
+
+  /* ── VM SERVICES ── */
+  .vm-section {
+    background: #0d1117;
+    border: 1px solid #1a3d2b;
+    border-radius: 16px;
+    padding: 24px;
+  }
+
+  .vm-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: #34d399;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .vm-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+  }
+
+  .vm-service {
+    background: #0a0e1a;
+    border: 1px solid #1e293b;
+    border-radius: 10px;
+    padding: 14px;
+    transition: border-color 0.2s;
+  }
+
+  .vm-service:hover { border-color: #334155; }
+
+  .vm-service-name {
+    font-size: 0.78rem;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+
+  .vm-service-port {
+    font-size: 0.65rem;
+    color: #475569;
+    margin-bottom: 8px;
+  }
+
+  .vm-service-desc {
+    font-size: 0.65rem;
+    color: #64748b;
+    line-height: 1.4;
+  }
+
+  .badge {
+    display: inline-block;
+    font-size: 0.6rem;
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-top: 6px;
+    font-weight: 600;
+  }
+
+  .badge-public { background: #1a3d2b; color: #34d399; }
+  .badge-internal { background: #1e1b3a; color: #8b5cf6; }
+  .badge-monitoring { background: #1a2f3d; color: #0ea5e9; }
+
+  .connector {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 32px;
+    color: #1e3a5f;
+    font-size: 1.4rem;
+  }
+</style>
+</head>
+<body>
+
+<h1>🎯 Architecture CI/CD — RAG App</h1>
+<p class="subtitle">GitHub Actions → GCP — Déploiement automatisé</p>
+
+<div class="pipeline">
+
+  <!-- GITHUB TRIGGER -->
+  <div class="section-label">① Déclenchement</div>
+  <div class="github-row">
+    <div class="trigger-box">
+      <span class="icon">⚙️</span>
+      <div>
+        <div class="label">workflow_dispatch (manuel)</div>
+        <div class="value">Branch: factorisation → master</div>
+      </div>
+    </div>
+    <div class="secrets-box">
+      <div class="title">🔐 GitHub Secrets requis</div>
+      <span class="secret-tag">GCP_OWNER_SA_KEY</span>
+      <span class="secret-tag">GCP_BILLING_ACCOUNT</span>
+      <span class="secret-tag">OPENAI_API_KEY</span>
+      <span class="secret-tag">POSTGRES_PASSWORD</span>
+      <span class="secret-tag">REDIS_PASSWORD</span>
+      <span class="secret-tag">GRAFANA_PASSWORD</span>
+    </div>
+  </div>
+
+  <!-- JOBS -->
+  <div class="section-label">② Pipeline GitHub Actions (4 jobs séquentiels)</div>
+  <div class="jobs-row">
+    <div class="job job-bootstrap">
+      <div class="job-num">JOB 1</div>
+      <div class="job-title">🏗️ Bootstrap</div>
+      <ul class="job-steps">
+        <li>Crée projet GCP</li>
+        <li>Lie compte billing</li>
+        <li>Active les APIs</li>
+        <li>Crée bucket GCS state</li>
+        <li>Crée SA Terraform</li>
+        <li>Assigne rôles IAM</li>
+        <li>Génère clé SA</li>
+      </ul>
+    </div>
+    <div class="job job-terraform">
+      <div class="job-num">JOB 2</div>
+      <div class="job-title">🏗️ Terraform</div>
+      <ul class="job-steps">
+        <li>Init backend GCS</li>
+        <li>Validate config</li>
+        <li>Plan infra</li>
+        <li>Apply (VM + Network)</li>
+        <li>Artifact Registry</li>
+        <li>Outputs VM name/IP</li>
+      </ul>
+    </div>
+    <div class="job job-build">
+      <div class="job-num">JOB 3</div>
+      <div class="job-title">🐳 Build & Push</div>
+      <ul class="job-steps">
+        <li>Auth Artifact Registry</li>
+        <li>Tag image (SHA)</li>
+        <li>Build backend image</li>
+        <li>Push backend</li>
+        <li>Build frontend image</li>
+        <li>Push frontend</li>
+      </ul>
+    </div>
+    <div class="job job-deploy">
+      <div class="job-num">JOB 4</div>
+      <div class="job-title">🚀 Deploy</div>
+      <ul class="job-steps">
+        <li>SSH → VM</li>
+        <li>Crée /opt/rag-app</li>
+        <li>Copie configs SCP</li>
+        <li>Écrit .env</li>
+        <li>Docker pull</li>
+        <li>Docker compose up</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="connector">↓</div>
+
+  <!-- GCP INFRA -->
+  <div class="gcp-section">
+    <div class="gcp-title">☁️ Google Cloud Platform — projet: rag-app-upload</div>
+    <div class="gcp-grid">
+      <div class="gcp-card">
+        <div class="gcp-card-title">🖥️ Compute Engine</div>
+        <div class="gcp-item"><span class="dot dot-green"></span>VM: rag-vm-dev (e2-standard-2)</div>
+        <div class="gcp-item"><span class="dot dot-green"></span>Zone: europe-west1-b</div>
+        <div class="gcp-item"><span class="dot dot-green"></span>IP Externe statique</div>
+        <div class="gcp-item"><span class="dot dot-blue"></span>Docker + Docker Compose</div>
+      </div>
+      <div class="gcp-card">
+        <div class="gcp-card-title">🔥 Firewall Rules</div>
+        <div class="gcp-item"><span class="dot dot-green"></span>Port 80 — Frontend</div>
+        <div class="gcp-item"><span class="dot dot-blue"></span>Port 22 — SSH direct</div>
+        <div class="gcp-item"><span class="dot dot-purple"></span>Port 3000 — Grafana</div>
+        <div class="gcp-item"><span class="dot dot-orange"></span>Port 8090 — Backend API</div>
+        <div class="gcp-item"><span class="dot dot-cyan"></span>Port 9090 — Prometheus</div>
+      </div>
+      <div class="gcp-card">
+        <div class="gcp-card-title">📦 Artifact Registry</div>
+        <div class="gcp-item"><span class="dot dot-blue"></span>rag-backend:latest</div>
+        <div class="gcp-item"><span class="dot dot-blue"></span>rag-backend:{SHA}</div>
+        <div class="gcp-item"><span class="dot dot-purple"></span>rag-frontend:latest</div>
+        <div class="gcp-item"><span class="dot dot-purple"></span>rag-frontend:{SHA}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="connector">↓</div>
+
+  <!-- VM SERVICES -->
+  <div class="vm-section">
+    <div class="vm-title">🖥️ Services Docker sur rag-vm-dev (34.53.187.62)</div>
+    <div class="vm-grid">
+      <div class="vm-service">
+        <div class="vm-service-name" style="color:#34d399">🌐 Frontend</div>
+        <div class="vm-service-port">:80</div>
+        <div class="vm-service-desc">Angular + Nginx</div>
+        <span class="badge badge-public">PUBLIC</span>
+      </div>
+      <div class="vm-service">
+        <div class="vm-service-name" style="color:#60a5fa">⚙️ Backend</div>
+        <div class="vm-service-port">:8090</div>
+        <div class="vm-service-desc">Spring Boot RAG API</div>
+        <span class="badge badge-public">PUBLIC</span>
+      </div>
+      <div class="vm-service">
+        <div class="vm-service-name" style="color:#a78bfa">🗄️ PgVector</div>
+        <div class="vm-service-port">:5432</div>
+        <div class="vm-service-desc">PostgreSQL + pgvector</div>
+        <span class="badge badge-internal">INTERNE</span>
+      </div>
+      <div class="vm-service">
+        <div class="vm-service-name" style="color:#f59e0b">⚡ Redis</div>
+        <div class="vm-service-port">:6379</div>
+        <div class="vm-service-desc">Cache + sessions</div>
+        <span class="badge badge-internal">INTERNE</span>
+      </div>
+      <div class="vm-service">
+        <div class="vm-service-name" style="color:#0ea5e9">📊 Prometheus</div>
+        <div class="vm-service-port">:9090</div>
+        <div class="vm-service-desc">Collecte métriques</div>
+        <span class="badge badge-monitoring">MONITORING</span>
+      </div>
+      <div class="vm-service">
+        <div class="vm-service-name" style="color:#0ea5e9">📈 Grafana</div>
+        <div class="vm-service-port">:3000</div>
+        <div class="vm-service-desc">Dashboards & alertes</div>
+        <span class="badge badge-monitoring">MONITORING</span>
+      </div>
+      <div class="vm-service">
+        <div class="vm-service-name" style="color:#0ea5e9">🔍 Zipkin</div>
+        <div class="vm-service-port">:9411</div>
+        <div class="vm-service-desc">Distributed tracing</div>
+        <span class="badge badge-monitoring">MONITORING</span>
+      </div>
+      <div class="vm-service">
+        <div class="vm-service-name" style="color:#ef4444">🛡️ ClamAV</div>
+        <div class="vm-service-port">:3310</div>
+        <div class="vm-service-desc">Antivirus fichiers</div>
+        <span class="badge badge-internal">INTERNE</span>
+      </div>
+      <div class="vm-service">
+        <div class="vm-service-name" style="color:#64748b">📡 Node Exporter</div>
+        <div class="vm-service-port">:9100</div>
+        <div class="vm-service-desc">Métriques système</div>
+        <span class="badge badge-monitoring">MONITORING</span>
+      </div>
+      <div class="vm-service">
+        <div class="vm-service-name" style="color:#64748b">🐳 cAdvisor</div>
+        <div class="vm-service-port">:8080</div>
+        <div class="vm-service-desc">Métriques containers</div>
+        <span class="badge badge-monitoring">MONITORING</span>
+      </div>
+      <div class="vm-service">
+        <div class="vm-service-name" style="color:#64748b">🔴 Redis Exporter</div>
+        <div class="vm-service-port">:9121</div>
+        <div class="vm-service-desc">Métriques Redis</div>
+        <span class="badge badge-monitoring">MONITORING</span>
+      </div>
+      <div class="vm-service">
+        <div class="vm-service-name" style="color:#64748b">🐘 PG Exporter</div>
+        <div class="vm-service-port">:9187</div>
+        <div class="vm-service-desc">Métriques Postgres</div>
+        <span class="badge badge-monitoring">MONITORING</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

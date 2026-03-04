@@ -1,8 +1,12 @@
 // ============================================================================
-// CONFIGURATION - PgVectorConfig.java (v2.0.0) - AMÉLIORATION COMPLÈTE
+// CONFIGURATION - PgVectorConfig.java
+// Configuration PgVector + OpenAI + RAGMetrics unifié
 // ============================================================================
 package com.exemple.transactionservice.config;
 
+import com.exemple.transactionservice.service.rag.metrics.RAGMetrics;
+import com.exemple.transactionservice.service.rag.ingestion.cache.EmbeddingCache;
+import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.model.chat.StreamingChatLanguageModel;
@@ -10,15 +14,16 @@ import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.openai.OpenAiEmbeddingModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
+import dev.langchain4j.model.output.Response;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.pgvector.PgVectorEmbeddingStore;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.HealthIndicator;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Profile;
 
 import jakarta.annotation.PostConstruct;
 import java.sql.Connection;
@@ -26,12 +31,31 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.time.Duration;
 
+import java.util.List;
+
+/**
+ * Configuration PgVector + OpenAI
+ * 
+ * ✅ ADAPTÉ AVEC RAGMetrics unifié
+ * 
+ * Beans créés:
+ * - EmbeddingModel (metered)
+ * - ChatLanguageModel
+ * - StreamingChatLanguageModel
+ * - textEmbeddingStore (PgVector)
+ * - imageEmbeddingStore (PgVector)
+ * - Health Indicator
+ * 
+ * @author RAG Team
+ * @version 3.0 - Adapté avec RAGMetrics unifié
+ */
 @Slf4j
 @Configuration
+@ConditionalOnProperty(name="openai.enabled", havingValue="true")
 public class PgVectorConfig {
 
     // ========================================================================
-    // PROPRIÉTÉS DE CONFIGURATION - PgVector
+    // PROPRIÉTÉS - PgVector
     // ========================================================================
     
     @Value("${pgvector.host:localhost}")
@@ -59,11 +83,14 @@ public class PgVectorConfig {
     private int connectionTimeoutSeconds;
 
     // ========================================================================
-    // PROPRIÉTÉS DE CONFIGURATION - OpenAI
+    // PROPRIÉTÉS - OpenAI
     // ========================================================================
     
-    @Value("${openai.api.key}")
+    @Value("${openai.api.key:}")
     private String openAiKey;
+
+    @Value("${openai.enabled:true}")
+    private boolean openAiEnabled;
     
     @Value("${openai.embedding.model:text-embedding-3-small}")
     private String embeddingModelName;
@@ -97,13 +124,8 @@ public class PgVectorConfig {
     public void validateConfiguration() {
         log.info("🔧 Validation de la configuration PgVector et OpenAI...");
         
-        // Validation OpenAI
         validateOpenAiConfiguration();
-        
-        // Validation PgVector
         validatePgVectorConfiguration();
-        
-        // Test de connexion PgVector
         testPgVectorConnection();
         
         log.info("✅ Configuration validée avec succès");
@@ -116,14 +138,18 @@ public class PgVectorConfig {
                 "La clé API 'openai.api.key' est requise dans application.properties"
             );
         }
-        
-        if (!openAiKey.startsWith("sk-")) {
-            log.warn("⚠️ La clé API OpenAI ne commence pas par 'sk-' - vérifiez sa validité");
+
+        if (!openAiEnabled) {
+            log.warn("OpenAI désactivé (openai.enabled=false)");
+            return;
         }
         
-        // Masquage de la clé dans les logs
+        if (!openAiKey.startsWith("sk-")) {
+            log.warn("⚠️ La clé API OpenAI ne commence pas par 'sk-'");
+        }
+        
         String maskedKey = maskApiKey(openAiKey);
-        log.info("✅ OpenAI API Key configurée: {}", maskedKey);
+        log.info("✅ OpenAI API Key: {}", maskedKey);
         log.info("   - Embedding Model: {}", embeddingModelName);
         log.info("   - Chat Model: {}", chatModelName);
         log.info("   - Dimension: {}", embeddingDimension);
@@ -132,20 +158,19 @@ public class PgVectorConfig {
     private void validatePgVectorConfiguration() {
         if (password == null || password.isBlank()) {
             throw new IllegalStateException(
-                "❌ Configuration PgVector invalide: " +
-                "Le mot de passe 'pgvector.password' est requis"
+                "❌ Configuration PgVector invalide: 'pgvector.password' requis"
             );
         }
         
         if (port < 1 || port > 65535) {
             throw new IllegalStateException(
-                "❌ Port PgVector invalide: " + port + " (doit être entre 1 et 65535)"
+                "❌ Port PgVector invalide: " + port
             );
         }
         
         if (embeddingDimension <= 0) {
             throw new IllegalStateException(
-                "❌ Dimension d'embedding invalide: " + embeddingDimension
+                "❌ Dimension invalide: " + embeddingDimension
             );
         }
         
@@ -153,8 +178,6 @@ public class PgVectorConfig {
         log.info("   - Host: {}:{}", host, port);
         log.info("   - Database: {}", database);
         log.info("   - User: {}", user);
-        log.info("   - Connection Pool Size: {}", connectionPoolSize);
-        log.info("   - Connection Timeout: {}s", connectionTimeoutSeconds);
     }
     
     private void testPgVectorConnection() {
@@ -164,21 +187,21 @@ public class PgVectorConfig {
         );
         
         try {
-            log.info("🔌 Test de connexion à PgVector: {}", jdbcUrl);
+            log.info("🔌 Test connexion PgVector: {}", jdbcUrl);
             
             try (Connection conn = DriverManager.getConnection(jdbcUrl, user, password)) {
                 if (conn.isValid(5)) {
-                    log.info("✅ Connexion PgVector établie avec succès");
+                    log.info("✅ Connexion PgVector établie");
                 } else {
-                    log.warn("⚠️ Connexion PgVector établie mais la validation a échoué");
+                    log.warn("⚠️ Connexion établie mais validation échouée");
                 }
             }
             
         } catch (SQLException e) {
             log.error("❌ Impossible de se connecter à PgVector", e);
             throw new IllegalStateException(
-                "Échec de connexion à PgVector. Vérifiez que la base est accessible et que " +
-                "l'extension pgvector est installée: CREATE EXTENSION IF NOT EXISTS vector;", 
+                "Échec connexion PgVector. Vérifiez que pgvector est installé: " +
+                "CREATE EXTENSION IF NOT EXISTS vector;", 
                 e
             );
         }
@@ -192,45 +215,111 @@ public class PgVectorConfig {
     }
 
     // ========================================================================
-    // BEAN 1 : EMBEDDING MODEL (OpenAI)
+    // BEAN 1 : EMBEDDING MODEL (Metered)
     // ========================================================================
     
     /**
-     * Modèle d'embedding OpenAI avec configuration avancée
-     * Dimensions: text-embedding-3-small = 1536, text-embedding-3-large = 3072
+     * EmbeddingModel avec métriques RAGMetrics
      */
     @Bean
-    public EmbeddingModel embeddingModel() {
-        log.info("🧠 Création du bean EmbeddingModel");
+    public EmbeddingModel embeddingModel(RAGMetrics ragMetrics, EmbeddingCache cache) {
+        log.info("🧠 Création EmbeddingModel (metered)");
         log.info("   - Model: {}", embeddingModelName);
         log.info("   - Dimension: {}", embeddingDimension);
         log.info("   - Timeout: {}s", timeoutSeconds);
         log.info("   - Max Retries: {}", maxRetries);
         
-        return OpenAiEmbeddingModel.builder()
-                .apiKey(openAiKey)
-                .modelName(embeddingModelName)
-                .timeout(Duration.ofSeconds(timeoutSeconds))
-                .maxRetries(maxRetries)
-                .logRequests(logRequests)
-                .logResponses(logResponses)
-                .build();
+        EmbeddingModel baseModel = OpenAiEmbeddingModel.builder()
+            .apiKey(openAiKey)
+            .modelName(embeddingModelName)
+            .timeout(Duration.ofSeconds(timeoutSeconds))
+            .maxRetries(maxRetries)
+            .logRequests(logRequests)
+            .logResponses(logResponses)
+            .build();
+        
+            // 2. Ajouter métriques
+        EmbeddingModel metered = new MeteredEmbeddingModel(baseModel, ragMetrics);
+        // ✅ Wrapper avec RAGMetrics
+        return metered;
     }
-
+    
+    /**
+     * Wrapper EmbeddingModel avec tracking RAGMetrics
+     * 
+     * ✅ COMPLET - Toutes les méthodes implémentées
+     */
+    private static class MeteredEmbeddingModel implements EmbeddingModel {
+        
+        private final EmbeddingModel delegate;
+        private final RAGMetrics ragMetrics;
+        
+        public MeteredEmbeddingModel(EmbeddingModel delegate, RAGMetrics ragMetrics) {
+            this.delegate = delegate;
+            this.ragMetrics = ragMetrics;
+        }
+        
+        @Override
+        public Response<Embedding> embed(String text) {
+            long start = System.currentTimeMillis();
+            
+            try {
+                Response<Embedding> response = delegate.embed(text);
+                long duration = System.currentTimeMillis() - start;
+                
+                // ✅ MÉTRIQUE: Embedding API call
+                ragMetrics.recordApiCall("embed_text", duration);
+                
+                return response;
+                
+            } catch (Exception e) {
+                // ✅ MÉTRIQUE: Embedding API error
+                ragMetrics.recordApiError("embed_text");
+                throw e;
+            }
+        }
+        
+        @Override
+        public Response<Embedding> embed(TextSegment textSegment) {
+            return embed(textSegment.text());
+        }
+        
+        // ✅ FIX: Implémenter embedAll()
+        @Override
+        public Response<List<Embedding>> embedAll(List<TextSegment> textSegments) {
+            long start = System.currentTimeMillis();
+            
+            try {
+                Response<List<Embedding>> response = delegate.embedAll(textSegments);
+                long duration = System.currentTimeMillis() - start;
+                
+                // ✅ MÉTRIQUE: Batch embedding
+                ragMetrics.recordApiCall("embed_text_batch", duration);
+                
+                return response;
+                
+            } catch (Exception e) {
+                ragMetrics.recordApiError("embed_text_batch");
+                throw e;
+            }
+        }
+        
+        @Override
+        public int dimension() {
+            return delegate.dimension();
+        }
+    }
     // ========================================================================
     // BEAN 2 : TEXT EMBEDDING STORE (PgVector)
     // ========================================================================
     
-    /**
-     * Store d'embeddings pour les documents texte
-     */
     @Bean(name = "textEmbeddingStore")
     public EmbeddingStore<TextSegment> textEmbeddingStore() {
-        log.info("📚 Création du bean textEmbeddingStore (PgVector)");
+        log.info("📚 Création textEmbeddingStore (PgVector)");
         
         return createPgVectorStore(
             "text_embeddings",
-            "Store pour les documents texte (PDF, DOCX, TXT, etc.)"
+            "Store pour documents texte (PDF, DOCX, TXT, etc.)"
         );
     }
 
@@ -238,46 +327,42 @@ public class PgVectorConfig {
     // BEAN 3 : IMAGE EMBEDDING STORE (PgVector)
     // ========================================================================
     
-    /**
-     * Store d'embeddings pour les descriptions d'images générées par Vision AI
-     */
     @Bean(name = "imageEmbeddingStore")
     public EmbeddingStore<TextSegment> imageEmbeddingStore() {
-        log.info("🖼️ Création du bean imageEmbeddingStore (PgVector)");
+        log.info("🖼️ Création imageEmbeddingStore (PgVector)");
         
         return createPgVectorStore(
             "image_embeddings",
-            "Store pour les descriptions d'images Vision AI"
+            "Store pour descriptions images Vision AI"
         );
     }
     
-    /**
-     * Méthode utilitaire pour créer un PgVectorEmbeddingStore configuré
-     */
-    private EmbeddingStore<TextSegment> createPgVectorStore(String tableName, String description) {
+    private EmbeddingStore<TextSegment> createPgVectorStore(
+            String tableName, 
+            String description) {
+        
         log.info("   - Table: {}", tableName);
         log.info("   - Description: {}", description);
         log.info("   - Dimension: {}", embeddingDimension);
         
         try {
-            // Option alternative : utiliser directement return sans variable intermédiaire
             return PgVectorEmbeddingStore.builder()
-                    .host(host)
-                    .port(port)
-                    .database(database)
-                    .user(user)
-                    .password(password)
-                    .table(tableName)
-                    .dimension(embeddingDimension)
-                    .createTable(true)
-                    .dropTableFirst(false)
-                    .build();
+                .host(host)
+                .port(port)
+                .database(database)
+                .user(user)
+                .password(password)
+                .table(tableName)
+                .dimension(embeddingDimension)
+                .createTable(true)
+                .dropTableFirst(false)
+                .build();
             
         } catch (Exception e) {
-            log.error("   ❌ Échec de création du store '{}'", tableName, e);
+            log.error("❌ Échec création store '{}'", tableName, e);
             throw new IllegalStateException(
-                "Impossible de créer le store PgVector '" + tableName + "'. " +
-                "Vérifiez que l'extension pgvector est installée: " +
+                "Impossible de créer store PgVector '" + tableName + "'. " +
+                "Vérifiez que pgvector est installé: " +
                 "CREATE EXTENSION IF NOT EXISTS vector;",
                 e
             );
@@ -288,74 +373,62 @@ public class PgVectorConfig {
     // BEAN 4 : CHAT MODEL (OpenAI GPT)
     // ========================================================================
     
-    /**
-     * Modèle de chat classique pour Vision AI et génération de réponses
-     */
     @Bean
     public ChatLanguageModel chatModel() {
-        log.info("🤖 Création du bean ChatLanguageModel");
+        log.info("🤖 Création ChatLanguageModel");
         log.info("   - Model: {}", chatModelName);
         log.info("   - Temperature: {}", temperature);
         log.info("   - Max Tokens: {}", maxTokens);
-        log.info("   - Timeout: {}s", timeoutSeconds);
-        log.info("   - Max Retries: {}", maxRetries);
         
         return OpenAiChatModel.builder()
-                .apiKey(openAiKey)
-                .modelName(chatModelName)
-                .temperature(temperature)
-                .maxTokens(maxTokens)
-                .timeout(Duration.ofSeconds(timeoutSeconds))
-                .maxRetries(maxRetries)
-                .logRequests(logRequests)
-                .logResponses(logResponses)
-                .build();
+            .apiKey(openAiKey)
+            .modelName(chatModelName)
+            .temperature(temperature)
+            .maxTokens(maxTokens)
+            .timeout(Duration.ofSeconds(timeoutSeconds))
+            .maxRetries(maxRetries)
+            .logRequests(logRequests)
+            .logResponses(logResponses)
+            .build();
     }
 
     // ========================================================================
     // BEAN 5 : STREAMING CHAT MODEL (OpenAI GPT)
     // ========================================================================
     
-    /**
-     * Modèle de chat en streaming pour les réponses en temps réel (SSE)
-     */
     @Bean
     public StreamingChatLanguageModel streamingChatModel() {
-        log.info("🌊 Création du bean StreamingChatLanguageModel");
+        log.info("🌊 Création StreamingChatLanguageModel");
         log.info("   - Model: {}", chatModelName);
         log.info("   - Temperature: {}", temperature);
-        log.info("   - Max Tokens: {}", maxTokens);
-        log.info("   - Timeout: {}s", timeoutSeconds);
         
         return OpenAiStreamingChatModel.builder()
-                .apiKey(openAiKey)
-                .modelName(chatModelName)
-                .temperature(temperature)
-                .maxTokens(maxTokens)
-                .timeout(Duration.ofSeconds(timeoutSeconds))
-                .logRequests(logRequests)
-                .logResponses(logResponses)
-                .build();
+            .apiKey(openAiKey)
+            .modelName(chatModelName)
+            .temperature(temperature)
+            .maxTokens(maxTokens)
+            .timeout(Duration.ofSeconds(timeoutSeconds))
+            .logRequests(logRequests)
+            .logResponses(logResponses)
+            .build();
     }
 
     // ========================================================================
     // BEAN 6 : HEALTH INDICATOR (Actuator)
     // ========================================================================
     
-    /**
-     * Health check pour PgVector et OpenAI
-     */
     @Bean
     public HealthIndicator pgVectorHealthIndicator() {
         return () -> {
             try {
-                // Test de connexion PgVector
                 String jdbcUrl = String.format(
                     "jdbc:postgresql://%s:%d/%s", 
                     host, port, database
                 );
                 
-                try (Connection conn = DriverManager.getConnection(jdbcUrl, user, password)) {
+                try (Connection conn = DriverManager.getConnection(
+                        jdbcUrl, user, password)) {
+                    
                     if (conn.isValid(5)) {
                         return Health.up()
                             .withDetail("pgvector.host", host + ":" + port)
@@ -379,30 +452,4 @@ public class PgVectorConfig {
             }
         };
     }
-    
-    // ========================================================================
-    // BEANS DE TEST (Profil 'test' uniquement)
-    // ========================================================================
-    
-    /**
-     * EmbeddingModel mocké pour les tests
-     */
-    @Bean
-    @Profile("test")
-    public EmbeddingModel testEmbeddingModel() {
-        log.info("🧪 Utilisation du mock EmbeddingModel pour les tests");
-        // Retourner un mock ou une implémentation in-memory
-        return embeddingModel(); // À remplacer par un mock si nécessaire
-    }
 }
-/*
-    Bénéfices des améliorations
-    ✅ Sécurité renforcée : Masquage des secrets, validation stricte
-    ✅ Robustesse : Retry automatique, timeouts configurables, health checks
-    ✅ Configuration flexible : Profils d'environnement (dev/prod/test), properties externalisées
-    ✅ Observabilité : Logs détaillés sans exposer de secrets, métriques Actuator
-    ✅ Testabilité : Profil de test dédié, validation des beans
-    ✅ Production-ready : Pool de connexions, gestion d'erreurs complète
-    ✅ Maintenabilité : Code bien structuré, commenté, séparation des responsabilités
-    ✅ Validation : Tests de connexion au démarrage, détection précoce des problèmes
-*/

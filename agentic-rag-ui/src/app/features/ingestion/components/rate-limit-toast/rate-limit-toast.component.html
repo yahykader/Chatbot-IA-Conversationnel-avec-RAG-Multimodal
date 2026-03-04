@@ -1,0 +1,16 @@
+<div 
+  class="rate-limit-toast" 
+  *ngIf="isRateLimited$ | async"
+  @slideIn>
+  
+  <div class="rate-limit-icon">⏳</div>
+  
+  <div class="rate-limit-content">
+    <h4>Limite atteinte</h4>
+    <p>{{ message$ | async }}</p>
+    <p class="countdown">
+      Réessayez dans 
+      <strong>{{ retryAfterSeconds$ | async }}s</strong>
+    </p>
+  </div>
+</div>

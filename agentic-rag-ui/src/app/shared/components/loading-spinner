@@ -1,0 +1,66 @@
+// shared/components/toast-container/toast-container.component.ts
+
+import { Component, OnInit } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { NotificationService, Toast } from '../../../core/services/notification.service';
+
+@Component({
+  selector: 'app-toast-container',
+  standalone: true,
+  imports: [CommonModule],
+  template: `
+    <div class="toast-container position-fixed top-0 end-0 p-3" style="z-index: 9999;">
+      <div 
+        *ngFor="let toast of toasts"
+        class="toast show"
+        [class.bg-success]="toast.type === 'success'"
+        [class.bg-danger]="toast.type === 'error'"
+        [class.bg-warning]="toast.type === 'warning'"
+        [class.bg-info]="toast.type === 'info'"
+        [class.text-white]="toast.type !== 'warning'"
+        role="alert">
+        <div class="toast-header">
+          <i class="bi me-2"
+             [class.bi-check-circle-fill]="toast.type === 'success'"
+             [class.bi-x-circle-fill]="toast.type === 'error'"
+             [class.bi-exclamation-triangle-fill]="toast.type === 'warning'"
+             [class.bi-info-circle-fill]="toast.type === 'info'"></i>
+          <strong class="me-auto">{{ toast.title }}</strong>
+          <button 
+            type="button" 
+            class="btn-close" 
+            (click)="removeToast(toast.id)">
+          </button>
+        </div>
+        <div class="toast-body">
+          {{ toast.message }}
+        </div>
+      </div>
+    </div>
+  `,
+  styles: [`
+
+  `]
+})
+export class ToastContainerComponent implements OnInit {
+  toasts: Toast[] = [];
+  
+  constructor(private notificationService: NotificationService) {}
+  
+  ngOnInit() {
+    this.notificationService.toasts$.subscribe(toast => {
+      this.toasts.push(toast);
+      
+      // Auto-remove après la durée
+      if (toast.duration) {
+        setTimeout(() => {
+          this.removeToast(toast.id);
+        }, toast.duration);
+      }
+    });
+  }
+  
+  removeToast(id: string): void {
+    this.toasts = this.toasts.filter(t => t.id !== id);
+  }
+}

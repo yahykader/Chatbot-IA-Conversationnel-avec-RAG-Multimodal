@@ -1,0 +1,167 @@
+# ============================================================================
+# AlertManager Configuration - RAG System
+# ============================================================================
+# Gestion des alertes Prometheus avec routing intelligent
+# ============================================================================
+
+global:
+  resolve_timeout: 5m
+  
+  # Configuration SMTP (Email) - Décommenter pour activer
+  # smtp_smarthost: 'smtp.gmail.com:587'
+  # smtp_from: 'alertmanager@example.com'
+  # smtp_auth_username: 'your-email@gmail.com'
+  # smtp_auth_password: 'your-app-password'
+  # smtp_require_tls: true
+
+  # Configuration Slack - Décommenter pour activer
+  # slack_api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+
+# ============================================================================
+# ROUTES - Routing des alertes
+# ============================================================================
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 12h
+  receiver: 'default-receiver'
+  
+  routes:
+    # Alertes CRITIQUES - notification immédiate
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      group_wait: 0s
+      repeat_interval: 5m
+    
+    # Alertes WARNING - groupées
+    - match:
+        severity: warning
+      receiver: 'warning-alerts'
+      group_wait: 30s
+      repeat_interval: 1h
+    
+    # Alertes INGESTION - RAG spécifique
+    - match:
+        component: ingestion
+      receiver: 'ingestion-alerts'
+      group_wait: 1m
+      repeat_interval: 2h
+    
+    # Alertes API - Vision AI, Embedding, Tika, LibreOffice
+    - match:
+        component: api
+      receiver: 'api-alerts'
+      group_wait: 30s
+      repeat_interval: 30m
+    
+    # Alertes VECTOR STORE - PgVector
+    - match:
+        component: vectorstore
+      receiver: 'vectorstore-alerts'
+      group_wait: 1m
+      repeat_interval: 1h
+
+# ============================================================================
+# INHIBIT RULES - Suppression alertes redondantes
+# ============================================================================
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'instance']
+
+# ============================================================================
+# RECEIVERS - Destinations des alertes
+# ============================================================================
+receivers:
+  # Default - Console logs uniquement
+  - name: 'default-receiver'
+  
+  # Critical - Email + Slack
+  - name: 'critical-alerts'
+    # Email (décommenter pour activer)
+    # email_configs:
+    #   - to: 'ops-team@example.com'
+    #     headers:
+    #       Subject: '🚨 [CRITICAL] RAG System Alert: {{ .GroupLabels.alertname }}'
+    #     html: |
+    #       <h2>🚨 Critical Alert</h2>
+    #       <p><b>Alert:</b> {{ .GroupLabels.alertname }}</p>
+    #       <p><b>Severity:</b> {{ .CommonLabels.severity }}</p>
+    #       <p><b>Description:</b> {{ .CommonAnnotations.description }}</p>
+    #       <p><b>Summary:</b> {{ .CommonAnnotations.summary }}</p>
+    #       <p><b>Time:</b> {{ .StartsAt }}</p>
+    
+    # Slack (décommenter pour activer)
+    # slack_configs:
+    #   - channel: '#rag-alerts-critical'
+    #     username: 'AlertManager'
+    #     icon_emoji: ':rotating_light:'
+    #     title: '🚨 Critical: {{ .GroupLabels.alertname }}'
+    #     text: |
+    #       {{ range .Alerts }}
+    #       *Alert:* {{ .Labels.alertname }}
+    #       *Severity:* {{ .Labels.severity }}
+    #       *Description:* {{ .Annotations.description }}
+    #       *Time:* {{ .StartsAt }}
+    #       {{ end }}
+    #     color: danger
+    #     send_resolved: true
+  
+  # Warning Alerts
+  - name: 'warning-alerts'
+    # email_configs:
+    #   - to: 'ops-team@example.com'
+    #     headers:
+    #       Subject: '⚠️ [WARNING] RAG System: {{ .GroupLabels.alertname }}'
+  
+  # Ingestion Alerts
+  - name: 'ingestion-alerts'
+    # slack_configs:
+    #   - channel: '#rag-ingestion'
+    #     username: 'RAG Ingestion'
+    #     icon_emoji: ':inbox_tray:'
+    #     title: '📊 Ingestion: {{ .GroupLabels.alertname }}'
+    #     text: |
+    #       {{ range .Alerts }}
+    #       *Strategy:* {{ .Labels.strategy }}
+    #       *Description:* {{ .Annotations.description }}
+    #       *Time:* {{ .StartsAt }}
+    #       {{ end }}
+    #     color: warning
+    #     send_resolved: true
+  
+  # API Alerts
+  - name: 'api-alerts'
+    # slack_configs:
+    #   - channel: '#rag-api'
+    #     username: 'RAG API'
+    #     icon_emoji: ':robot_face:'
+    #     title: '🤖 API: {{ .GroupLabels.alertname }}'
+    #     text: |
+    #       {{ range .Alerts }}
+    #       *Operation:* {{ .Labels.operation }}
+    #       *Description:* {{ .Annotations.description }}
+    #       *Time:* {{ .StartsAt }}
+    #       {{ end }}
+    #     color: warning
+    #     send_resolved: true
+  
+  # Vector Store Alerts
+  - name: 'vectorstore-alerts'
+    # slack_configs:
+    #   - channel: '#rag-vectorstore'
+    #     username: 'RAG VectorStore'
+    #     icon_emoji: ':card_file_box:'
+    #     title: '🗄️ VectorStore: {{ .GroupLabels.alertname }}'
+    #     text: |
+    #       {{ range .Alerts }}
+    #       *Operation:* {{ .Labels.operation }}
+    #       *Description:* {{ .Annotations.description }}
+    #       *Time:* {{ .StartsAt }}
+    #       {{ end }}
+    #     color: warning
+    #     send_resolved: true

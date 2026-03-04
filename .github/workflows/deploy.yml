@@ -1,0 +1,205 @@
+# # =============================================================================
+# # .github/workflows/deploy.yml
+# # CI/CD — Terraform (env/prod) + Docker + Deploy
+# # =============================================================================
+# # Secrets GitHub :
+# #   GCP_PROJECT_ID    : ID du projet GCP
+# #   GCP_SA_KEY        : JSON SA (terraform output -raw github_actions_sa_key)
+# #   GCP_VM_ZONE       : europe-west1-b
+# #   OPENAI_API_KEY    : Clé OpenAI
+# #   POSTGRES_PASSWORD : Mot de passe PostgreSQL
+# #   REDIS_PASSWORD    : Mot de passe Redis
+# #   GRAFANA_PASSWORD  : Mot de passe Grafana
+# # =============================================================================
+
+# name: Deploy to GCP
+
+# on:
+#   push:
+#     branches: [factorisation]
+#   workflow_dispatch:
+#     inputs:
+#       environment:
+#         description: 'Environment to deploy'
+#         required: true
+#         default: 'prod'
+#         type: choice
+#         options: [dev, prod]
+
+# env:
+#   GCP_REGION: europe-west1
+#   REGISTRY: europe-west1-docker.pkg.dev
+#   TF_ENV: ${{ github.event.inputs.environment || 'prod' }}
+
+# jobs:
+#   # ===========================================================================
+#   # JOB 1 — Terraform
+#   # ===========================================================================
+#   terraform:
+#     name: 🏗️ Terraform (${{ github.event.inputs.environment || 'prod' }})
+#     runs-on: ubuntu-latest
+#     outputs:
+#       vm-name: ${{ steps.outputs.outputs.vm-name }}
+#       vm-ip:   ${{ steps.outputs.outputs.vm-ip }}
+#       registry: ${{ steps.outputs.outputs.registry }}
+
+#     steps:
+#       - uses: actions/checkout@v4
+
+#       - name: Authenticate to GCP
+#         uses: google-github-actions/auth@v2
+#         with:
+#           credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+#       - uses: google-github-actions/setup-gcloud@v2
+
+#       - name: Setup Terraform
+#         uses: hashicorp/setup-terraform@v3
+#         with:
+#           terraform_version: "1.7.0"
+#           terraform_wrapper: false
+
+#       - name: Terraform Init
+#         working-directory: terraform/environments/${{ env.TF_ENV }}
+#         run: terraform init
+
+#       - name: Terraform Plan
+#         working-directory: terraform/environments/${{ env.TF_ENV }}
+#         run: |
+#           terraform plan \
+#             -var="project_id=${{ secrets.GCP_PROJECT_ID }}" \
+#             -out=tfplan
+
+#       - name: Terraform Apply
+#         working-directory: terraform/environments/${{ env.TF_ENV }}
+#         run: terraform apply -auto-approve tfplan
+
+#       - name: Get outputs
+#         id: outputs
+#         working-directory: terraform/environments/${{ env.TF_ENV }}
+#         run: |
+#           echo "vm-name=$(terraform output -raw vm_name)"     >> $GITHUB_OUTPUT
+#           echo "vm-ip=$(terraform output -raw vm_external_ip)" >> $GITHUB_OUTPUT
+#           echo "registry=$(terraform output -raw artifact_registry_url)" >> $GITHUB_OUTPUT
+
+#       - name: Summary
+#         working-directory: terraform/environments/${{ env.TF_ENV }}
+#         run: |
+#           echo "🌐 Frontend : $(terraform output -raw frontend_url)"
+#           echo "📊 Grafana  : $(terraform output -raw grafana_url)"
+
+#   # ===========================================================================
+#   # JOB 2 — Build & Push
+#   # ===========================================================================
+#   build-and-push:
+#     name: 🐳 Build & Push
+#     runs-on: ubuntu-latest
+#     needs: terraform
+#     outputs:
+#       image-tag: ${{ steps.tag.outputs.tag }}
+
+#     steps:
+#       - uses: actions/checkout@v4
+
+#       - name: Authenticate to GCP
+#         uses: google-github-actions/auth@v2
+#         with:
+#           credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+#       - uses: google-github-actions/setup-gcloud@v2
+
+#       - name: Configure Docker → Artifact Registry
+#         run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+
+#       - name: Image tag
+#         id: tag
+#         run: echo "tag=${GITHUB_SHA::8}" >> $GITHUB_OUTPUT
+
+#       - name: Build & Push backend
+#         working-directory: ./transaction-service
+#         run: |
+#           IMAGE=${{ needs.terraform.outputs.registry }}/rag-backend
+#           docker build -t $IMAGE:${{ steps.tag.outputs.tag }} -t $IMAGE:latest .
+#           docker push $IMAGE:${{ steps.tag.outputs.tag }}
+#           docker push $IMAGE:latest
+
+#       - name: Build & Push frontend
+#         working-directory: ./agentic-rag-ui
+#         run: |
+#           IMAGE=${{ needs.terraform.outputs.registry }}/rag-frontend
+#           docker build -t $IMAGE:${{ steps.tag.outputs.tag }} -t $IMAGE:latest .
+#           docker push $IMAGE:${{ steps.tag.outputs.tag }}
+#           docker push $IMAGE:latest
+
+#   # ===========================================================================
+#   # JOB 3 — Deploy
+#   # ===========================================================================
+#   deploy:
+#     name: 🚀 Deploy
+#     runs-on: ubuntu-latest
+#     needs: [terraform, build-and-push]
+#     environment: ${{ github.event.inputs.environment || 'prod' }}
+
+#     steps:
+#       - uses: actions/checkout@v4
+
+#       - name: Authenticate to GCP
+#         uses: google-github-actions/auth@v2
+#         with:
+#           credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+#       - uses: google-github-actions/setup-gcloud@v2
+
+#       - name: Wait for VM startup
+#         run: sleep 30
+
+#       - name: Copy configs to VM
+#         run: |
+#           gcloud compute scp docker-compose.prod.yml \
+#             ${{ needs.terraform.outputs.vm-name }}:/opt/rag-app/docker-compose.prod.yml \
+#             --zone=${{ secrets.GCP_VM_ZONE }} --quiet
+
+#           gcloud compute scp --recurse prometheus/ \
+#             ${{ needs.terraform.outputs.vm-name }}:/opt/rag-app/prometheus \
+#             --zone=${{ secrets.GCP_VM_ZONE }} --quiet
+
+#           gcloud compute scp --recurse grafana/ \
+#             ${{ needs.terraform.outputs.vm-name }}:/opt/rag-app/grafana \
+#             --zone=${{ secrets.GCP_VM_ZONE }} --quiet
+
+#       - name: Deploy
+#         run: |
+#           gcloud compute ssh ${{ needs.terraform.outputs.vm-name }} \
+#             --zone=${{ secrets.GCP_VM_ZONE }} --quiet \
+#             --command="
+#               set -e
+#               cd /opt/rag-app
+
+#               cat > .env << 'ENVEOF'
+#           REGISTRY=${{ env.REGISTRY }}
+#           GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
+#           REPOSITORY=rag-app-${{ env.TF_ENV }}
+#           IMAGE_TAG=${{ needs.build-and-push.outputs.image-tag }}
+#           OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+#           POSTGRES_USER=admin
+#           POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+#           REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
+#           GRAFANA_PASSWORD=${{ secrets.GRAFANA_PASSWORD }}
+#           ENVEOF
+
+#               gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+#               docker compose -f docker-compose.prod.yml pull backend frontend
+#               docker compose -f docker-compose.prod.yml up -d --remove-orphans
+#               docker image prune -f
+#               docker compose -f docker-compose.prod.yml ps
+#             "
+
+#       - name: Summary
+#         run: |
+#           echo "## 🚀 Deployment [${{ env.TF_ENV }}]" >> $GITHUB_STEP_SUMMARY
+#           echo "| | |" >> $GITHUB_STEP_SUMMARY
+#           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+#           echo "| 🌐 Frontend | http://${{ needs.terraform.outputs.vm-ip }} |" >> $GITHUB_STEP_SUMMARY
+#           echo "| 📊 Grafana  | http://${{ needs.terraform.outputs.vm-ip }}:3000 |" >> $GITHUB_STEP_SUMMARY
+#           echo "| 🏷️ Tag      | ${{ needs.build-and-push.outputs.image-tag }} |" >> $GITHUB_STEP_SUMMARY
+#           echo "| 🌍 Env      | ${{ env.TF_ENV }} |" >> $GITHUB_STEP_SUMMARY

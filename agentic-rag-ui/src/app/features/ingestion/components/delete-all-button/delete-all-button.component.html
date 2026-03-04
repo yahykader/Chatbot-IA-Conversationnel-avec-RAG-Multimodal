@@ -1,0 +1,36 @@
+    <div class="delete-all-container">
+      <div class="alert alert-danger mb-3" role="alert">
+        <h5 class="alert-heading">
+          <i class="bi bi-exclamation-triangle-fill me-2"></i>
+          Zone Dangereuse
+        </h5>
+        <p class="mb-0">
+          Cette action supprimera <strong>TOUS les fichiers</strong> du système 
+          (PostgreSQL + Redis + Tracker). Cette action est <strong>irréversible</strong>.
+        </p>
+      </div>
+      
+      <button 
+        class="btn btn-danger btn-lg w-100"
+        (click)="openDeleteModal()"
+        [disabled]="isDeleting$ | async">
+        <span *ngIf="!(isDeleting$ | async)">
+          <i class="bi bi-trash3 me-2"></i>
+          Supprimer TOUT le Système
+        </span>
+        <span *ngIf="isDeleting$ | async">
+          <span class="spinner-border spinner-border-sm me-2"></span>
+          Suppression en cours...
+        </span>
+      </button>
+      
+      <small class="text-muted d-block mt-2">
+        ⚠️ Cette action nécessite une confirmation en 3 étapes
+      </small>
+    </div>
+    
+    <!-- Modal -->
+    <app-delete-all-modal
+      (confirmed)="onConfirmed()"
+      (cancelled)="onCancelled()">
+    </app-delete-all-modal>

@@ -1,0 +1,895 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "id": 100,
+      "panels": [],
+      "title": "📊 INGESTION OVERVIEW",
+      "type": "row"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 1},
+      "id": 1,
+      "targets": [
+        {
+          "expr": "rate(rag_ingestion_files_total{status=\"success\"}[5m]) * 60",
+          "legendFormat": "{{strategy}} - Success"
+        },
+        {
+          "expr": "rate(rag_ingestion_files_total{status=\"error\"}[5m]) * 60",
+          "legendFormat": "{{strategy}} - Error"
+        }
+      ],
+      "title": "📊 Ingestion Rate (files/min)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisLabel": "",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2
+          },
+          "unit": "ms"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 1},
+      "id": 2,
+      "targets": [
+        {"expr": "histogram_quantile(0.50, rate(rag_ingestion_duration_seconds_bucket[5m])) * 1000", "legendFormat": "{{strategy}} - P50"},
+        {"expr": "histogram_quantile(0.95, rate(rag_ingestion_duration_seconds_bucket[5m])) * 1000", "legendFormat": "{{strategy}} - P95"},
+        {"expr": "histogram_quantile(0.99, rate(rag_ingestion_duration_seconds_bucket[5m])) * 1000", "legendFormat": "{{strategy}} - P99"}
+      ],
+      "title": "⏱️ Processing Duration (P50/P95/P99)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 9},
+      "id": 3,
+      "targets": [{"expr": "rag_active_ingestions"}],
+      "title": "🔄 Active Ingestions",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 9},
+      "id": 4,
+      "targets": [{"expr": "sum(increase(rag_ingestion_files_total{status=\"success\"}[$__range]))"}],
+      "title": "📁 Total Files Processed",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 9},
+      "id": 5,
+      "targets": [{"expr": "sum(increase(rag_tokens_generated_total[$__range]))"}],
+      "title": "🔤 Total Tokens",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 90},
+              {"color": "green", "value": 95}
+            ]
+          },
+          "unit": "percent"
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 9},
+      "id": 6,
+      "targets": [{"expr": "sum(increase(rag_ingestion_files_total{status=\"success\"}[1h])) / sum(increase(rag_ingestion_files_total[1h])) * 100"}],
+      "title": "✅ Success Rate (1h)",
+      "type": "gauge"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 5},
+              {"color": "red", "value": 10}
+            ]
+          },
+          "unit": "percent"
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 9},
+      "id": 7,
+      "targets": [{"expr": "(sum(increase(rag_duplicates_total[1h])) or vector(0)) / clamp_min(sum(increase(rag_ingestion_files_total[1h])), 1) * 100"}],
+      "title": "🔁 Duplicate Rate (1h)",
+      "type": "gauge"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 13},
+      "id": 101,
+      "panels": [],
+      "title": "🔍 QUERY PROCESSING",
+      "type": "row"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisLabel": "Duration (ms)",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2
+          },
+          "unit": "ms"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14},
+      "id": 18,
+      "targets": [
+        {"expr": "histogram_quantile(0.50, rate(rag_query_transformation_duration_seconds_bucket[5m])) * 1000", "legendFormat": "P50"},
+        {"expr": "histogram_quantile(0.95, rate(rag_query_transformation_duration_seconds_bucket[5m])) * 1000", "legendFormat": "P95"},
+        {"expr": "histogram_quantile(0.99, rate(rag_query_transformation_duration_seconds_bucket[5m])) * 1000", "legendFormat": "P99"}
+      ],
+      "title": "🔄 Query Transformation Duration",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 14},
+      "id": 19,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [{"expr": "sum(increase(rag_query_variants_total[$__range]))"}],
+      "title": "🔀 Query Variants",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 14},
+      "id": 20,
+      "targets": [
+        {"expr": "rate(rag_routing_decisions_total[5m]) * 60", "legendFormat": "{{strategy}}"}
+      ],
+      "title": "🎯 Routing Decisions/min",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 18},
+      "id": 21,
+      "targets": [{"expr": "rag_active_queries"}],
+      "title": "🔍 Active Queries",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 18},
+      "id": 22,
+      "targets": [
+        {"expr": "rate(rag_total_queries[5m]) * 60", "legendFormat": "Queries/min"}
+      ],
+      "title": "📊 Query Rate",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 22},
+      "id": 102,
+      "panels": [],
+      "title": "📥 RETRIEVAL & PROCESSING",
+      "type": "row"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisLabel": "Duration (ms)",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2
+          },
+          "unit": "ms"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 23},
+      "id": 23,
+      "targets": [
+        {"expr": "histogram_quantile(0.95, rate(rag_retrieval_duration_seconds_bucket[5m])) * 1000", "legendFormat": "{{retriever}} - P95"}
+      ],
+      "title": "📥 Retrieval Duration P95 (ms)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 23},
+      "id": 24,
+      "targets": [
+        {"expr": "rate(rag_chunks_retrieved_total[5m]) * 60", "legendFormat": "{{retriever}} - Chunks/min"}
+      ],
+      "title": "📦 Chunks Retrieved per Retriever",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisLabel": "Duration (ms)",
+            "drawStyle": "line",
+            "lineWidth": 2
+          },
+          "unit": "ms"
+        }
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 31},
+      "id": 25,
+      "targets": [
+        {"expr": "rate(rag_aggregation_duration_seconds_sum[5m]) / rate(rag_aggregation_duration_seconds_count[5m]) * 1000", "legendFormat": "Mean"},
+        {"expr": "histogram_quantile(0.95, rate(rag_aggregation_duration_seconds_bucket[5m])) * 1000", "legendFormat": "P95"}
+      ],
+      "title": "🔗 Aggregation Duration",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisLabel": "",
+            "drawStyle": "line",
+            "lineWidth": 2
+          },
+          "unit": "ms"
+        }
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 31},
+      "id": 26,
+      "targets": [
+        {"expr": "histogram_quantile(0.95, rate(rag_reranking_duration_seconds_bucket[5m])) * 1000", "legendFormat": "Duration P95 (ms)"}
+      ],
+      "title": "🎖️ Reranking Duration",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 31},
+      "id": 27,
+      "targets": [
+        {"expr": "rate(rag_reranking_chunks_total[5m]) * 60", "legendFormat": "Chunks Reranked/min"}
+      ],
+      "title": "📊 Reranking Rate",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 39},
+      "id": 103,
+      "panels": [],
+      "title": "✍️ GENERATION",
+      "type": "row"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisLabel": "Duration (ms)",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2
+          },
+          "thresholds": {
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 2000},
+              {"color": "red", "value": 5000}
+            ]
+          },
+          "unit": "ms"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 40},
+      "id": 28,
+      "targets": [
+        {"expr": "histogram_quantile(0.50, rate(rag_generation_duration_seconds_bucket[5m])) * 1000", "legendFormat": "P50"},
+        {"expr": "histogram_quantile(0.95, rate(rag_generation_duration_seconds_bucket[5m])) * 1000", "legendFormat": "P95"},
+        {"expr": "histogram_quantile(0.99, rate(rag_generation_duration_seconds_bucket[5m])) * 1000", "legendFormat": "P99"}
+      ],
+      "title": "✍️ Generation Duration (P50/P95/P99)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 12, "y": 40},
+      "id": 29,
+      "targets": [
+        {"expr": "rate(rag_tokens_generated_total[5m]) * 60", "legendFormat": "Tokens/min"}
+      ],
+      "title": "🔤 Tokens Generation Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 40},
+      "id": 30,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [{"expr": "sum(increase(rag_tokens_generated_total[$__range]))"}],
+      "title": "🔤 Total Tokens",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 44},
+      "id": 31,
+      "targets": [
+        {"expr": "rate(rag_citations_total[5m]) * 60", "legendFormat": "Citations/min"}
+      ],
+      "title": "📚 Citations Rate",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 48},
+      "id": 104,
+      "panels": [],
+      "title": "💬 CONVERSATION",
+      "type": "row"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "stacking": {"mode": "normal"}
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 49},
+      "id": 32,
+      "targets": [
+        {"expr": "rate(rag_conversation_messages_total[5m]) * 60", "legendFormat": "{{role}} - Messages/min"}
+      ],
+      "title": "💬 Conversation Messages by Role",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "stacking": {"mode": "normal"}
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 49},
+      "id": 33,
+      "targets": [
+        {"expr": "rate(rag_conversation_tokens_total[5m]) * 60", "legendFormat": "{{role}} - Tokens/min"}
+      ],
+      "title": "🗨️ Conversation Tokens by Role",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 57},
+      "id": 34,
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal"
+      },
+      "targets": [
+        {"expr": "sum by(role) (increase(rag_conversation_messages_total[$__range]))", "legendFormat": "{{role}}"}
+      ],
+      "title": "💬 Total Messages by Role (Period)",
+      "type": "bargauge"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 57},
+      "id": 35,
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal"
+      },
+      "targets": [
+        {"expr": "sum by(role) (increase(rag_conversation_tokens_total[$__range]))", "legendFormat": "{{role}}"}
+      ],
+      "title": "🗨️ Total Tokens by Role (Period)",
+      "type": "bargauge"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 65},
+      "id": 105,
+      "panels": [],
+      "title": "🖥️ INFRASTRUCTURE",
+      "type": "row"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2
+          },
+          "unit": "decmbytes"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 66},
+      "id": 36,
+      "targets": [
+        {"expr": "jvm_memory_used_bytes{area=\"heap\"} / 1024 / 1024", "legendFormat": "Heap Used (MB)"},
+        {"expr": "jvm_memory_max_bytes{area=\"heap\"} / 1024 / 1024", "legendFormat": "Heap Max (MB)"}
+      ],
+      "title": "☕ JVM Memory (Heap)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2
+          },
+          "max": 100,
+          "min": 0,
+          "unit": "percent"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 66},
+      "id": 37,
+      "targets": [
+        {"expr": "process_cpu_usage * 100", "legendFormat": "Process CPU %"},
+        {"expr": "system_cpu_usage * 100", "legendFormat": "System CPU %"}
+      ],
+      "title": "🖥️ CPU Usage",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 74},
+      "id": 106,
+      "panels": [],
+      "title": "💰 LLM COSTS",
+      "type": "row"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 1},
+              {"color": "orange", "value": 10},
+              {"color": "red", "value": 50}
+            ]
+          },
+          "unit": "currencyUSD",
+          "decimals": 6
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 75},
+      "id": 38,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {"expr": "sum(increase(rag_cost_llm_usd_total[$__range]))", "legendFormat": "Total Cost"}
+      ],
+      "title": "💰 Total LLM Cost",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2
+          },
+          "unit": "currencyUSD"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 4, "y": 75},
+      "id": 39,
+      "options": {
+        "legend": {
+          "calcs": ["mean", "lastNotNull", "max"],
+          "displayMode": "table"
+        }
+      },
+      "targets": [
+        {"expr": "rate(rag_cost_llm_usd_total[5m]) * 3600", "legendFormat": "$/hour"},
+        {"expr": "rate(rag_cost_llm_usd_total[5m]) * 86400", "legendFormat": "$/day"}
+      ],
+      "title": "💸 LLM Cost Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "unit": "currencyUSD",
+          "decimals": 6
+        }
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 75},
+      "id": 40,
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "showUnfilled": true
+      },
+      "targets": [
+        {"expr": "sum by(model) (increase(rag_cost_llm_usd_total[$__range]))", "legendFormat": "{{model}}"}
+      ],
+      "title": "💰 Cost by Model",
+      "type": "bargauge"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "stacking": {"mode": "normal"}
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 79},
+      "id": 41,
+      "options": {
+        "legend": {
+          "calcs": ["mean", "lastNotNull", "sum"],
+          "displayMode": "table"
+        }
+      },
+      "targets": [
+        {"expr": "rate(rag_cost_input_tokens_total[5m]) * 60", "legendFormat": "Input tokens/min"},
+        {"expr": "rate(rag_cost_output_tokens_total[5m]) * 60", "legendFormat": "Output tokens/min"}
+      ],
+      "title": "🔢 Token Usage (Input vs Output)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.01},
+              {"color": "orange", "value": 0.05},
+              {"color": "red", "value": 0.1}
+            ]
+          },
+          "unit": "currencyUSD",
+          "decimals": 6
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 79},
+      "id": 42,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [
+        {"expr": "sum(increase(rag_cost_llm_usd_total[1h])) / sum(increase(rag_total_queries[1h]))", "legendFormat": "Avg Cost/Query"}
+      ],
+      "title": "💵 Avg Cost/Query (1h)",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "unit": "short",
+          "decimals": 0
+        }
+      },
+      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 79},
+      "id": 43,
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal"
+      },
+      "targets": [
+        {"expr": "sum(increase(rag_cost_input_tokens_total[$__range]))", "legendFormat": "Input Tokens"},
+        {"expr": "sum(increase(rag_cost_output_tokens_total[$__range]))", "legendFormat": "Output Tokens"}
+      ],
+      "title": "🔢 Total Tokens (Period)",
+      "type": "bargauge"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "max": 10,
+          "min": 0,
+          "thresholds": {
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 3},
+              {"color": "orange", "value": 5},
+              {"color": "red", "value": 7}
+            ]
+          },
+          "unit": "short",
+          "decimals": 2
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 83},
+      "id": 44,
+      "options": {
+        "showThresholdLabels": true,
+        "showThresholdMarkers": true
+      },
+      "targets": [
+        {"expr": "sum(increase(rag_cost_input_tokens_total[1h])) / sum(increase(rag_cost_output_tokens_total[1h]))", "legendFormat": "Input/Output Ratio"}
+      ],
+      "title": "📊 Token Ratio (Input/Output)",
+      "type": "gauge"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "unit": "currencyUSD",
+          "decimals": 6
+        }
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 83},
+      "id": 45,
+      "options": {
+        "displayLabels": ["name", "value", "percent"],
+        "pieType": "pie",
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "values": ["value", "percent"]
+        }
+      },
+      "targets": [
+        {"expr": "sum by(model) (increase(rag_cost_llm_usd_total[24h]))", "legendFormat": "{{model}}"}
+      ],
+      "title": "🥧 Cost Breakdown (24h)",
+      "type": "piechart"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "continuous-GrYlRd"},
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 30,
+            "lineWidth": 3
+          },
+          "unit": "currencyUSD"
+        }
+      },
+      "gridPos": {"h": 8, "w": 16, "x": 0, "y": 87},
+      "id": 46,
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull"],
+          "displayMode": "list"
+        }
+      },
+      "targets": [
+        {"expr": "sum(rag_cost_llm_usd_total)", "legendFormat": "Cumulative Cost"}
+      ],
+      "title": "📈 Cumulative Cost",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 30,
+  "style": "dark",
+  "tags": ["rag", "ragmetrics", "spring-boot", "monitoring", "production", "complete", "costs"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "RAG System - Complete Monitoring with Costs (FIXED)",
+  "uid": "rag-system-complete-costs-fixed",
+  "version": 1
+}

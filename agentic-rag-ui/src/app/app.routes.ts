@@ -1,14 +1,27 @@
+// app.routes.ts
 import { Routes } from '@angular/router';
-import { AssistantComponent } from './assistant/assistant.component';
+import { ChatResolver } from './features/chat/resolvers/chat.resolver';
 
 export const routes: Routes = [
-  { 
-    path: '', 
-    redirectTo: '/assistant', 
-    pathMatch: 'full' 
+  {
+    path: '',
+    redirectTo: '/workspace',
+    pathMatch: 'full'
   },
-  { 
-    path: 'assistant', 
-    component: AssistantComponent 
+  {
+    path: 'workspace',
+    loadComponent: () =>
+      import('./pages/workspace/workspace.component')
+        .then(m => m.WorkspaceComponent)
+  },
+/*   {
+    path: 'management',
+    loadComponent: () => 
+      import('./features/management/pages/management-page/management-page.component')
+        .then(m => m.ManagementPageComponent)
+  } */
+  {
+    path: '**',
+    redirectTo: '/workspace'
   }
 ];

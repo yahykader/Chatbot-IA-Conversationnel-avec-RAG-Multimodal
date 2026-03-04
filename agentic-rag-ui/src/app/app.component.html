@@ -1,0 +1,51 @@
+<!-- app.component.html -->
+<div class="app-wrapper">
+  
+  <!-- Navbar Top -->
+  <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+    <div class="container-fluid">
+      <a class="navbar-brand" routerLink="/workspace">
+        <i class="bi bi-robot me-2"></i>
+        RAG System
+      </a>
+      
+      <button 
+        class="navbar-toggler" 
+        type="button" 
+        data-bs-toggle="collapse" 
+        data-bs-target="#navbarNav">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      
+      <div class="collapse navbar-collapse" id="navbarNav">
+        <ul class="navbar-nav">
+          <li class="nav-item">
+            <a 
+              class="nav-link" 
+              routerLink="/workspace" 
+              routerLinkActive="active">
+              <i class="bi bi-grid me-1"></i>
+              Workspace
+            </a>
+          </li>
+          <li class="nav-item">
+            <a 
+              class="nav-link" 
+              routerLink="/management" 
+              routerLinkActive="active">
+              <i class="bi bi-gear me-1"></i>
+              Management
+            </a>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </nav>
+  
+  <!-- Router Outlet -->
+  <router-outlet></router-outlet>
+  
+</div>
+
+<!-- Toast Container -->
+<app-toast-container></app-toast-container>

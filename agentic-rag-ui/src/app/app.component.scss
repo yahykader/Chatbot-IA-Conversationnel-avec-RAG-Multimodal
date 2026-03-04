@@ -1,0 +1,19 @@
+// app.component.scss
+
+.app-wrapper {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.navbar {
+  flex-shrink: 0;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+// Router outlet prend le reste de l'espace
+router-outlet + * {
+  flex: 1;
+  overflow: hidden;
+}

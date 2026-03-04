@@ -16,11 +16,26 @@
         "build": {
           "builder": "@angular/build:application",
           "options": {
+            "outputPath": "dist/agentic-rag-ui",
+            "allowedCommonJsDependencies": [
+                "buffer",
+                "url-parse",
+                "inherits",
+                "@stomp/stompjs",
+                "sockjs-client",
+                "events",
+                "eventsource",
+                "crypto"
+            ],
             "browser": "src/main.ts",
             "tsConfig": "tsconfig.app.json",
              "polyfills": [
+              "src/polyfills.ts",
               "zone.js"
             ],
+            "define": {
+              "global": "globalThis"
+            },
             "assets": [
               {
                 "glob": "**/*",
@@ -29,6 +44,7 @@
             ],
             "styles": [
               "node_modules/bootstrap/dist/css/bootstrap.min.css",
+              "node_modules/bootstrap-icons/font/bootstrap-icons.css",
               "src/styles.scss"
             ],
             "scripts": [
@@ -41,18 +57,19 @@
                   {
                     "replace": "src/environments/environment.ts",
                     "with": "src/environments/environment.prod.ts"
+                   
            }
               ],
               "budgets": [
                 {
                   "type": "initial",
-                  "maximumWarning": "500kB",
-                  "maximumError": "1MB"
+                  "maximumWarning": "2MB",
+                  "maximumError": "2.5MB"
                 },
                 {
                   "type": "anyComponentStyle",
-                  "maximumWarning": "4kB",
-                  "maximumError": "8kB"
+                  "maximumWarning": "10kB",
+                  "maximumError": "12kB"
                 }
               ],
               "outputHashing": "all"
@@ -72,7 +89,8 @@
               "buildTarget": "agentic-rag-ui:build:production"
             },
             "development": {
-              "buildTarget": "agentic-rag-ui:build:development"
+              "buildTarget": "agentic-rag-ui:build:development",
+              "proxyConfig": "proxy.conf.json"
             }
           },
           "defaultConfiguration": "development"

@@ -1,0 +1,13 @@
+    <div class="rate-limit-indicator" *ngIf="remaining$ | async as remaining">
+      <div class="indicator-label">Uploads restants:</div>
+      <div class="indicator-bar">
+        <div 
+          class="indicator-fill" 
+          [style.width.%]="percentage$ | async"
+          [class.low]="(percentage$ | async)! < 20"
+          [class.medium]="(percentage$ | async)! >= 20 && (percentage$ | async)! < 50"
+          [class.high]="(percentage$ | async)! >= 50">
+        </div>
+      </div>
+      <div class="indicator-value">{{ remaining }}/10</div>
+    </div>
