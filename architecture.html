@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>RAG System — Architecture Hybride</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;600;800&display=swap');
+  :root {
+    --bg:#0a0e1a;--surface:#141c30;--border:#1e2d4a;
+    --blue:#3b82f6;--cyan:#06b6d4;--green:#10b981;
+    --orange:#f59e0b;--purple:#8b5cf6;--red:#ef4444;
+    --text:#e2e8f0;--muted:#64748b;--accent:#0ea5e9;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--text);font-family:'JetBrains Mono',monospace;padding:40px 20px}
+  h1{font-family:'Syne',sans-serif;font-size:2rem;font-weight:800;text-align:center;margin-bottom:8px;background:linear-gradient(135deg,var(--cyan),var(--blue),var(--purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+  .subtitle{text-align:center;color:var(--muted);font-size:.75rem;margin-bottom:40px;letter-spacing:.1em;text-transform:uppercase}
+  .diagram{max-width:1200px;margin:0 auto;display:flex;flex-direction:column;gap:20px}
+  /* TRIGGER */
+  .trigger-row{display:flex;justify-content:center;gap:16px;align-items:center}
+  .tbox{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 20px;text-align:center;font-size:.7rem;min-width:120px}
+  .tbox .icon{font-size:1.4rem;display:block;margin-bottom:6px}
+  .tbox .label{color:var(--muted);font-size:.65rem;margin-top:2px}
+  .arr{color:var(--muted);font-size:1.2rem;padding:0 8px}
+  /* PIPELINE */
+  .pipeline{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px}
+  .ptitle{font-family:'Syne',sans-serif;font-size:.7rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.15em;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+  .ptitle::before{content:'';width:8px;height:8px;background:var(--orange);border-radius:50%;display:inline-block}
+  .jobs{display:flex;gap:0;align-items:stretch}
+  .job{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px 14px;flex:1;min-width:0}
+  .jnum{font-size:.6rem;color:var(--muted);margin-bottom:3px}
+  .jname{font-size:.72rem;font-weight:600;margin-bottom:6px}
+  .jsteps{list-style:none;display:flex;flex-direction:column;gap:2px}
+  .jsteps li{font-size:.62rem;color:var(--muted);padding-left:10px;position:relative}
+  .jsteps li::before{content:'›';position:absolute;left:0;color:var(--accent)}
+  /* ENV */
+  .env-split{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  .ebox{border-radius:12px;padding:20px;border:1px solid}
+  .ebox.dev{background:rgba(16,185,129,.04);border-color:rgba(16,185,129,.2)}
+  .ebox.prod{background:rgba(59,130,246,.04);border-color:rgba(59,130,246,.2)}
+  .etitle{font-family:'Syne',sans-serif;font-size:.85rem;font-weight:800;margin-bottom:14px;display:flex;align-items:center;gap:10px}
+  .ebox.dev .etitle{color:var(--green)}
+  .ebox.prod .etitle{color:var(--blue)}
+  .ebadge{font-size:.6rem;padding:2px 8px;border-radius:20px;font-weight:600}
+  .ebox.dev .ebadge{background:rgba(16,185,129,.15);color:var(--green)}
+  .ebox.prod .ebadge{background:rgba(59,130,246,.15);color:var(--blue)}
+  .slabel{font-size:.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.12em;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+  .slabel::after{content:'';flex:1;height:1px;background:var(--border)}
+  .vmbox{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px}
+  .vmtitle{font-size:.68rem;font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+  .vmtitle .ip{font-size:.6rem;color:var(--muted);margin-left:auto}
+  .sgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+  .schip{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:.62rem;text-align:center}
+  .schip .sn{font-weight:600}
+  .schip .sp{color:var(--muted);font-size:.58rem}
+  .cg{border-color:rgba(16,185,129,.3)}.cb{border-color:rgba(59,130,246,.3)}
+  .co{border-color:rgba(245,158,11,.3)}.cp{border-color:rgba(139,92,246,.3)}
+  .cc{border-color:rgba(6,182,212,.3)}.cr{border-color:rgba(239,68,68,.3)}
+  /* CLOUD RUN */
+  .crrow{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+  .crbox{background:var(--bg);border:1px solid rgba(59,130,246,.3);border-radius:8px;padding:12px}
+  .crtitle{font-size:.65rem;font-weight:600;color:var(--blue);margin-bottom:6px}
+  .crdetail{font-size:.6rem;color:var(--muted);line-height:1.8}
+  .fbadge{display:inline-flex;align-items:center;gap:4px;font-size:.6rem;padding:2px 7px;border-radius:20px;margin-top:4px;background:rgba(16,185,129,.15);color:var(--green)}
+  /* MONITORING */
+  .monrow{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+  .mchip{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;text-align:center;font-size:.62rem}
+  .mchip .mi{font-size:1rem;display:block;margin-bottom:3px}
+  .mchip .mn{font-weight:600}
+  .mchip .mp{color:var(--muted);font-size:.58rem}
+  /* INFRA */
+  .infrow{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .ichip{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px;text-align:center;font-size:.6rem}
+  .ichip .in{font-weight:600;margin-bottom:3px}
+  .ichip .id{color:var(--muted)}
+  /* LEGEND */
+  .legend{display:flex;gap:20px;justify-content:center;flex-wrap:wrap;padding-top:20px;border-top:1px solid var(--border)}
+  .li{display:flex;align-items:center;gap:6px;font-size:.65rem;color:var(--muted)}
+  .ld{width:8px;height:8px;border-radius:50%}
+  @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+  .diagram>*{animation:fadeUp .4s ease both}
+  .diagram>*:nth-child(1){animation-delay:.05s}
+  .diagram>*:nth-child(2){animation-delay:.1s}
+  .diagram>*:nth-child(3){animation-delay:.15s}
+  .diagram>*:nth-child(4){animation-delay:.2s}
+  .diagram>*:nth-child(5){animation-delay:.25s}
+</style>
+</head>
+<body>
+<h1>RAG System — Architecture Hybride</h1>
+<p class="subtitle">GitHub Actions · GCP Cloud Run · Compute Engine · Terraform</p>
+<div class="diagram">
+
+  <div class="trigger-row">
+    <div class="tbox"><span class="icon">👤</span><strong>Developer</strong><div class="label">git push / manual</div></div>
+    <div class="arr">→</div>
+    <div class="tbox"><span class="icon">⚙️</span><strong>GitHub Actions</strong><div class="label">workflow_dispatch</div></div>
+    <div class="arr">→</div>
+    <div class="tbox"><span class="icon">🔀</span><strong>Environment</strong><div class="label">dev | prod</div></div>
+  </div>
+
+  <div class="pipeline">
+    <div class="ptitle">CI/CD Pipeline — 4 Jobs séquentiels</div>
+    <div class="jobs">
+      <div class="job">
+        <div class="jnum">JOB 1</div>
+        <div class="jname">🏗️ Terraform</div>
+        <ul class="jsteps">
+          <li>init + validate</li>
+          <li>plan + apply</li>
+          <li>VM + réseau VPC</li>
+          <li>Firewall rules</li>
+          <li>IP statique</li>
+          <li>Artifact Registry</li>
+          <li>IAM / Cloud Run API</li>
+        </ul>
+      </div>
+      <div class="arr">→</div>
+      <div class="job">
+        <div class="jnum">JOB 2</div>
+        <div class="jname">🐳 Build &amp; Push</div>
+        <ul class="jsteps">
+          <li>Build backend JAR</li>
+          <li>Build Angular prod</li>
+          <li>Docker build x2</li>
+          <li>Push Artifact Registry</li>
+          <li>Tag SHA + latest</li>
+        </ul>
+      </div>
+      <div class="arr">→</div>
+      <div class="job">
+        <div class="jnum">JOB 3</div>
+        <div class="jname">📋 Copy Configs</div>
+        <ul class="jsteps">
+          <li>docker-compose.yml</li>
+          <li>prometheus.yml (sed)</li>
+          <li>URL auto → VM/CR</li>
+          <li>grafana/ dashboards</li>
+          <li>alertmanager.yml</li>
+          <li>.env secrets</li>
+        </ul>
+      </div>
+      <div class="arr">→</div>
+      <div class="job">
+        <div class="jnum">JOB 4</div>
+        <div class="jname">🚀 Deploy</div>
+        <ul class="jsteps">
+          <li>Wait startup 60s</li>
+          <li>[DEV] compose up all</li>
+          <li>[PROD] VM stateful first</li>
+          <li>[PROD] Wait 60s</li>
+          <li>[PROD] Cloud Run backend</li>
+          <li>[PROD] Cloud Run frontend</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="env-split">
+    <div class="ebox dev">
+      <div class="etitle">🔧 DEV <span class="ebadge">VM ONLY</span></div>
+      <div class="slabel">Compute Engine — e2-standard-2</div>
+      <div class="vmbox">
+        <div class="vmtitle">🖥️ rag-vm-dev <span class="ip">34.53.187.62 (statique)</span></div>
+        <div class="sgrid">
+          <div class="schip cg"><div class="sn">🌐 Frontend</div><div class="sp">Nginx :8080</div></div>
+          <div class="schip cb"><div class="sn">⚙️ Backend</div><div class="sp">Spring :8090</div></div>
+          <div class="schip cp"><div class="sn">🗄️ PgVector</div><div class="sp">:5432</div></div>
+          <div class="schip cr"><div class="sn">⚡ Redis</div><div class="sp">:6379</div></div>
+          <div class="schip co"><div class="sn">🦠 ClamAV</div><div class="sp">:3310</div></div>
+          <div class="schip cc"><div class="sn">🔍 Zipkin</div><div class="sp">:9411</div></div>
+        </div>
+      </div>
+      <div class="slabel">Monitoring</div>
+      <div class="monrow">
+        <div class="mchip"><span class="mi">📊</span><div class="mn">Prometheus</div><div class="mp">:9090</div></div>
+        <div class="mchip"><span class="mi">📈</span><div class="mn">Grafana</div><div class="mp">:3000</div></div>
+        <div class="mchip"><span class="mi">🔔</span><div class="mn">Alertmanager</div><div class="mp">:9093</div></div>
+        <div class="mchip"><span class="mi">🐳</span><div class="mn">cAdvisor</div><div class="mp">:8082</div></div>
+      </div>
+    </div>
+
+    <div class="ebox prod">
+      <div class="etitle">🚀 PROD <span class="ebadge">HYBRID</span></div>
+      <div class="slabel">Cloud Run — Stateless / Scale to 0</div>
+      <div class="crrow">
+        <div class="crbox">
+          <div class="crtitle">☁️ rag-frontend-prod</div>
+          <div class="crdetail">Nginx Angular :8080<br>512Mi · 1 CPU<br>BACKEND_URL → envsubst<br>proxy /api/ + /ws/<br><span class="fbadge">🔒 HTTPS auto</span></div>
+        </div>
+        <div class="crbox">
+          <div class="crtitle">☁️ rag-backend-prod</div>
+          <div class="crdetail">Spring Boot :8090<br>2Gi · 2 CPU<br>ANTIVIRUS_HOST → VM<br>PGVECTOR_HOST → VM<br><span class="fbadge">🔒 HTTPS auto</span></div>
+        </div>
+      </div>
+      <div class="slabel">Compute Engine — e2-standard-4 — Stateful</div>
+      <div class="vmbox">
+        <div class="vmtitle">🖥️ rag-vm-prod <span class="ip">35.189.245.29 (statique)</span></div>
+        <div class="sgrid">
+          <div class="schip cp"><div class="sn">🗄️ PgVector</div><div class="sp">:5432</div></div>
+          <div class="schip cr"><div class="sn">⚡ Redis</div><div class="sp">:6379</div></div>
+          <div class="schip co"><div class="sn">🦠 ClamAV</div><div class="sp">:3310</div></div>
+          <div class="schip cc"><div class="sn">🔍 Zipkin</div><div class="sp">:9411</div></div>
+          <div class="schip cg"><div class="sn">📊 Prometheus</div><div class="sp">→ Cloud Run</div></div>
+          <div class="schip cb"><div class="sn">📈 Grafana</div><div class="sp">:3000</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="pipeline">
+    <div class="ptitle">Infrastructure GCP — Terraform Managed</div>
+    <div class="infrow">
+      <div class="ichip"><div class="in">🗂️ Artifact Registry</div><div class="id">rag-app-dev / rag-app-prod</div></div>
+      <div class="ichip"><div class="in">🔥 Firewall Rules</div><div class="id">22 · 80 · 3000 · 5432 · 6379 · 8090 · 3310</div></div>
+      <div class="ichip"><div class="in">📍 IP Statique</div><div class="id">persist après arrêt VM</div></div>
+      <div class="ichip"><div class="in">🔑 Service Accounts</div><div class="id">github-actions-sa · bootstrap-owner</div></div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <div class="li"><div class="ld" style="background:var(--green)"></div>Services VM (H24 · unless-stopped)</div>
+    <div class="li"><div class="ld" style="background:var(--blue)"></div>Cloud Run (Scale to 0)</div>
+    <div class="li"><div class="ld" style="background:var(--orange)"></div>Données persistantes (disque VM)</div>
+    <div class="li"><div class="ld" style="background:var(--purple)"></div>Monitoring stack</div>
+    <div class="li"><div class="ld" style="background:var(--muted)"></div>IP statique Google</div>
+  </div>
+
+</div>
+</body>
+</html>

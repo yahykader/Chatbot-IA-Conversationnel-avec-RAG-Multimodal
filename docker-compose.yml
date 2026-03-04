@@ -333,103 +333,103 @@ services:
   # ============================================================================
   # 🆕 BACKEND SPRING BOOT
   # ============================================================================
-  backend:
-    build:
-      context: ./transaction-service
-      dockerfile: Dockerfile
-    container_name: rag-backend
-    ports:
-      - "8090:8090"
-    depends_on:
-      init-storage:
-        condition: service_completed_successfully
-      pgvector:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      clamav:
-        condition: service_healthy
-      zipkin:
-        condition: service_healthy
-    environment:
+  # backend:
+  #   build:
+  #     context: ./transaction-service
+  #     dockerfile: Dockerfile
+  #   container_name: rag-backend
+  #   ports:
+  #     - "8090:8090"
+  #   depends_on:
+  #     init-storage:
+  #       condition: service_completed_successfully
+  #     pgvector:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #     clamav:
+  #       condition: service_healthy
+  #     zipkin:
+  #       condition: service_healthy
+  #   environment:
 
-      # Variables d'environnement pour Docker
-      - PGVECTOR_HOST=pgvector
-      - PGVECTOR_PORT=5432
-      - PGVECTOR_DATABASE=vectordb
-      - PGVECTOR_USER=admin
-      - PGVECTOR_PASSWORD=1234
+  #     # Variables d'environnement pour Docker
+  #     - PGVECTOR_HOST=pgvector
+  #     - PGVECTOR_PORT=5432
+  #     - PGVECTOR_DATABASE=vectordb
+  #     - PGVECTOR_USER=admin
+  #     - PGVECTOR_PASSWORD=1234
 
-      # Database
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://pgvector:5432/vectordb
-      - SPRING_DATASOURCE_USERNAME=admin
-      - SPRING_DATASOURCE_PASSWORD=1234
+  #     # Database
+  #     - SPRING_DATASOURCE_URL=jdbc:postgresql://pgvector:5432/vectordb
+  #     - SPRING_DATASOURCE_USERNAME=admin
+  #     - SPRING_DATASOURCE_PASSWORD=1234
       
-      # Redis
-      - SPRING_REDIS_HOST=redis
-      - SPRING_REDIS_PORT=6379
-      - SPRING_REDIS_PASSWORD=dev_password_123
+  #     # Redis
+  #     - SPRING_REDIS_HOST=redis
+  #     - SPRING_REDIS_PORT=6379
+  #     - SPRING_REDIS_PASSWORD=dev_password_123
       
-      # ClamAV Antivirus
-      - ANTIVIRUS_ENABLED=true
-      - CLAMAV_HOST=clamav
-      - CLAMAV_PORT=3310
-      - ANTIVIRUS_TIMEOUT=30000
-      - ANTIVIRUS_CHUNK_SIZE=8192
-      - ANTIVIRUS_MAX_FILE_SIZE=104857600
+  #     # ClamAV Antivirus
+  #     - ANTIVIRUS_ENABLED=true
+  #     - CLAMAV_HOST=clamav
+  #     - CLAMAV_PORT=3310
+  #     - ANTIVIRUS_TIMEOUT=30000
+  #     - ANTIVIRUS_CHUNK_SIZE=8192
+  #     - ANTIVIRUS_MAX_FILE_SIZE=104857600
       
-      # Zipkin Tracing
-      - MANAGEMENT_TRACING_SAMPLING_PROBABILITY=1.0
-      - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
+  #     # Zipkin Tracing
+  #     - MANAGEMENT_TRACING_SAMPLING_PROBABILITY=1.0
+  #     - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
       
-      # Server Port
-      - SERVER_PORT=8090
+  #     # Server Port
+  #     - SERVER_PORT=8090
 
-      # OpenAI
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+  #     # OpenAI
+  #     - OPENAI_API_KEY=${OPENAI_API_KEY}
       
-      # Spring Profile
-      - SPRING_PROFILES_ACTIVE=docker
-      - IMAGES_STORAGE_PATH=/app/uploads/extracted-images
+  #     # Spring Profile
+  #     - SPRING_PROFILES_ACTIVE=docker
+  #     - IMAGES_STORAGE_PATH=/app/uploads/extracted-images
       
-      # JVM Options
-      - JAVA_OPTS=-Xmx2g -Xms512m
-    volumes:
-      # ✅ Utilise $HOME (Linux/Mac) ou $USERPROFILE (Windows) automatiquement
-      - ${HOME:-$USERPROFILE}/Downloads/uploads:/app/uploads
-      - ${HOME:-$USERPROFILE}/Downloads/logs:/app/logs
-    networks:
-      - agentic-chatbot-net
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8090/actuator/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
+  #     # JVM Options
+  #     - JAVA_OPTS=-Xmx2g -Xms512m
+  #   volumes:
+  #     # ✅ Utilise $HOME (Linux/Mac) ou $USERPROFILE (Windows) automatiquement
+  #     - ${HOME:-$USERPROFILE}/Downloads/uploads:/app/uploads
+  #     - ${HOME:-$USERPROFILE}/Downloads/logs:/app/logs
+  #   networks:
+  #     - agentic-chatbot-net
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8090/actuator/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 60s
 
   # ============================================================================
   # 🆕 FRONTEND ANGULAR + NGINX
   # ============================================================================
-  frontend:
-    build:
-      context: ./agentic-rag-ui
-      dockerfile: Dockerfile
-    container_name: rag-frontend
-    ports:
-      - "8080:8080"
-    environment:
-      - BACKEND_URL=http://backend:8090   # ← nom du service Docker + port backend
-    depends_on:
-      - backend
-    networks:
-      - agentic-chatbot-net
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+  # frontend:
+  #   build:
+  #     context: ./agentic-rag-ui
+  #     dockerfile: Dockerfile
+  #   container_name: rag-frontend
+  #   ports:
+  #     - "8080:8080"
+  #   environment:
+  #     - BACKEND_URL=http://backend:8090   # ← nom du service Docker + port backend
+  #   depends_on:
+  #     - backend
+  #   networks:
+  #     - agentic-chatbot-net
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+  #     interval: 30s
+  #     timeout: 5s
+  #     retries: 3
 
 # ==============================================================================
 # VOLUMES
