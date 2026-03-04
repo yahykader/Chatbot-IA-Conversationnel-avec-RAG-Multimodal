@@ -89,7 +89,8 @@
               "buildTarget": "agentic-rag-ui:build:production"
             },
             "development": {
-              "buildTarget": "agentic-rag-ui:build:development"
+              "buildTarget": "agentic-rag-ui:build:development",
+              "proxyConfig": "proxy.conf.json"
             }
           },
           "defaultConfiguration": "development"
