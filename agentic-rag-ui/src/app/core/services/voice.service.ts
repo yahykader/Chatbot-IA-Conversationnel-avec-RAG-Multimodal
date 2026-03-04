@@ -16,7 +16,7 @@ import { environment } from '../../../environments/environment';
 })
 export class VoiceService {
 
-  private readonly apiUrl = `${environment.apiUrl}/api/voice`;
+  private readonly apiUrl = `${environment.apiUrl}/v1/voice`;
 
   
   // ==================== ENREGISTREMENT AUDIO ====================

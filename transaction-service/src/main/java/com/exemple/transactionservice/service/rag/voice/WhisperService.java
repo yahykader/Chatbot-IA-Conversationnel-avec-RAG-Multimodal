@@ -1,4 +1,4 @@
-package com.exemple.transactionservice.service;
+package com.exemple.transactionservice.service.rag.voice;
 
 // ✅ CORRECTION : Imports pour la version 0.18.2 du SDK
 import com.theokanning.openai.audio.CreateTranscriptionRequest;
@@ -52,42 +52,67 @@ public class WhisperService {
         try {
             log.info("🎤 [Whisper] Début transcription - Taille: {} bytes", audioBytes.length);
             
-            // 1. Créer un fichier temporaire
-            tempFile = createTempAudioFile(audioBytes, originalFilename);
-            log.info("📁 [Whisper] Fichier temp créé: {}", tempFile.getAbsolutePath());
+            // ==================== VALIDATION ====================
+            if (audioBytes == null || audioBytes.length == 0) {
+                throw new RuntimeException("Données audio vides");
+            }
             
-            // 2. Préparer la requête Whisper (version 0.18.2)
+            if (audioBytes.length < 1000) {
+                log.warn("⚠️ [Whisper] Audio très court: {} bytes — possible silence", audioBytes.length);
+            }
+            
+            // ==================== FICHIER TEMP ====================
+            tempFile = createTempAudioFile(audioBytes, originalFilename);
+            log.info("📁 [Whisper] Fichier temp: {} ({} bytes)", 
+                    tempFile.getName(), tempFile.length());
+            
+            // ==================== REQUEST WHISPER ====================
             CreateTranscriptionRequest request = CreateTranscriptionRequest.builder()
                 .model("whisper-1")
                 .language(language)
+               // .responseFormat("text") // ← plus simple, retourne du texte brut
                 .build();
             
-            log.info("🌍 [Whisper] Langue spécifiée: {}", language);
+            log.info("🌍 [Whisper] Langue: {} | Fichier: {}", language, tempFile.getName());
             
-            // 3. Appeler l'API OpenAI Whisper
+            // ==================== APPEL API ====================
             long startTime = System.currentTimeMillis();
             
-            // ✅ CORRECTION : Méthode correcte pour version 0.18.2
-            String transcript = openAiService.createTranscription(request, tempFile.getPath())
+            String transcript = openAiService
+                .createTranscription(request, tempFile.getPath())
                 .getText();
             
             long duration = System.currentTimeMillis() - startTime;
+            log.info("⏱️ [Whisper] Durée API: {}ms", duration);
             
-            log.info("✅ [Whisper] Transcription réussie en {}ms", duration);
-            log.info("📝 [Whisper] Résultat: {}", 
-                     transcript.length() > 100 ? transcript.substring(0, 100) + "..." : transcript);
+            // ==================== VALIDATION RÉSULTAT ====================
+            log.info("📝 [Whisper] Transcript brut: '{}'", transcript);
             
-            return transcript;
+            if (transcript == null || transcript.isBlank()) {
+                log.warn("⚠️ [Whisper] Transcription vide — silence ou audio non reconnu");
+                throw new RuntimeException("Aucune transcription reçue — vérifiez que l'audio contient de la parole");
+            }
+            
+            String result = transcript.trim();
+            log.info("✅ [Whisper] Transcription réussie en {}ms — {} caractères: '{}'",
+                    duration,
+                    result.length(),
+                    result.length() > 100 ? result.substring(0, 100) + "..." : result);
+            
+            return result;
+            
+        } catch (RuntimeException e) {
+            // Re-throw directement sans wrapper
+            throw e;
             
         } catch (Exception e) {
-            log.error("❌ [Whisper] Erreur transcription: {}", e.getMessage(), e);
+            log.error("❌ [Whisper] Erreur inattendue: {}", e.getMessage(), e);
             throw new RuntimeException("Erreur lors de la transcription audio: " + e.getMessage(), e);
             
         } finally {
-            // 4. Nettoyer le fichier temporaire
             if (tempFile != null && tempFile.exists()) {
                 boolean deleted = tempFile.delete();
-                log.debug("🗑️ [Whisper] Fichier temp supprimé: {}", deleted);
+                log.debug("🗑️ [Whisper] Temp supprimé: {}", deleted);
             }
         }
     }
@@ -96,16 +121,18 @@ public class WhisperService {
      * ✅ Crée un fichier temporaire pour l'audio
      */
     private File createTempAudioFile(byte[] audioBytes, String originalFilename) throws IOException {
-        // Extraire l'extension du fichier
+        
+        // ✅ Toujours forcer .webm si l'extension est absente ou inconnue
         String extension = getFileExtension(originalFilename);
+        if (extension.equals(".webm") || extension.isEmpty()) {
+            extension = ".webm"; // Whisper accepte webm nativement
+        }
         
-        // Créer un fichier temporaire
-        String tempFileName = "whisper_" + UUID.randomUUID().toString() + extension;
+        String tempFileName = "whisper_" + UUID.randomUUID() + extension;
         File tempFile = new File(System.getProperty("java.io.tmpdir"), tempFileName);
-        
-        // Écrire les données audio
         FileUtils.writeByteArrayToFile(tempFile, audioBytes);
         
+        log.info("📁 [Whisper] Temp file: {} ({} bytes)", tempFile.getName(), audioBytes.length);
         return tempFile;
     }
     

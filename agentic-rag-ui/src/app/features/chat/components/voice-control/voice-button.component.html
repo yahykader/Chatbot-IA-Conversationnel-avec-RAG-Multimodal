@@ -1,0 +1,33 @@
+<button
+  class="voice-btn"
+  [class.recording]="isRecording"
+  [class.processing]="isProcessing"
+  (click)="toggleRecording()"
+  [disabled]="!isSupported || isProcessing || disabled"
+  [title]="getTooltip()">
+
+  @if (isProcessing) {
+    <span class="spinner-border spinner-border-sm" role="status">
+      <span class="visually-hidden">Transcription...</span>
+    </span>
+  } @else {
+    <i class="bi" [class.bi-mic-fill]="isRecording" [class.bi-mic]="!isRecording"></i>
+  }
+
+  @if (isRecording && recordingDuration) {
+    <span class="duration-badge">{{ recordingDuration }}</span>
+  }
+
+</button>
+
+@if (!isSupported) {
+  <span class="text-danger small d-block mt-1" style="font-size: 0.7rem;">
+    <i class="bi bi-exclamation-triangle"></i> Micro non disponible
+  </span>
+}
+
+@if (errorMessage) {
+  <div class="voice-error" role="alert">
+    <i class="bi bi-exclamation-circle"></i> {{ errorMessage }}
+  </div>
+}

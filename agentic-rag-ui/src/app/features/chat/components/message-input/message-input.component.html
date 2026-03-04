@@ -23,7 +23,16 @@
       (keydown)="onKeyDown($event)"
       [disabled]="disabled || isStreaming"
       rows="1"></textarea>
-    
+  
+        <!-- Bouton Micro -->
+    <app-voice-button
+      [language]="'fr'"
+      [disabled]="disabled || isStreaming"
+      (transcriptFinal)="onTranscript($event)"
+      (recordingChange)="onRecordingChange($event)"
+      (error)="onVoiceError($event)">
+    </app-voice-button>
+
     <button 
       class="btn btn-primary send-button"
       [disabled]="!inputText.trim() || disabled || isStreaming"

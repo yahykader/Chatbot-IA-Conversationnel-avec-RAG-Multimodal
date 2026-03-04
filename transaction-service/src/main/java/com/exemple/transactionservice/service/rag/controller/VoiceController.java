@@ -1,6 +1,8 @@
-package com.exemple.transactionservice.controller;
+package com.exemple.transactionservice.service.rag.controller;
 
-import com.exemple.transactionservice.service.WhisperService;
+import com.exemple.transactionservice.service.rag.voice.WhisperService;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -16,9 +18,9 @@ import java.util.Map;
  */
 @Slf4j
 @RestController
-@RequestMapping("/api/voice")
+@RequestMapping("/api/v1/voice")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "http://localhost:4200")
+@Tag(name = "Google Speech-to-Text", description = "API Google Speech-to-Text")
 public class VoiceController {
     
     private final WhisperService whisperService;
