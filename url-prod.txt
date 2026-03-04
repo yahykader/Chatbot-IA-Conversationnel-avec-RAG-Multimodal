@@ -1,0 +1,25 @@
+//// PROD service statetful en  VM et BACKEND et FRONTEND sur CloudRun
+
+frontend: https://rag-frontend-prod-608376732568.europe-west1.run.app/workspace
+backend: https://rag-backend-prod-608376732568.europe-west1.run.app/actuator/health
+grafana: http://35.189.245.29:3000
+prometheus: http://35.189.245.29:9090
+redis: http://35.189.245.29:8081
+
+
+//// VM en env dev
+
+frontend: http://34.53.187.62:8080/workspace
+backend: http://34.53.187.62:8090/actuator/health
+redis: http://34.53.187.62:8081
+prometheus: http://34.53.187.62:9090/targets
+grafana: http://34.53.187.62:3000
+
+
+/// en local Docker
+
+frontend: http://localhost:8080/workspace
+backend: http://localhost:8090/actuator/health
+redis: http://localhost:8081
+prometheus: http://localhost:9090/targets
+grafana: http://localhost:3000
